@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 8%;
+    --foreground: 200 20% 95%;
+
+    --card: 220 18% 12%;
+    --card-foreground: 200 20% 95%;
+
+    --popover: 220 18% 10%;
+    --popover-foreground: 200 20% 95%;
+
+    --primary: 185 70% 50%;
+    --primary-foreground: 220 20% 8%;
+
+    --secondary: 220 15% 18%;
+    --secondary-foreground: 200 20% 85%;
+
+    --muted: 220 15% 15%;
+    --muted-foreground: 200 10% 55%;
+
+    --accent: 175 60% 45%;
+    --accent-foreground: 220 20% 8%;
+
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 20%;
+    --input: 220 15% 18%;
+    --ring: 185 70% 50%;
+
+    --radius: 0.5rem;
+
+    --node-building: 185 70% 50%;
+    --node-space: 280 60% 55%;
+    --node-element: 45 80% 55%;
+    --node-property: 140 50% 50%;
+    --node-relationship: 320 60% 55%;
+    
+    --glow-primary: 0 0 20px hsl(185 70% 50% / 0.4);
+    --glow-accent: 0 0 20px hsl(175 60% 45% / 0.4);
+
+    --sidebar-background: 220 18% 10%;
+    --sidebar-foreground: 200 20% 95%;
+    --sidebar-primary: 185 70% 50%;
+    --sidebar-primary-foreground: 220 20% 8%;
+    --sidebar-accent: 220 15% 18%;
+    --sidebar-accent-foreground: 200 20% 85%;
+    --sidebar-border: 220 15% 20%;
+    --sidebar-ring: 185 70% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .font-sans {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+
+  .glow-accent {
+    box-shadow: var(--glow-accent);
+  }
+
+  .grid-pattern {
+    background-image: 
+      linear-gradient(to right, hsl(220 15% 15% / 0.5) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(220 15% 15% / 0.5) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .gradient-radial {
+    background: radial-gradient(ellipse at center, hsl(185 70% 50% / 0.1) 0%, transparent 70%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, hsl(185 70% 50%) 0%, hsl(175 60% 45%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .border-glow {
+    border: 1px solid hsl(185 70% 50% / 0.3);
+    box-shadow: 
+      inset 0 0 20px hsl(185 70% 50% / 0.05),
+      0 0 20px hsl(185 70% 50% / 0.1);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(220 18% 10%);
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 25%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 15% 30%);
+}
