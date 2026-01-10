@@ -257,6 +257,70 @@ function allowUIUpdate(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
 
+/**
+ * Reconstructs IFC STEP format representation preserving references.
+ * Converts entity object back to IFC STEP-like format with #xxx reference markers.
+ * Example: IfcSite(#9, 'Name', ...) instead of IfcSite({OwnerHistory: {...}, Name: 'Name', ...})
+ */
+function reconstructIFCStepFormat(typeName: string, entity: any, ifcApi: WebIFC.IfcAPI, modelId: number): string {
+  try {
+    // Get the entity's expressID for reference in properties
+    const expressId = entity.expressID;
+    
+    // Build a parameter list showing references as #xxx and values as-is
+    const params: string[] = [];
+    
+    // Iterate through all properties to preserve order and structure
+    for (const [key, value] of Object.entries(entity)) {
+      if (key === 'type' || key === 'expressID') continue;
+      
+      // Format value for display
+      if (value === null || value === undefined) {
+        params.push('$');  // $ represents undefined/null in IFC STEP
+      } else if (typeof value === 'object' && !Array.isArray(value)) {
+        // This might be a reference - check if it has expressID
+        const objValue = value as any;
+        if (objValue?.expressID !== undefined) {
+          params.push(`#${objValue.expressID}`);
+        } else if (objValue?.value !== undefined) {
+          // Wrapped value - unwrap it
+          const v = objValue.value;
+          if (typeof v === 'string') {
+            params.push(`'${v}'`);
+          } else {
+            params.push(String(v));
+          }
+        } else {
+          // Complex object - try to extract a meaningful representation
+          params.push(JSON.stringify(value).substring(0, 20) + '...');
+        }
+      } else if (Array.isArray(value)) {
+        // Array of values/references
+        const arrayItems = value.map((v: any) => {
+          if (v === null || v === undefined) return '$';
+          if (typeof v === 'object' && v.expressID !== undefined) return `#${v.expressID}`;
+          if (typeof v === 'string') return `'${v}'`;
+          return String(v);
+        });
+        params.push(`(${arrayItems.join(', ')})`);
+      } else if (typeof value === 'string') {
+        params.push(`'${value}'`);
+      } else if (typeof value === 'number') {
+        params.push(String(value));
+      } else if (typeof value === 'boolean') {
+        params.push(value ? '.T.' : '.F.');
+      } else {
+        params.push(String(value));
+      }
+    }
+    
+    return `#${expressId}= ${typeName}(${params.join(', ')})`;
+  } catch (err) {
+    // Fallback - just show basic info
+    return `#${(entity as any)?.expressID}= ${typeName}(...)`;
+  }
+}
+
 // Type for progress callback
 export type ParseProgressCallback = (progress: {
   stage: 'loading' | 'parsing' | 'processing' | 'validating' | 'complete';
@@ -307,6 +371,28 @@ export async function parseIFCFile(
   // Get all entity types in the model
   const allTypes = ifcApi.GetAllTypesOfModel(modelId);
   
+  // METADATA_TYPES - should be parsed for tree browser but marked as metadata
+  // These should NOT be shown in graph, and should NOT be referenced structurally
+  const METADATA_TYPES = new Set([
+    'IFCOWNERHISTORY',           // Admin ownership tracking
+    'IFCPERSON',                  // Creator/modifier person
+    'IFCORGANIZATION',            // Creator/modifier organization  
+    'IFCPERSONANDORGANIZATION',   // Person + org combo
+    'IFCAPPLICATION',             // Software that created entity
+  ]);
+  
+  // METADATA_PROPERTIES that should be skipped during REFERENCE EXTRACTION
+  // We still parse them (for tree browser), but don't extract references from them
+  // This prevents: IfcSite -> OwnerHistory -> Person false reference chains
+  const METADATA_PROPERTIES = new Set([
+    'OwnerHistory',               // Never extract references from this
+    'LastModifyingUser',
+    'LastModifyingApplication',
+    'CreationDate',
+    'OwningUser',                 // In OwnerHistory
+    'OwningApplication',          // In OwnerHistory
+  ]);
+
   // PROPERTY_TYPES that should be parsed but not shown as graph nodes
   const PROPERTY_TYPES = new Set([
     'IFCPROPERTYSET',
@@ -335,12 +421,6 @@ export async function parseIFCFile(
     'IFCMATERIALCONSTITUENTSET',
     'IFCCLASSIFICATION',
     'IFCCLASSIFICATIONREFERENCE',
-    // Metadata/owner entities
-    'IFCPERSON',
-    'IFCORGANIZATION',
-    'IFCPERSONANDORGANIZATION',
-    'IFCAPPLICATION',
-    'IFCOWNERHISTORY',
   ]);
 
   // Process each type - PARSE EVERYTHING, filter at display time
@@ -383,7 +463,7 @@ export async function parseIFCFile(
             const rawEntityType = entity.type;
             const rawEntityId = entity.expressID;
             
-            // Extract all properties from the entity (excluding geometry references)
+            // Extract all properties from the entity (excluding geometry and metadata references)
             for (const key of Object.keys(entity)) {
               if (key === 'type' || key === 'expressID') {
                 // Store these for reference
@@ -397,6 +477,12 @@ export async function parseIFCFile(
               
               const value = entity[key];
               if (value === null || value === undefined) continue;
+              
+              // CRITICAL FIX: Skip metadata properties that create false references
+              if (METADATA_PROPERTIES.has(key)) {
+                console.debug(`Skipping metadata property: ${key}`);
+                continue;
+              }
               
               // Skip representation/geometry properties but keep them for structural entities
               if (key === 'Representation') {
@@ -475,8 +561,16 @@ export async function parseIFCFile(
             // Determine if this should be visible in the graph
             let isGraphVisible = true;
             const typeNameUpper = typeName.toUpperCase();
+            let isMetadata = false;
             
-            if (isGeometryType(typeName)) {
+            // Mark metadata entities (parse them, but hide from graph and don't reference)
+            if (METADATA_TYPES.has(typeNameUpper)) {
+              nodeTypeFromSchema = 'property';
+              isGraphVisible = false;
+              isMetadata = true;
+              propertyEntityCount++;
+              console.debug(`Parsed metadata entity: ${typeName}`);
+            } else if (isGeometryType(typeName)) {
               nodeTypeFromSchema = 'geometry';
               isGraphVisible = false;
               geometryEntityCount++;
@@ -486,19 +580,18 @@ export async function parseIFCFile(
                        typeNameUpper.includes('PROPERTY') ||
                        typeNameUpper.includes('PSET_') ||
                        typeNameUpper.includes('PSE_') ||
-                       typeNameUpper.includes('PERSON') ||
-                       typeNameUpper.includes('ORGANIZATION') ||
-                       typeNameUpper.includes('APPLICATION') ||
-                       typeNameUpper.includes('HISTORY') ||
                        typeNameUpper.includes('MATERIAL') ||
                        typeNameUpper.includes('CLASSIFICATION')) {
               nodeTypeFromSchema = 'property';
               isGraphVisible = false;
               propertyEntityCount++;
-              console.debug(`Filtered property/metadata: ${typeName} - ${properties.Name || 'unknown'}`);
+              console.debug(`Filtered property: ${typeName} - ${properties.Name || 'unknown'}`);
             }
             
             const finalNodeType = schemaDef ? nodeTypeFromSchema : nodeType;
+            
+            // Reconstruct IFC STEP format to show original reference structure
+            const ifcStepRepresentation = reconstructIFCStepFormat(typeName, entity, ifcApi, modelId);
             
             const node: GraphNode = {
               id: `node_${expressId}`,
@@ -506,12 +599,14 @@ export async function parseIFCFile(
               type: finalNodeType,
               ifcType: typeName,
               properties: {
+                _ifcStep: ifcStepRepresentation,  // Full IFC STEP representation at the top
                 ...properties,
                 _schemaColor: entityColor,
                 _schemaIcon: entityIcon,
               },
               expressId,
               isGraphVisible,
+              isMetadata,
             };
             
             // Add to all entities (for tree, validation, properties panel)

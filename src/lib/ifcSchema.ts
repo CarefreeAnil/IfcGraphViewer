@@ -699,25 +699,110 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     validChildren: [],
   },
 
-  IFCBUILDINGELEMENT: {
-    type: 'IFCBUILDINGELEMENT',
-    displayName: 'Building Element',
-    description: 'Generic building element (base type)',
-    category: 'element',
-    icon: 'package',
-    color: '#6b7280',
+  IFCQUANTITYAREA: {
+    type: 'IFCQUANTITYAREA',
+    displayName: 'Quantity Area',
+    description: 'Area quantity measure',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Name', type: 'string', required: true, description: 'Quantity name' },
+      { name: 'Description', type: 'string', required: false, description: 'Quantity description' },
+      { name: 'Unit', type: 'reference', required: false, description: 'Unit of measure' },
+      { name: 'AreaValue', type: 'number', required: true, description: 'Area value' },
+    ],
+  },
+
+  IFCQUANTITYLENGTH: {
+    type: 'IFCQUANTITYLENGTH',
+    displayName: 'Quantity Length',
+    description: 'Length quantity measure',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Name', type: 'string', required: true, description: 'Quantity name' },
+      { name: 'Description', type: 'string', required: false, description: 'Quantity description' },
+      { name: 'Unit', type: 'reference', required: false, description: 'Unit of measure' },
+      { name: 'LengthValue', type: 'number', required: true, description: 'Length value' },
+    ],
+  },
+
+  IFCQUANTITYVOLUME: {
+    type: 'IFCQUANTITYVOLUME',
+    displayName: 'Quantity Volume',
+    description: 'Volume quantity measure',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Name', type: 'string', required: true, description: 'Quantity name' },
+      { name: 'Description', type: 'string', required: false, description: 'Quantity description' },
+      { name: 'Unit', type: 'reference', required: false, description: 'Unit of measure' },
+      { name: 'VolumeValue', type: 'number', required: true, description: 'Volume value' },
+    ],
+  },
+
+  IFCQUANTITYWEIGHT: {
+    type: 'IFCQUANTITYWEIGHT',
+    displayName: 'Quantity Weight',
+    description: 'Weight quantity measure',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Name', type: 'string', required: true, description: 'Quantity name' },
+      { name: 'Description', type: 'string', required: false, description: 'Quantity description' },
+      { name: 'Unit', type: 'reference', required: false, description: 'Unit of measure' },
+      { name: 'WeightValue', type: 'number', required: true, description: 'Weight value' },
+    ],
+  },
+
+  IFCELEMENTQUANTITY: {
+    type: 'IFCELEMENTQUANTITY',
+    displayName: 'Element Quantity',
+    description: 'Aggregation of elemental quantities',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
     properties: [
       { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
-      { name: 'Name', type: 'string', required: false, description: 'Element name' },
-      { name: 'Description', type: 'string', required: false, description: 'Element description' },
-      { name: 'ObjectType', type: 'string', required: false, description: 'Element object type' },
-      { name: 'ObjectPlacement', type: 'reference', required: false, description: 'Element placement' },
-      { name: 'Representation', type: 'reference', required: false, description: 'Geometric representation' },
-      { name: 'Tag', type: 'string', required: false, description: 'Element identifier/tag' },
+      { name: 'Name', type: 'string', required: true, description: 'Quantity set name' },
+      { name: 'Description', type: 'string', required: false, description: 'Quantity set description' },
+      { name: 'MethodOfMeasurement', type: 'string', required: false, description: 'Method of measurement' },
+      { name: 'Quantities', type: 'array', required: true, description: 'Array of quantities' },
     ],
-    validParents: ['IFCBUILDINGSTOREY', 'IFCBUILDING', 'IFCSPACE'],
-    validChildren: [],
+  },
+
+  IFCPROPERTYSINGLEVALUE: {
+    type: 'IFCPROPERTYSINGLEVALUE',
+    displayName: 'Property Single Value',
+    description: 'Single valued property',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Name', type: 'string', required: true, description: 'Property name' },
+      { name: 'Description', type: 'string', required: false, description: 'Property description' },
+      { name: 'NominalValue', type: 'string', required: true, description: 'Nominal value' },
+      { name: 'Unit', type: 'reference', required: false, description: 'Unit of measure' },
+    ],
+  },
+
+  IFCMATERIALLAYER: {
+    type: 'IFCMATERIALLAYER',
+    displayName: 'Material Layer',
+    description: 'Single material layer in a layer set',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+    properties: [
+      { name: 'Material', type: 'reference', required: true, description: 'Material reference' },
+      { name: 'LayerThickness', type: 'number', required: true, description: 'Layer thickness' },
+      { name: 'IsVentilated', type: 'boolean', required: false, description: 'Is ventilated' },
+    ],
   },
 };
 
@@ -780,3 +865,215 @@ export function getEntityDisplayName(ifcType: string): string {
 export function getEntityCategory(ifcType: string): string {
   return getEntityDef(ifcType)?.category || 'other';
 }
+
+/**
+ * Check if entity type is a spatial element
+ */
+export function isSpatialElement(ifcType: string): boolean {
+  return getEntityDef(ifcType)?.category === 'spatial';
+}
+
+/**
+ * Get spatial hierarchy order for sorting
+ * Lower values appear first in hierarchy
+ */
+export function getSpatialOrder(ifcType: string): number {
+  const spatialOrder: Record<string, number> = {
+    'IFCPROJECT': 0,
+    'IFCSITE': 10,
+    'IFCBUILDING': 20,
+    'IFCBUILDINGELEMENT': 30,
+    'IFCBUILDINGSTOREY': 25,
+    'IFCSPACE': 40,
+    'IFCZONE': 50,
+  };
+  
+  return spatialOrder[ifcType] ?? 100;
+}
+
+/**
+ * Map parser property names to schema property names
+ * Parser may use different naming conventions, this helps normalize them
+ */
+const PROPERTY_NAME_MAPPING: Record<string, Record<string, string>> = {
+  'IFCQUANTITYAREA': {
+    'areavalue': 'AreaValue',
+    'value': 'AreaValue',
+    'area': 'AreaValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCQUANTITYLENGTH': {
+    'lengthvalue': 'LengthValue',
+    'value': 'LengthValue',
+    'length': 'LengthValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCQUANTITYVOLUME': {
+    'volumevalue': 'VolumeValue',
+    'value': 'VolumeValue',
+    'volume': 'VolumeValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCQUANTITYWEIGHT': {
+    'weightvalue': 'WeightValue',
+    'value': 'WeightValue',
+    'weight': 'WeightValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCQUANTITYCOUNT': {
+    'countvalue': 'CountValue',
+    'value': 'CountValue',
+    'count': 'CountValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCPROPERTYSINGLEVALUE': {
+    'nominalvalue': 'NominalValue',
+    'value': 'NominalValue',
+    'name': 'Name',
+    'description': 'Description',
+    'unit': 'Unit',
+  },
+  'IFCELEMENTQUANTITY': {
+    'quantities': 'Quantities',
+    'quantity': 'Quantities',
+    'items': 'Quantities',
+    'globalid': 'GlobalId',
+    'ownerhistory': 'OwnerHistory',
+    'name': 'Name',
+    'description': 'Description',
+    'methodofmeasurement': 'MethodOfMeasurement',
+  },
+  'IFCPROPERTYSET': {
+    'hasproperties': 'HasProperties',
+    'properties': 'HasProperties',
+    'items': 'HasProperties',
+    'globalid': 'GlobalId',
+    'ownerhistory': 'OwnerHistory',
+    'name': 'Name',
+    'description': 'Description',
+  },
+  'IFCMATERIALLAYER': {
+    'material': 'Material',
+    'layerthickness': 'LayerThickness',
+    'thickness': 'LayerThickness',
+    'isventilated': 'IsVentilated',
+  },
+  'IFCMATERIAL': {
+    'name': 'Name',
+    'description': 'Description',
+    'category': 'Category',
+  },
+};
+
+/**
+ * Get normalized property name for an entity
+ * This handles parser naming convention differences
+ */
+export function getNormalizedPropertyName(entityType: string, parserPropertyName: string): string {
+  const mappings = PROPERTY_NAME_MAPPING[entityType];
+  if (!mappings) return parserPropertyName;
+  
+  const normalized = mappings[parserPropertyName.toLowerCase()];
+  return normalized || parserPropertyName;
+}
+
+/**
+ * Find the best matching schema property for a data property
+ * Uses levenshtein distance for fuzzy matching
+ */
+export function findBestMatchingProperty(
+  entityType: string,
+  dataPropertyName: string,
+  schemaProperties: string[]
+): string | undefined {
+  const dataLower = dataPropertyName.toLowerCase();
+  
+  // Exact match (case-insensitive)
+  for (const schemaProp of schemaProperties) {
+    if (schemaProp.toLowerCase() === dataLower) {
+      return schemaProp;
+    }
+  }
+  
+  // Check mapped name
+  const mapped = getNormalizedPropertyName(entityType, dataPropertyName);
+  if (mapped !== dataPropertyName && schemaProperties.includes(mapped)) {
+    return mapped;
+  }
+  
+  // Fuzzy matching - find property that contains most matching characters
+  const levenshteinDistance = (a: string, b: string): number => {
+    const m = a.length;
+    const n = b.length;
+    const dp = Array(m + 1).fill(0).map(() => Array(n + 1).fill(0));
+    
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (a[i - 1] === b[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+      }
+    }
+    return dp[m][n];
+  };
+  
+  let bestMatch: string | undefined;
+  let bestDistance = Infinity;
+  
+  for (const schemaProp of schemaProperties) {
+    const distance = levenshteinDistance(dataLower, schemaProp.toLowerCase());
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = schemaProp;
+    }
+  }
+  
+  // Only use fuzzy match if distance is reasonable (less than 3 edits)
+  return bestDistance <= 3 ? bestMatch : undefined;
+}
+
+/**
+ * Validate that data properties match schema
+ * Returns mapping of data property names to schema property names
+ */
+export function validatePropertyMapping(
+  entityType: string,
+  dataProperties: Record<string, any>
+): Record<string, string | undefined> {
+  const entityDef = getEntityDef(entityType);
+  if (!entityDef) return {};
+  
+  const schemaPropertyNames = entityDef.properties.map(p => p.name);
+  const mapping: Record<string, string | undefined> = {};
+  
+  for (const dataPropertyName of Object.keys(dataProperties)) {
+    // Skip system keys
+    if (dataPropertyName.startsWith('_') || dataPropertyName === 'id') {
+      continue;
+    }
+    
+    mapping[dataPropertyName] = findBestMatchingProperty(
+      entityType,
+      dataPropertyName,
+      schemaPropertyNames
+    );
+  }
+  
+  return mapping;
+}
+

@@ -10,6 +10,7 @@ export interface GraphNode {
   properties: Record<string, any>;
   expressId?: number;
   isGraphVisible?: boolean; // Whether this entity is visible in the graph (not geometry)
+  isMetadata?: boolean; // Whether this is a metadata entity (Person, Organization, OwnerHistory, etc.)
 }
 
 export interface GraphEdge {

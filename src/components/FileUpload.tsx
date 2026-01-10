@@ -130,7 +130,7 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs font-mono text-muted-foreground">
           <FileCode className="w-3.5 h-3.5" />
-          <span>.ifc files supported</span>
+          <span>.ifc/.ifcx files supported</span>
         </div>
       </div>
 
