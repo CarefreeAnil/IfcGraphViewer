@@ -24,6 +24,8 @@ const Index = () => {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showAttributes, setShowAttributes] = useState(false);
+  const [showRelatedMetadata, setShowRelatedMetadata] = useState(false);
 
 
   const handleFileSelect = useCallback(async (file: File) => {
@@ -68,10 +70,13 @@ const Index = () => {
     setSelectedNode(null);
     setHighlightedTypes([]);
     setSearchQuery('');
+    setShowAttributes(false);
+    setShowRelatedMetadata(false);
   }, []);
 
   const handleNodeClick = useCallback((node: GraphNode | null) => {
     setSelectedNode(node);
+    setShowRelatedMetadata(false); // Reset metadata visibility when selecting new node
   }, []);
 
   const handleTypeToggle = useCallback((type: NodeType) => {
@@ -174,6 +179,8 @@ const Index = () => {
                       selectedNodeId={selectedNode?.id || null}
                       highlightedTypes={highlightedTypes}
                       searchQuery={searchQuery}
+                      showAttributes={showAttributes}
+                      showRelatedMetadata={showRelatedMetadata}
                     />
 
                     <GraphControls
@@ -181,6 +188,11 @@ const Index = () => {
                       onSearchChange={setSearchQuery}
                       highlightedTypes={highlightedTypes}
                       onTypeToggle={handleTypeToggle}
+                      showAttributes={showAttributes}
+                      onAttributesToggle={setShowAttributes}
+                      showRelatedMetadata={showRelatedMetadata}
+                      onRelatedMetadataToggle={setShowRelatedMetadata}
+                      selectedNode={selectedNode}
                     />
 
                     <StatsPanel metadata={parsedData.metadata} />

@@ -13,6 +13,8 @@ const TYPE_ICONS: Record<NodeType, React.ReactNode> = {
   element: <Box className="w-5 h-5" />,
   property: <Tag className="w-5 h-5" />,
   relationship: <Box className="w-5 h-5" />,
+  geometry: <Box className="w-5 h-5" />,
+  other: <Box className="w-5 h-5" />,
 };
 
 const TYPE_LABELS: Record<NodeType, string> = {
@@ -21,6 +23,8 @@ const TYPE_LABELS: Record<NodeType, string> = {
   element: 'Building Element',
   property: 'Property Set',
   relationship: 'Relationship',
+  geometry: 'Geometry',
+  other: 'Other',
 };
 
 interface NodeDetailsPanelProps {
@@ -82,24 +86,34 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
             </div>
           )}
 
-          {Object.keys(node.properties).length > 0 && (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                <Tag className="w-3.5 h-3.5" />
-                Properties
-              </label>
-              <div className="space-y-1">
-                {Object.entries(node.properties).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/50">
-                    <span className="text-xs text-muted-foreground">{key}</span>
-                    <span className="text-xs font-mono text-foreground">
-                      {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                    </span>
-                  </div>
-                ))}
+          {/* Unified Properties Panel - Filtered IFC Data Only */}
+          {(() => {
+            const excludedKeys = new Set([
+              'id', 'nodeId', 'expressId', '_schemaColor', '_schemaIcon', '_ifcStep',
+              'schemaColor', 'schemaIcon', 'type', 'ifcType', '_entityType', '_expressID', 'label'
+            ]);
+            const filteredProps = Object.entries(node.properties).filter(
+              ([key]) => !excludedKeys.has(key) && !key.startsWith('_')
+            );
+            return filteredProps.length > 0 ? (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  <Tag className="w-3.5 h-3.5" />
+                  Properties
+                </label>
+                <div className="space-y-1">
+                  {filteredProps.map(([key, value]) => (
+                    <div key={key} className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/50">
+                      <span className="text-xs text-muted-foreground capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                      <span className="text-xs font-mono text-foreground">
+                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            ) : null;
+          })()}
         </div>
       </div>
     );
@@ -151,54 +165,42 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
               </div>
             </div>
 
-            {/* Node ID */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                <Hash className="w-3.5 h-3.5" />
-                Node ID
-              </label>
-              <div className="px-3 py-2 rounded-md bg-muted font-mono text-xs text-muted-foreground">
-                {node.id}
-              </div>
-            </div>
+            {/* Node ID and Express ID removed for cleaner panel */}
 
-            {/* Express ID */}
-            {node.expressId && (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  <Hash className="w-3.5 h-3.5" />
-                  Express ID
-                </label>
-                <div className="px-3 py-2 rounded-md bg-muted font-mono text-xs text-muted-foreground">
-                  #{node.expressId}
+            {/* Properties - Filtered IFC Data Only */}
+            {(() => {
+              const excludedKeys = new Set([
+                'id', 'nodeId', 'expressId', '_schemaColor', '_schemaIcon', '_ifcStep',
+                'schemaColor', 'schemaIcon', 'type', 'ifcType'
+              ]);
+              const filteredProps = Object.entries(node.properties).filter(
+                ([key]) => !excludedKeys.has(key) && !key.startsWith('_')
+              );
+              
+              return filteredProps.length > 0 ? (
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <Tag className="w-3.5 h-3.5" />
+                    Properties
+                  </label>
+                  <div className="space-y-1">
+                    {filteredProps.map(([key, value]) => (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/50"
+                      >
+                        <span className="text-xs text-muted-foreground capitalize">
+                          {key.replace(/([A-Z])/g, ' $1').trim()}
+                        </span>
+                        <span className="text-xs font-mono text-foreground">
+                          {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {/* Properties */}
-            {Object.keys(node.properties).length > 0 && (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  <Tag className="w-3.5 h-3.5" />
-                  Properties
-                </label>
-                <div className="space-y-1">
-                  {Object.entries(node.properties).map(([key, value]) => (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/50"
-                    >
-                      <span className="text-xs text-muted-foreground capitalize">
-                        {key.replace(/([A-Z])/g, ' $1').trim()}
-                      </span>
-                      <span className="text-xs font-mono text-foreground">
-                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              ) : null;
+            })()}
           </div>
         </motion.div>
       )}

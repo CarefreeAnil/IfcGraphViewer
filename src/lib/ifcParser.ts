@@ -379,6 +379,56 @@ export async function parseIFCFile(
     'IFCORGANIZATION',            // Creator/modifier organization  
     'IFCPERSONANDORGANIZATION',   // Person + org combo
     'IFCAPPLICATION',             // Software that created entity
+    // Type definitions - these are templates, not instances
+    'IFCWALLTYPE',                // Wall type definition
+    'IFCDOORTYPE',                // Door type definition
+    'IFCWINDOWTYPE',              // Window type definition
+    'IFCCOLUMNTYPE',              // Column type definition
+    'IFCSLABTYPE',                // Slab type definition
+    'IFCBEAMTYPE',                // Beam type definition
+    'IFCRAMPTYPE',
+    'IFCSTAIRTYPE',
+    'IFCRAILINGTYPE',             // Railing type definition
+    'IFCMEMBERTYPE',              // Member type definition
+    'IFCSPACETYPE',               // Space type definition
+    // Units and schema entities
+    'IFCUNITASSIGNMENT',          // Unit definitions
+    'IFCSIUNIT',                  // SI unit
+    'IFCCONVERSIONBASEDUNIT',     // Conversion units
+    'IFCDIMENSIONALEXPONENTS',
+    'IFCDERIVEDUNIT',             // Derived unit (e.g., cm^2)
+    'IFCDERIVEDUNITELEMENT',      // Element of a derived unit
+    'IFCMEASUREWITHUNIT',         // Value with unit pairing
+    'IFCMONETARYUNIT',            // Currency unit
+    // Presentation/layer info and text styling
+    'IFCPRESENTATIONLAYERASSIGNMENT',
+    'IFCTEXTSTYLE',               // Text style definition
+    'IFCTEXTSTYLETEXTMODEL',      // Text style model
+    'IFCTEXTSTYLEFONTMODEL',      // Font style definition
+    'IFCTEXTSTYLEFORDEFINEDFONT', // Text style with font reference
+    // Geometric metadata (not actual geometry)
+    'IFCPLANAREXTENT',            // 2D extent definition
+    'IFCBOUNDINGBOX',             // Bounding box (metadata, not actual representation)
+    // Property definitions (metadata for element properties)
+    'IFCWINDOWLININGPROPERTIES',  // Window lining property set
+    'IFCWINDOWPANELPROPERTIES',   // Window panel property set
+    'IFCDOORPANELPROPERTIES',     // Door panel property set
+    'IFCDOORLININGPROPERTIES',    // Door lining property set
+    'IFCPROPERTYSET',             // Generic property set
+    'IFCQUANTITYSET',             // Quantity set
+    // Relationship definition entities (these are processed as edges, not nodes)
+    'IFCRELDEFINESBYTYPE',        // Type definition relationship
+    'IFCRELDEFINESBYPROPERTIES',  // Property definition relationship
+    'IFCRELAGGREGATES',           // Aggregation relationship
+    'IFCRELCONTAINEDINSPATIALSTRUCTURE', // Spatial containment relationship
+    'IFCRELVOIDSELEMENT',         // Void relationship
+    'IFCRELFILLSELEMENT',         // Fill relationship
+    'IFCRELASSOCIATESMATERIAL',   // Material association
+    'IFCRELASSOCIATESCLASSIFICATION', // Classification association
+    'IFCRELSPACEBOUNDARY',        // Space boundary relationship
+    'IFCRELCONNECTSPATHELEMENTS', // Path element connection
+    // Virtual elements (logical, not physical)
+    'IFCVIRTUALELEMENT',          // Virtual building element
   ]);
   
   // METADATA_PROPERTIES that should be skipped during REFERENCE EXTRACTION
@@ -612,7 +662,9 @@ export async function parseIFCFile(
             // Add to all entities (for tree, validation, properties panel)
             allEntities.push(node);
             
-            // Add to graph nodes only if visible
+            // Add to graph nodes for visualization
+            // Metadata nodes will be included but hidden by default (filtered in visualization component)
+            // Geometry nodes are excluded entirely
             if (isGraphVisible) {
               graphNodes.push(node);
               nodeMap.set(expressId, node);
@@ -771,16 +823,98 @@ export async function parseIFCFile(
   ifcApi.CloseModel(modelId);
   
   const endTime = performance.now();
+
+  // ==== DEBUGGING: Find floating/disconnected nodes ====
+  const graphNodeIds = new Set(graphNodes.map(n => n.id));
+  const edgeReferencedNodeIds = new Set<string>();
+  const disconnectedEdges: typeof edges = [];
   
+  edges.forEach(edge => {
+    edgeReferencedNodeIds.add(edge.source);
+    edgeReferencedNodeIds.add(edge.target);
+    
+    // Check if edge references non-existent nodes
+    if (!graphNodeIds.has(edge.source) || !graphNodeIds.has(edge.target)) {
+      disconnectedEdges.push(edge);
+    }
+  });
+
+  // Find nodes that have no edges
+  const floatingNodes = graphNodes.filter(node => !edgeReferencedNodeIds.has(node.id));
+  
+  // Group by type
+  const floatingByType: Record<string, string[]> = {};
+  floatingNodes.forEach(node => {
+    if (!floatingByType[node.type]) {
+      floatingByType[node.type] = [];
+    }
+    floatingByType[node.type].push(`${node.label} (${node.ifcType})`);
+  });
+
   console.log('Parse Results:', {
     totalEntities: allEntities.length,
     graphNodes: graphNodes.length,
+    edges: edges.length,
     geometryEntities: geometryEntityCount,
     propertyEntities: propertyEntityCount,
     hasProject,
-    entityTypes: new Set(allEntities.map(n => n.ifcType)),
     parseTime: endTime - startTime,
   });
+
+  // Log floating nodes for debugging with detailed breakdown
+  if (floatingNodes.length > 0) {
+    console.warn(`⚠️ Found ${floatingNodes.length} floating nodes (no relationships)`);
+    console.warn('  By type (visual):', floatingByType);
+    
+    // Group by IFC type to identify patterns
+    const floatingByIfcType: Record<string, number> = {};
+    floatingNodes.forEach(node => {
+      const ifcType = node.ifcType || 'UNKNOWN';
+      floatingByIfcType[ifcType] = (floatingByIfcType[ifcType] || 0) + 1;
+    });
+    
+    // Log as table for better readability
+    console.table(floatingByIfcType);
+    console.log('📍 Floating nodes by IFC type (JSON):', JSON.stringify(floatingByIfcType, null, 2));
+    
+    // Sample first few floating nodes
+    const samples = floatingNodes.slice(0, 10).map(n => ({
+      id: n.id,
+      label: n.label,
+      type: n.type,
+      ifcType: n.ifcType
+    }));
+    console.log('📍 Sample floating nodes (first 10):');
+    console.table(samples);
+  }
+  
+  // Log disconnected edges for debugging - these identify references to filtered nodes
+  if (disconnectedEdges.length > 0) {
+    console.error(`❌ Found ${disconnectedEdges.length} edges referencing non-existent nodes`);
+    
+    // Group by edge type to identify patterns
+    const disconnectedByType: Record<string, number> = {};
+    disconnectedEdges.forEach(edge => {
+      disconnectedByType[edge.type] = (disconnectedByType[edge.type] || 0) + 1;
+    });
+    console.log('❌ Disconnected edge types (JSON):');
+    console.table(disconnectedByType);
+    console.log('Details:', JSON.stringify(disconnectedByType, null, 2));
+    
+    console.log('❌ Sample disconnected edges:');
+    disconnectedEdges.slice(0, 15).forEach((edge, idx) => {
+      const sourceExists = graphNodeIds.has(edge.source);
+      const targetExists = graphNodeIds.has(edge.target);
+      console.log(`  [${idx}] ${edge.type} | ${edge.source}(${sourceExists ? '✓' : '✗'}) → ${edge.target}(${targetExists ? '✓' : '✗'})`);
+    });
+  }
+  
+  // Log node distribution
+  const nodesByType: Record<string, number> = {};
+  graphNodes.forEach(node => {
+    nodesByType[node.type] = (nodesByType[node.type] || 0) + 1;
+  });
+  console.log('📊 Node distribution in graph:', nodesByType);
 
   // Validate parsed data - VALIDATE ALL ENTITIES, NOT JUST GRAPH NODES
   onProgress?.({
