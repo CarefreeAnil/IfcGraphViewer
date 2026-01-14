@@ -1,88 +1,94 @@
 /**
- * Web Worker for IFC parsing
- * Handles heavy parsing off the main thread to prevent UI blocking
+ * IFC Parser Web Worker
+ * Processes IFC files in a background thread to prevent UI blocking
+ * Integrates with the full parser system
  */
 
-import * as WebIFC from 'web-ifc';
+import { parseIFCFile, ParseProgressCallback } from '../lib/ifcParser';
+import { parseIFC5File } from '../lib/ifc5Parser';
 
-// Message handler
-self.onmessage = async (event: MessageEvent) => {
-  const { type, fileBuffer, fileName } = event.data;
+export interface WorkerMessage {
+  type: 'parse' | 'cancel';
+  fileId?: string;
+  file?: File;
+}
 
-  if (type === 'PARSE_IFC') {
+export interface WorkerResponse {
+  type: 'progress' | 'complete' | 'error';
+  fileId?: string;
+  data?: any;
+  error?: string;
+  progress?: {
+    percentage: number;
+    message: string;
+    entitiesProcessed?: number;
+    totalEntities?: number;
+  };
+}
+
+// Handle messages from main thread
+self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
+  const { type, fileId, file } = event.data;
+
+  if (type === 'cancel') {
+    // Worker termination is handled by main thread
+    return;
+  }
+
+  if (type === 'parse' && file && fileId) {
     try {
-      const result = await parseIFCInWorker(fileBuffer, fileName);
-      self.postMessage({ type: 'PARSE_COMPLETE', result, error: null });
+      const fileName = file.name.toLowerCase();
+      
+      // Progress callback
+      const progressCallback: ParseProgressCallback = (progress) => {
+        const response: WorkerResponse = {
+          type: 'progress',
+          fileId,
+          progress: {
+            percentage: progress.percentage,
+            message: progress.message,
+            entitiesProcessed: progress.entitiesProcessed,
+            totalEntities: progress.totalEntities,
+          },
+        };
+        self.postMessage(response);
+      };
+
+      // Parse based on file type
+      let result;
+      if (fileName.endsWith('.ifcx')) {
+        // Send progress for IFC5
+        progressCallback({
+          percentage: 50,
+          message: 'Parsing IFC5 file...',
+        });
+        result = await parseIFC5File(file);
+        progressCallback({
+          percentage: 100,
+          message: 'IFC5 parsing complete',
+        });
+      } else {
+        result = await parseIFCFile(file, progressCallback);
+      }
+
+      // Send completion message
+      const response: WorkerResponse = {
+        type: 'complete',
+        fileId,
+        data: result,
+      };
+      self.postMessage(response);
+
     } catch (error) {
-      self.postMessage({
-        type: 'PARSE_ERROR',
-        result: null,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      // Send error message
+      const response: WorkerResponse = {
+        type: 'error',
+        fileId,
+        error: error instanceof Error ? error.message : 'Unknown parsing error',
+      };
+      self.postMessage(response);
     }
   }
 };
 
-async function parseIFCInWorker(fileBuffer: ArrayBuffer, fileName: string) {
-  const ifcApi = new WebIFC.IfcAPI();
-
-  // Init WASM
-  await ifcApi.Init((path: string) => {
-    return `/${path}`;
-  });
-
-  const data = new Uint8Array(fileBuffer);
-  const modelId = ifcApi.OpenModel(data);
-
-  // Get all types
-  const allTypes = ifcApi.GetAllTypesOfModel(modelId);
-  const results: any[] = [];
-
-  // Process types with progress updates
-  const totalTypes = allTypes.length;
-  for (let typeIdx = 0; typeIdx < totalTypes; typeIdx++) {
-    const typeInfo = allTypes[typeIdx];
-    const typeId = typeInfo.typeID;
-
-    try {
-      const entityIds = ifcApi.GetLineIDsWithType(modelId, typeId);
-      const entities: any[] = [];
-
-      for (let i = 0; i < entityIds.size(); i++) {
-        const expressId = entityIds.get(i);
-        try {
-          const entity = ifcApi.GetLine(modelId, expressId);
-          if (entity) {
-            entities.push({ expressId, entity });
-          }
-        } catch {
-          // Skip entities that can't be parsed
-        }
-      }
-
-      results.push({
-        typeId,
-        entities,
-      });
-
-      // Report progress every 10 types
-      if (typeIdx % 10 === 0) {
-        self.postMessage({
-          type: 'PARSE_PROGRESS',
-          progress: (typeIdx / totalTypes) * 100,
-        });
-      }
-    } catch {
-      // Skip types that can't be enumerated
-    }
-  }
-
-  ifcApi.CloseModel(modelId);
-
-  return {
-    fileName,
-    fileSize: fileBuffer.byteLength,
-    modelId,
-    types: results,
-  };
-}
+export {};

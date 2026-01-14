@@ -3,7 +3,7 @@ import { AlertCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ValidationReport } from '@/components/ValidationReport';
-import { ValidationResult } from '@/lib/ifcValidator';
+import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 
 interface ValidationDialogProps {
   validation?: ValidationResult;
@@ -34,7 +34,9 @@ export function ValidationDialog({ validation, hasErrors }: ValidationDialogProp
       </DialogTrigger>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>IFC Schema Validation Report</DialogTitle>
+          <DialogTitle>
+            IFC Schema Validation Report {validation.schemaVersion && `(${validation.schemaVersion})`}
+          </DialogTitle>
         </DialogHeader>
         <div className="mt-4">
           <ValidationReport result={validation} />

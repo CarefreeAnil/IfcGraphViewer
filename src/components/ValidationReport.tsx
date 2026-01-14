@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle, Info, AlertTriangle } from 'lucide-react';
-import { ValidationResult } from '@/lib/ifcValidator';
+import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';

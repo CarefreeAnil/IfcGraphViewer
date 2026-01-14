@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { Copy, ChevronDown, ChevronRight } from 'lucide-react';
+import { Copy, ChevronDown, ChevronRight, FileText, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -7,12 +7,21 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { toast } from 'sonner';
 import { GraphNode, GraphEdge } from '@/types/graph';
 import { getEntityDef, getNormalizedPropertyName, findBestMatchingProperty } from '@/lib/ifcSchema';
+import { VirtualList } from '@/components/VirtualList';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/PaginationControls';
 
 interface IFCTreeBrowserProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
   selectedNodeId: string | null;
   onNodeSelect: (node: GraphNode | null) => void;
+}
+
+// Helper to copy text to clipboard
+function copyToClipboard(text: string): void {
+  navigator.clipboard.writeText(text);
+  toast.success('Copied to clipboard');
 }
 
 // Format a property value for IFC-style display
@@ -325,6 +334,7 @@ function buildReferenceIndex(nodes: GraphNode[]): Map<string, Set<number>> {
 
 export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: IFCTreeBrowserProps) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [useVirtualScrolling, setUseVirtualScrolling] = useState(nodes.length > 100);
 
   // Pre-compute reference index for performance
   const referenceIndex = useMemo(() => buildReferenceIndex(nodes), [nodes]);
@@ -426,6 +436,12 @@ export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: I
     );
   }, [sortedNodes, searchQuery]);
 
+  // Pagination for filtered nodes
+  const pagination = usePagination(filteredNodes, {
+    pageSize: 100,
+    initialPage: 0,
+  });
+
   // Find inverse references for selected node
   const inverseReferences = useMemo(() => {
     if (!selectedNodeId) return [];
@@ -454,7 +470,7 @@ export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: I
     <div className="h-full flex flex-col bg-background">
       {/* Header */}
       <div className="p-3 border-b border-border space-y-2">
-        <h2 className="text-sm font-semibold text-foreground">IFC STEP Browser</h2>
+        <h2 className="text-sm font-semibold text-foreground">IFC STEP Browser (1:1 View)</h2>
         <Input
           placeholder="Search by StepID, type, or name..."
           value={searchQuery}
@@ -465,95 +481,169 @@ export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: I
 
       {/* Main Split View */}
       <ResizablePanelGroup direction="vertical" className="flex-1">
-        {/* Flat Entity List (Top) */}
+        {/* Upper Panel: Raw STEP (1:1) + Nested View */}
         <ResizablePanel defaultSize={60} minSize={30}>
-          <ScrollArea className="h-full">
-            <div className="p-2">
-              {filteredNodes.length === 0 ? (
-                <div className="flex items-center justify-center h-32 text-muted-foreground">
-                  <p className="text-sm">No entities found</p>
+          <ResizablePanelGroup direction="horizontal">
+            {/* Raw STEP File (1:1 View) */}
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <div className="h-full flex flex-col p-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider">
+                    Raw STEP File ({nodes.length} entities)
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const lines: string[] = [];
+                      lines.push('ISO-10303-21;');
+                      lines.push('HEADER;');
+                      lines.push(`FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');`);
+                      lines.push(`FILE_NAME('','','','','','','');`);
+                      lines.push(`FILE_SCHEMA(('IFC2X3'));`);
+                      lines.push('ENDSEC;');
+                      lines.push('');
+                      lines.push('DATA;');
+                      const sortedNodesLocal = [...nodes].sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
+                      for (const node of sortedNodesLocal) {
+                        lines.push(buildProperIFCLine(node));
+                      }
+                      lines.push('ENDSEC;');
+                      lines.push('END-ISO-10303-21;');
+                      copyToClipboard(lines.join('\n'));
+                    }}
+                    className="h-7"
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1.5" />
+                    Copy All
+                  </Button>
                 </div>
-              ) : (
-                <div className="space-y-0">
-                  {filteredNodes.map((node) => {
-                    const ifcLine = buildProperIFCLine(node);
 
-                    return (
-                      <div
-                        key={node.id}
-                        onClick={() => onNodeSelect(node)}
-                        className={`
-                          px-2 py-1.5 cursor-pointer transition-colors font-mono text-xs
-                          border-l-2 border-transparent hover:bg-muted/20
-                          ${
-                            selectedNodeId === node.id
-                              ? 'bg-primary/20 border-l-primary'
-                              : ''
-                          }
-                        `}
-                      >
-                        <div className="break-all leading-relaxed">
-                          {ifcLine}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <ScrollArea className="flex-1 border rounded-md">
+                  <div className="p-3 font-mono text-[10px] leading-relaxed bg-muted/30">
+                    <pre className="whitespace-pre-wrap break-all">
+                      {'ISO-10303-21;\n'}
+                      {'HEADER;\n'}
+                      {`FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');\n`}
+                      {`FILE_NAME('','','','','','','');\n`}
+                      {`FILE_SCHEMA(('IFC2X3'));\n`}
+                      {'ENDSEC;\n\n'}
+                      {'DATA;\n'}
+                      {[...nodes]
+                        .sort((a, b) => (a.expressId || 0) - (b.expressId || 0))
+                        .map(node => buildProperIFCLine(node))
+                        .join('\n')}
+                      {'\nENDSEC;\n'}
+                      {'END-ISO-10303-21;'}
+                    </pre>
+                  </div>
+                </ScrollArea>
+              </div>
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
+
+            {/* Nested Tree View */}
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <div className="h-full flex flex-col p-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider">
+                    Entity Hierarchy ({filteredNodes.length})
+                  </h3>
                 </div>
-              )}
-            </div>
-          </ScrollArea>
+                
+                <div className="flex-1 border rounded-md flex flex-col">
+                  {filteredNodes.length === 0 ? (
+                    <div className="flex items-center justify-center h-32 text-muted-foreground">
+                      <p className="text-sm">No entities found</p>
+                    </div>
+                  ) : useVirtualScrolling ? (
+                    <>
+                      <VirtualList
+                        items={pagination.currentItems}
+                        itemHeight={32}
+                        containerHeight={500}
+                        bufferSize={5}
+                        renderItem={(node, idx) => {
+                          const ifcLine = buildProperIFCLine(node);
+                          return (
+                            <div
+                              onClick={() => onNodeSelect(node)}
+                              className={`
+                                px-2 py-1.5 cursor-pointer transition-colors font-mono text-xs
+                                border-l-2 border-transparent hover:bg-muted/20
+                                ${
+                                  selectedNodeId === node.id
+                                    ? 'bg-primary/15 border-l-primary'
+                                    : ''
+                                }
+                              `}
+                            >
+                              <div className="break-all leading-relaxed truncate">
+                                {ifcLine}
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <PaginationControls
+                        currentPage={pagination.currentPage}
+                        totalPages={pagination.totalPages}
+                        totalItems={pagination.totalItems}
+                        pageSize={pagination.pageSize}
+                        onPageChange={pagination.goToPage}
+                        onNext={pagination.nextPage}
+                        onPrevious={pagination.previousPage}
+                        onFirst={pagination.goToFirstPage}
+                        onLast={pagination.goToLastPage}
+                        hasNextPage={pagination.hasNextPage}
+                        hasPreviousPage={pagination.hasPreviousPage}
+                      />
+                    </>
+                  ) : (
+                    <ScrollArea className="flex-1">
+                      <div className="p-2 space-y-0">
+                        {filteredNodes.map((node) => {
+                          const ifcLine = buildProperIFCLine(node);
+
+                          return (
+                            <div
+                              key={node.id}
+                              onClick={() => onNodeSelect(node)}
+                              className={`
+                                px-2 py-1.5 cursor-pointer transition-colors font-mono text-xs
+                                border-l-2 border-transparent hover:bg-muted/20
+                                ${
+                                  selectedNodeId === node.id
+                                    ? 'bg-primary/15 border-l-primary'
+                                    : ''
+                                }
+                              `}
+                            >
+                              <div className="break-all leading-relaxed">
+                                {ifcLine}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
-        {/* Inverse References Panel (Bottom) */}
+        {/* Lower Panel: References Only */}
         <ResizablePanel defaultSize={40} minSize={20}>
           <ScrollArea className="h-full">
             <div className="p-3">
               {selectedNode ? (
                 <div className="space-y-4 font-mono text-xs">
-                  {/* Selected Entity Display */}
-                  <div className="p-2 rounded bg-muted/30 border border-border">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="break-all">
-                        <span className="text-cyan-500 font-semibold">#{selectedNode.expressId}</span>
-                        <span className="text-muted-foreground">=</span>
-                        <span className="text-yellow-500 font-semibold">
-                          {selectedNode.ifcType}
-                        </span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const line = buildProperIFCLine(selectedNode);
-                          navigator.clipboard.writeText(line);
-                          toast.success('IFC line copied to clipboard');
-                        }}
-                        className="h-6 w-6 p-0 flex-shrink-0"
-                        title="Copy IFC line"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-
-                    {/* All Properties */}
-                    <div className="text-[10px] space-y-0.5 border-t border-border pt-2">
-                      <div className="font-semibold text-muted-foreground mb-1">Properties:</div>
-                      {Object.entries(selectedNode.properties)
-                        .filter(([key]) => !key.startsWith('_') && key !== 'id') // Filter internal properties
-                        .map(([key, value]) => (
-                          <div key={key} className="flex gap-2">
-                            <span className="text-muted-foreground min-w-max">{key}:</span>
-                            <span className="text-foreground/80 break-all font-mono">
-                              {formatPropertyValue(value)}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-
-                  {/* Inverse References - Who References This Entity */}
+                  {/* Referenced By Section */}
                   <div>
                     <h4 className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
                       Referenced By ({inverseReferences.length})
@@ -582,7 +672,7 @@ export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: I
                     )}
                   </div>
 
-                  {/* Forward References - Who This Entity References */}
+                  {/* References Section */}
                   {forwardReferences.length > 0 && (
                     <div>
                       <h4 className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
@@ -609,7 +699,7 @@ export const IFCTreeBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect }: I
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-32 text-muted-foreground">
-                  <p className="text-sm">Select an entity to view details and inverse references</p>
+                  <p className="text-sm">Select an entity to view references</p>
                 </div>
               )}
             </div>

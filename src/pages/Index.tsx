@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -8,75 +8,83 @@ import { NodeDetailsPanel } from '@/components/NodeDetailsPanel';
 import { GraphControls } from '@/components/GraphControls';
 import { StatsPanel } from '@/components/StatsPanel';
 import { Legend } from '@/components/Legend';
-import { PropertyViewer } from '@/components/PropertyViewer';
-import { IFCTreeBrowser } from '@/components/IFCTreeBrowser';
+import { IFCBrowser } from '@/components/IFCBrowser';
 import { ValidationDialog } from '@/components/ValidationDialog';
-import { parseIFCFile, generateSampleData, ParseProgressCallback } from '@/lib/ifcParser';
-import { parseIFC5File } from '@/lib/ifc5Parser';
-import { ParsedIFCData, GraphNode, NodeType } from '@/types/graph';
+import { AnalyticsDashboard } from '@/components/AnalyticsDashboard';
+import { generateSampleData } from '@/lib/ifcParser';
+import { ParsedIFCData, GraphNode, GraphEdge, NodeType } from '@/types/graph';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useKeyboardShortcuts, DEFAULT_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
+import { useIFCWorker } from '@/hooks/useIFCWorker';
+import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
+import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
+import { logger } from '@/utils/logger';
 
 const Index = () => {
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [parseProgress, setParseProgress] = useState(0);
-  const [parseMessage, setParseMessage] = useState('');
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showAttributes, setShowAttributes] = useState(false);
-  const [showRelatedMetadata, setShowRelatedMetadata] = useState(false);
+  const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4 | 5>(2); // Default to LoD2 (Minimal)
+  const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
+  const [relationshipFilters, setRelationshipFilters] = useState({
+    showContainment: true,
+    showAggregation: true,
+    showProperties: true,
+    showAuxiliary: false,
+  });
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [graphStats, setGraphStats] = useState({
+    totalNodes: 0,
+    totalEdges: 0,
+    filteredNodes: 0,
+    filteredEdges: 0,
+  });
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const graphCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Use Web Worker for parsing
+  const { parseFile, isLoading, progress, error: workerError } = useIFCWorker();
 
   const handleFileSelect = useCallback(async (file: File) => {
-    setIsLoading(true);
-    setParseProgress(0);
-    setParseMessage('');
-    
-    const progressHandler: ParseProgressCallback = (progress) => {
-      setParseProgress(progress.percentage);
-      setParseMessage(progress.message);
-    };
-    
     try {
-      let data: ParsedIFCData;
+      logger.parsing.start(file.name);
       
-      if (file.name.toLowerCase().endsWith('.ifcx')) {
-        data = await parseIFC5File(file);
-      } else {
-        data = await parseIFCFile(file, progressHandler);
-      }
+      // Parse in Web Worker (non-blocking)
+      const data = await parseFile(file);
+      
+      // Run enhanced validation
+      logger.validation.start(data.graphData.nodes.length);
+      const validationResult = validateIFCData(data.graphData.nodes, data.graphData.edges);
+      data.validation = validationResult;
+      logger.validation.complete(validationResult.stats.totalErrors, validationResult.stats.totalWarnings);
       
       setParsedData(data);
       toast.success(`Parsed ${data.metadata.entityCount} entities and ${data.metadata.relationshipCount} relationships`);
+      
+      if (validationResult.stats.totalErrors > 0) {
+        toast.warning(`Found ${validationResult.stats.totalErrors} validation errors`);
+      }
     } catch (error) {
+      logger.error('Error parsing IFC file:', error);
       console.error('Error parsing IFC file:', error);
       toast.error('Failed to parse IFC file. Please try a valid IFC file.');
-    } finally {
-      setIsLoading(false);
-      setParseProgress(0);
-      setParseMessage('');
     }
-  }, []);
-
-  const handleLoadSample = useCallback(() => {
-    const sampleData = generateSampleData();
-    setParsedData(sampleData);
-    toast.success('Sample building data loaded');
-  }, []);
+  }, [parseFile]);
 
   const handleReset = useCallback(() => {
     setParsedData(null);
     setSelectedNode(null);
     setHighlightedTypes([]);
     setSearchQuery('');
-    setShowAttributes(false);
-    setShowRelatedMetadata(false);
+    setGraphLoD(2);
+    setIncludeAuxiliaryLayer(false);
+    setRelationshipFilters({ showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false });
   }, []);
 
   const handleNodeClick = useCallback((node: GraphNode | null) => {
     setSelectedNode(node);
-    setShowRelatedMetadata(false); // Reset metadata visibility when selecting new node
   }, []);
 
   const handleTypeToggle = useCallback((type: NodeType) => {
@@ -88,13 +96,86 @@ const Index = () => {
     });
   }, []);
 
+  // Keyboard shortcuts
+  useKeyboardShortcuts([
+    {
+      ...DEFAULT_SHORTCUTS.SEARCH,
+      action: () => {
+        searchInputRef.current?.focus();
+      },
+    },
+    {
+      ...DEFAULT_SHORTCUTS.SAVE,
+      action: () => {
+        if (parsedData) {
+          exportToJSON(parsedData.graphData.nodes, parsedData.graphData.edges);
+        }
+      },
+    },
+    {
+      ...DEFAULT_SHORTCUTS.CLEAR,
+      action: () => {
+        setSelectedNode(null);
+        setSearchQuery('');
+      },
+    },
+    {
+      ...DEFAULT_SHORTCUTS.VALIDATE,
+      action: () => {
+        if (parsedData) {
+          const validation = validateIFCData(parsedData.graphData.nodes, parsedData.graphData.edges);
+          setParsedData({ ...parsedData, validation });
+          toast.success('Validation complete');
+        }
+      },
+    },
+  ]);
+
+  const handleLoadSample = useCallback(() => {
+    const sampleData = generateSampleData();
+    setParsedData(sampleData);
+    toast.success('Sample building data loaded');
+  }, []);
+
+  const handleLoDChange = useCallback((lod: 1 | 2 | 3 | 4 | 5) => {
+    setGraphLoD(lod);
+    if (lod !== 5) {
+      setIncludeAuxiliaryLayer(false);
+    }
+  }, []);
+
+  const handleRelationshipFilterChange = useCallback((filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary', value: boolean) => {
+    setRelationshipFilters(prev => ({ ...prev, [`show${filter.charAt(0).toUpperCase() + filter.slice(1)}`]: value }));
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <Header 
         hasData={!!parsedData} 
         onReset={handleReset}
         onLoadSample={handleLoadSample}
+        onShowAnalytics={() => setShowAnalytics(true)}
       />
+
+      {/* Analytics Modal */}
+      {parsedData && (
+        <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Analytics Dashboard</DialogTitle>
+            </DialogHeader>
+            <AnalyticsDashboard 
+              nodes={parsedData.graphData.nodes}
+              edges={parsedData.graphData.edges}
+              graphLoD={graphLoD}
+              onNodeSelect={(node) => {
+                setSelectedNode(node);
+                setShowAnalytics(false);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
 
       <main className="pt-20 h-screen">
         <AnimatePresence mode="wait">
@@ -118,9 +199,9 @@ const Index = () => {
 
               <FileUpload 
                 onFileSelect={handleFileSelect} 
-                isLoading={isLoading} 
-                progress={parseProgress}
-                progressMessage={parseMessage}
+                isLoading={isLoading}
+                progress={progress.percentage}
+                progressMessage={progress.message}
               />
 
               <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
@@ -145,19 +226,23 @@ const Index = () => {
               <ResizablePanelGroup direction="horizontal" className="h-full">
                 {/* Properties Panel - 20% (Left) */}
                 <ResizablePanel defaultSize={20} minSize={15} maxSize={40}>
-                  <div className="h-full overflow-y-auto bg-card/50 backdrop-blur-sm">
-                    {selectedNode ? (
-                      <NodeDetailsPanel
-                        node={selectedNode}
-                        onClose={() => setSelectedNode(null)}
-                      />
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-muted-foreground p-4">
-                        <div className="text-center">
-                          <p className="text-sm">Select an entity to view details</p>
-                        </div>
+                  <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
+                    <div className="space-y-4 p-4">
+                      {/* Node Details */}
+                      <div>
+                        {selectedNode ? (
+                          <NodeDetailsPanel
+                            node={selectedNode}
+                            onClose={() => setSelectedNode(null)}
+                            inline={true}
+                          />
+                        ) : (
+                          <div className="text-center text-muted-foreground p-4">
+                            <p className="text-sm">Select an entity to view details</p>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                 </ResizablePanel>
 
@@ -179,8 +264,10 @@ const Index = () => {
                       selectedNodeId={selectedNode?.id || null}
                       highlightedTypes={highlightedTypes}
                       searchQuery={searchQuery}
-                      showAttributes={showAttributes}
-                      showRelatedMetadata={showRelatedMetadata}
+                      graphLoD={graphLoD}
+                      includeAuxiliaryLayer={includeAuxiliaryLayer}
+                      relationshipFilters={relationshipFilters}
+                      onStatsUpdate={setGraphStats}
                     />
 
                     <GraphControls
@@ -188,11 +275,40 @@ const Index = () => {
                       onSearchChange={setSearchQuery}
                       highlightedTypes={highlightedTypes}
                       onTypeToggle={handleTypeToggle}
-                      showAttributes={showAttributes}
-                      onAttributesToggle={setShowAttributes}
-                      showRelatedMetadata={showRelatedMetadata}
-                      onRelatedMetadataToggle={setShowRelatedMetadata}
                       selectedNode={selectedNode}
+                      graphLoD={graphLoD}
+                      onLoDChange={handleLoDChange}
+                      includeAuxiliaryLayer={includeAuxiliaryLayer}
+                      onIncludeAuxiliaryToggle={setIncludeAuxiliaryLayer}
+                      relationshipFilters={relationshipFilters}
+                      onRelationshipFilterChange={handleRelationshipFilterChange}
+                      searchInputRef={searchInputRef}
+                      onExport={(format) => {
+                        const { nodes, edges } = parsedData.graphData;
+                        switch (format) {
+                          case 'json':
+                            exportToJSON(nodes, edges);
+                            break;
+                          case 'csv-nodes':
+                            exportNodesToCSV(nodes);
+                            break;
+                          case 'csv-edges':
+                            exportEdgesToCSV(edges);
+                            break;
+                          case 'step':
+                            exportToSTEP(nodes);
+                            break;
+                          case 'png':
+                            // Get canvas from graph visualization
+                            const canvasElement = document.querySelector('canvas') as HTMLCanvasElement;
+                            if (canvasElement) {
+                              exportToPNG(canvasElement);
+                            } else {
+                              toast.error('Could not access graph canvas');
+                            }
+                            break;
+                        }
+                      }}
                     />
 
                     <StatsPanel metadata={parsedData.metadata} />
@@ -205,11 +321,12 @@ const Index = () => {
                 {/* Tree Browser Panel - 30% (Right) */}
                 <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
                   <div className="h-full overflow-hidden border-r border-border">
-                    <IFCTreeBrowser
+                    <IFCBrowser
                       nodes={parsedData.allEntities || parsedData.graphData.nodes}
                       edges={parsedData.graphData.edges}
                       selectedNodeId={selectedNode?.id || null}
                       onNodeSelect={handleNodeClick}
+                      metadata={parsedData.metadata}
                     />
                   </div>
                 </ResizablePanel>

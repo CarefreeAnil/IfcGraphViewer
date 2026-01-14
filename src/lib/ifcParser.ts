@@ -1,6 +1,7 @@
 import * as WebIFC from 'web-ifc';
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
-import { validateIFCData } from '@/lib/ifcValidator';
+import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
+import { parseIFC5File } from '@/lib/ifc5Parser';
 import { getEntityDef, getEntityColor, getEntityIcon, getEntityDisplayName, getEntityCategory } from '@/lib/ifcSchema';
 
 // Geometry-related IFC types to exclude (these deal with visual representations)
@@ -328,6 +329,136 @@ export type ParseProgressCallback = (progress: {
   message: string;
 }) => void;
 
+/**
+ * Extract raw STEP format lines from IFC file
+ * Returns a map of expressID to raw STEP line text (with #ID= prefix and entity data)
+ */
+function extractRawStepLines(fileText: string): Map<number, string> {
+  const stepLineMap = new Map<number, string>();
+  
+  try {
+    // Extract DATA section
+    const dataMatch = fileText.match(/DATA;\s*([\s\S]*?)\s*ENDSEC;/i);
+    if (!dataMatch) {
+      console.warn('Could not find DATA section in IFC file');
+      return stepLineMap;
+    }
+
+    const dataContent = dataMatch[1];
+    
+    // Extract each line - format: #123=ENTITYTYPE(...)
+    // Lines can span multiple physical lines, so we need to handle that
+    const lines = dataContent.split('\n');
+    let currentLine = '';
+    let currentId: number | null = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      if (!line) continue;
+      
+      // Check if this line starts a new STEP entity
+      const idMatch = line.match(/^#(\d+)=/);
+      
+      if (idMatch) {
+        // If we have a previous line, save it
+        if (currentId !== null && currentLine) {
+          stepLineMap.set(currentId, currentLine);
+        }
+        
+        // Start new line
+        currentId = parseInt(idMatch[1], 10);
+        currentLine = line;
+      } else {
+        // Continue previous line
+        if (currentId !== null) {
+          currentLine += ' ' + line;
+        }
+      }
+      
+      // Check if line is complete (ends with ;)
+      if (currentLine.endsWith(';')) {
+        if (currentId !== null) {
+          stepLineMap.set(currentId, currentLine);
+          currentId = null;
+          currentLine = '';
+        }
+      }
+    }
+    
+    // Handle last line if incomplete
+    if (currentId !== null && currentLine) {
+      stepLineMap.set(currentId, currentLine);
+    }
+  } catch (err) {
+    console.warn('Error extracting raw STEP lines:', err);
+  }
+  
+  return stepLineMap;
+}
+function extractIFCHeader(fileText: string): {
+  fullHeader: string;
+  fileDescription: string;
+  fileName: string;
+  fileSchema: string;
+  timeStamp?: string;
+} {
+  const result = {
+    fullHeader: '',
+    fileDescription: '',
+    fileName: '',
+    fileSchema: '',
+    timeStamp: undefined as string | undefined,
+  };
+
+  try {
+    // Extract HEADER section - find lines between HEADER; and ENDSEC;
+    const headerMatch = fileText.match(/HEADER;([\s\S]*?)ENDSEC;/i);
+    if (!headerMatch) {
+      console.warn('Could not find HEADER section in IFC file');
+      return result;
+    }
+
+    const headerContent = headerMatch[1].trim();
+    
+    // Store the full header text for display
+    result.fullHeader = headerContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n');
+
+    // Extract FILE_DESCRIPTION - format: FILE_DESCRIPTION((...), '...');
+    const fileDescMatch = headerContent.match(/FILE_DESCRIPTION\s*\(([\s\S]*?)\s*;/i);
+    if (fileDescMatch) {
+      // Extract the description content - look for quoted strings in first parameter
+      const descContent = fileDescMatch[1];
+      const descMatch = descContent.match(/\(\s*'([^']*)'/);
+      if (descMatch) {
+        result.fileDescription = descMatch[1];
+      }
+    }
+
+    // Extract FILE_NAME - format: FILE_NAME('filename', 'timestamp', ...);
+    // Need to handle multi-line FILE_NAME entries
+    const fileNameMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'/i);
+    if (fileNameMatch) {
+      result.fileName = fileNameMatch[1];
+      result.timeStamp = fileNameMatch[2];
+    }
+
+    // Extract FILE_SCHEMA - format: FILE_SCHEMA((...));
+    const fileSchemaMatch = headerContent.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']*)'\s*\)\s*\)/i);
+    if (fileSchemaMatch) {
+      result.fileSchema = fileSchemaMatch[1];
+    }
+  } catch (err) {
+    console.warn('Error extracting IFC header:', err);
+  }
+
+  return result;
+}
+
 export async function parseIFCFile(
   file: File,
   onProgress?: ParseProgressCallback
@@ -352,6 +483,91 @@ export async function parseIFCFile(
   const buffer = await file.arrayBuffer();
   const data = new Uint8Array(buffer);
   
+  // Detect file format (STEP vs JSON/IFCX)
+  let fileFormat: 'STEP' | 'JSON' = 'STEP';
+  let fileText = '';
+  let isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
+  
+  // Extract IFC header metadata from raw file content
+  let ifcHeader = {
+    fullHeader: '',
+    fileDescription: '',
+    fileName: '',
+    fileSchema: '',
+    timeStamp: undefined as string | undefined,
+  };
+  
+  let rawStepLines: Map<number, string> = new Map();
+  
+  try {
+    // Try to decode file as text to extract header and detect format
+    fileText = new TextDecoder().decode(data);
+    
+    // Check if it's a JSON file (IFC5) or STEP file
+    if (fileText.trim().startsWith('{')) {
+      fileFormat = 'JSON';
+      
+      // For JSON/IFC5 files, use the dedicated parser
+      onProgress?.({
+        stage: 'parsing',
+        percentage: 20,
+        message: 'Parsing IFC5 JSON format...'
+      });
+      
+      try {
+        const result = await parseIFC5File(file);
+        
+        // Ensure the result has proper metadata
+        if (result.metadata && !result.metadata.ifcHeader) {
+          result.metadata.ifcHeader = {
+            fileDescription: '',
+            fileName: file.name,
+            fileSchema: 'IFC5',
+            timeStamp: new Date().toISOString(),
+            fullHeader: 'IFC5 Format (JSON-based)',
+          };
+        }
+        
+        onProgress?.({
+          stage: 'complete',
+          percentage: 100,
+          message: 'IFC5 file parsed successfully'
+        });
+        
+        return result;
+      } catch (err) {
+        console.error('Failed to parse as IFC5:', err);
+        throw new Error(`Failed to parse IFC5 file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    } else {
+      fileFormat = 'STEP';
+    }
+    
+    // Only extract header for STEP files
+    if (fileFormat === 'STEP') {
+      const extractedHeader = extractIFCHeader(fileText);
+      ifcHeader = {
+        fullHeader: extractedHeader.fullHeader,
+        fileDescription: extractedHeader.fileDescription,
+        fileName: extractedHeader.fileName,
+        fileSchema: extractedHeader.fileSchema,
+        timeStamp: extractedHeader.timeStamp,
+      };
+      
+      // Extract raw STEP lines from the file
+      rawStepLines = extractRawStepLines(fileText);
+    }
+    
+    // If fileName wasn't extracted from header, use the file name
+    if (!ifcHeader.fileName) {
+      ifcHeader.fileName = file.name;
+    }
+  } catch (err) {
+    console.warn('Could not extract IFC header from file text:', err);
+    // Fallback: use file name
+    ifcHeader.fileName = file.name;
+  }
+  
   const modelId = ifcApi.OpenModel(data);
   
   // Notify progress: Parsing started
@@ -360,75 +576,22 @@ export async function parseIFCFile(
     percentage: 20,
     message: 'Parsing IFC model structure...'
   });
-  const allEntities: GraphNode[] = [];  // ALL parsed entities for validation, tree, properties
-  const graphNodes: GraphNode[] = [];   // Only entities for graph visualization (non-geometry)
+  const allEntities: GraphNode[] = [];  // ALL parsed entities (complete dataset for all consumers)
   const edges: GraphEdge[] = [];
   const nodeMap = new Map<number, GraphNode>();
-  
-  let geometryEntityCount = 0;
-  let propertyEntityCount = 0;
   
   // Get all entity types in the model
   const allTypes = ifcApi.GetAllTypesOfModel(modelId);
   
-  // METADATA_TYPES - should be parsed for tree browser but marked as metadata
-  // These should NOT be shown in graph, and should NOT be referenced structurally
-  const METADATA_TYPES = new Set([
+  // ADMIN_ONLY_TYPES: Entities that should NEVER appear in any visualization
+  // These are purely administrative and have 0% visual value
+  // All other entities will be included in the complete dataset for LoD filtering
+  const ADMIN_ONLY_TYPES = new Set([
     'IFCOWNERHISTORY',           // Admin ownership tracking
     'IFCPERSON',                  // Creator/modifier person
     'IFCORGANIZATION',            // Creator/modifier organization  
     'IFCPERSONANDORGANIZATION',   // Person + org combo
     'IFCAPPLICATION',             // Software that created entity
-    // Type definitions - these are templates, not instances
-    'IFCWALLTYPE',                // Wall type definition
-    'IFCDOORTYPE',                // Door type definition
-    'IFCWINDOWTYPE',              // Window type definition
-    'IFCCOLUMNTYPE',              // Column type definition
-    'IFCSLABTYPE',                // Slab type definition
-    'IFCBEAMTYPE',                // Beam type definition
-    'IFCRAMPTYPE',
-    'IFCSTAIRTYPE',
-    'IFCRAILINGTYPE',             // Railing type definition
-    'IFCMEMBERTYPE',              // Member type definition
-    'IFCSPACETYPE',               // Space type definition
-    // Units and schema entities
-    'IFCUNITASSIGNMENT',          // Unit definitions
-    'IFCSIUNIT',                  // SI unit
-    'IFCCONVERSIONBASEDUNIT',     // Conversion units
-    'IFCDIMENSIONALEXPONENTS',
-    'IFCDERIVEDUNIT',             // Derived unit (e.g., cm^2)
-    'IFCDERIVEDUNITELEMENT',      // Element of a derived unit
-    'IFCMEASUREWITHUNIT',         // Value with unit pairing
-    'IFCMONETARYUNIT',            // Currency unit
-    // Presentation/layer info and text styling
-    'IFCPRESENTATIONLAYERASSIGNMENT',
-    'IFCTEXTSTYLE',               // Text style definition
-    'IFCTEXTSTYLETEXTMODEL',      // Text style model
-    'IFCTEXTSTYLEFONTMODEL',      // Font style definition
-    'IFCTEXTSTYLEFORDEFINEDFONT', // Text style with font reference
-    // Geometric metadata (not actual geometry)
-    'IFCPLANAREXTENT',            // 2D extent definition
-    'IFCBOUNDINGBOX',             // Bounding box (metadata, not actual representation)
-    // Property definitions (metadata for element properties)
-    'IFCWINDOWLININGPROPERTIES',  // Window lining property set
-    'IFCWINDOWPANELPROPERTIES',   // Window panel property set
-    'IFCDOORPANELPROPERTIES',     // Door panel property set
-    'IFCDOORLININGPROPERTIES',    // Door lining property set
-    'IFCPROPERTYSET',             // Generic property set
-    'IFCQUANTITYSET',             // Quantity set
-    // Relationship definition entities (these are processed as edges, not nodes)
-    'IFCRELDEFINESBYTYPE',        // Type definition relationship
-    'IFCRELDEFINESBYPROPERTIES',  // Property definition relationship
-    'IFCRELAGGREGATES',           // Aggregation relationship
-    'IFCRELCONTAINEDINSPATIALSTRUCTURE', // Spatial containment relationship
-    'IFCRELVOIDSELEMENT',         // Void relationship
-    'IFCRELFILLSELEMENT',         // Fill relationship
-    'IFCRELASSOCIATESMATERIAL',   // Material association
-    'IFCRELASSOCIATESCLASSIFICATION', // Classification association
-    'IFCRELSPACEBOUNDARY',        // Space boundary relationship
-    'IFCRELCONNECTSPATHELEMENTS', // Path element connection
-    // Virtual elements (logical, not physical)
-    'IFCVIRTUALELEMENT',          // Virtual building element
   ]);
   
   // METADATA_PROPERTIES that should be skipped during REFERENCE EXTRACTION
@@ -608,23 +771,17 @@ export async function parseIFCFile(
               }
             }
             
-            // Determine if this should be visible in the graph
-            let isGraphVisible = true;
+            // Classify entity type for informational purposes
             const typeNameUpper = typeName.toUpperCase();
-            let isMetadata = false;
+            let nodeClassification = 'element';
             
-            // Mark metadata entities (parse them, but hide from graph and don't reference)
-            if (METADATA_TYPES.has(typeNameUpper)) {
+            if (ADMIN_ONLY_TYPES.has(typeNameUpper)) {
               nodeTypeFromSchema = 'property';
-              isGraphVisible = false;
-              isMetadata = true;
-              propertyEntityCount++;
-              console.debug(`Parsed metadata entity: ${typeName}`);
+              nodeClassification = 'property';
+              console.debug(`Parsed admin entity: ${typeName}`);
             } else if (isGeometryType(typeName)) {
               nodeTypeFromSchema = 'geometry';
-              isGraphVisible = false;
-              geometryEntityCount++;
-              console.debug(`Filtered geometry: ${typeName}`);
+              nodeClassification = 'geometry';
             } else if (PROPERTY_TYPES.has(typeNameUpper) || 
                        typeNameUpper.includes('QUANTITY') || 
                        typeNameUpper.includes('PROPERTY') ||
@@ -633,15 +790,15 @@ export async function parseIFCFile(
                        typeNameUpper.includes('MATERIAL') ||
                        typeNameUpper.includes('CLASSIFICATION')) {
               nodeTypeFromSchema = 'property';
-              isGraphVisible = false;
-              propertyEntityCount++;
-              console.debug(`Filtered property: ${typeName} - ${properties.Name || 'unknown'}`);
+              nodeClassification = 'property';
             }
             
             const finalNodeType = schemaDef ? nodeTypeFromSchema : nodeType;
             
-            // Reconstruct IFC STEP format to show original reference structure
-            const ifcStepRepresentation = reconstructIFCStepFormat(typeName, entity, ifcApi, modelId);
+            // Use raw STEP format from file if available, otherwise reconstruct
+            // For JSON/IFC5 files, reconstructIFCStepFormat will handle it
+            const rawStepLine = rawStepLines.get(expressId);
+            const ifcStepRepresentation = rawStepLine || reconstructIFCStepFormat(typeName, entity, ifcApi, modelId);
             
             const node: GraphNode = {
               id: `node_${expressId}`,
@@ -649,26 +806,18 @@ export async function parseIFCFile(
               type: finalNodeType,
               ifcType: typeName,
               properties: {
-                _ifcStep: ifcStepRepresentation,  // Full IFC STEP representation at the top
+                _ifcStep: ifcStepRepresentation,  // Full IFC STEP representation from file (or reconstructed)
+                _fileFormat: fileFormat,           // Store file format (STEP or JSON)
                 ...properties,
                 _schemaColor: entityColor,
                 _schemaIcon: entityIcon,
               },
               expressId,
-              isGraphVisible,
-              isMetadata,
             };
             
-            // Add to all entities (for tree, validation, properties panel)
+            // Add to complete dataset (used by all consumers)
             allEntities.push(node);
-            
-            // Add to graph nodes for visualization
-            // Metadata nodes will be included but hidden by default (filtered in visualization component)
-            // Geometry nodes are excluded entirely
-            if (isGraphVisible) {
-              graphNodes.push(node);
-              nodeMap.set(expressId, node);
-            }
+            nodeMap.set(expressId, node);
             
             // Debug IFCPROJECT specifically
             if (typeName.toUpperCase() === 'IFCPROJECT') {
@@ -677,7 +826,6 @@ export async function parseIFCFile(
                 label: node.label, 
                 color: entityColor,
                 type: finalNodeType,
-                isGraphVisible 
               });
             }
           }
@@ -824,94 +972,16 @@ export async function parseIFCFile(
   
   const endTime = performance.now();
 
-  // ==== DEBUGGING: Find floating/disconnected nodes ====
-  const graphNodeIds = new Set(graphNodes.map(n => n.id));
-  const edgeReferencedNodeIds = new Set<string>();
-  const disconnectedEdges: typeof edges = [];
-  
-  edges.forEach(edge => {
-    edgeReferencedNodeIds.add(edge.source);
-    edgeReferencedNodeIds.add(edge.target);
-    
-    // Check if edge references non-existent nodes
-    if (!graphNodeIds.has(edge.source) || !graphNodeIds.has(edge.target)) {
-      disconnectedEdges.push(edge);
-    }
-  });
-
-  // Find nodes that have no edges
-  const floatingNodes = graphNodes.filter(node => !edgeReferencedNodeIds.has(node.id));
-  
-  // Group by type
-  const floatingByType: Record<string, string[]> = {};
-  floatingNodes.forEach(node => {
-    if (!floatingByType[node.type]) {
-      floatingByType[node.type] = [];
-    }
-    floatingByType[node.type].push(`${node.label} (${node.ifcType})`);
-  });
-
+  // Log parse statistics
   console.log('Parse Results:', {
     totalEntities: allEntities.length,
-    graphNodes: graphNodes.length,
     edges: edges.length,
-    geometryEntities: geometryEntityCount,
-    propertyEntities: propertyEntityCount,
-    hasProject,
     parseTime: endTime - startTime,
   });
 
-  // Log floating nodes for debugging with detailed breakdown
-  if (floatingNodes.length > 0) {
-    console.warn(`⚠️ Found ${floatingNodes.length} floating nodes (no relationships)`);
-    console.warn('  By type (visual):', floatingByType);
-    
-    // Group by IFC type to identify patterns
-    const floatingByIfcType: Record<string, number> = {};
-    floatingNodes.forEach(node => {
-      const ifcType = node.ifcType || 'UNKNOWN';
-      floatingByIfcType[ifcType] = (floatingByIfcType[ifcType] || 0) + 1;
-    });
-    
-    // Log as table for better readability
-    console.table(floatingByIfcType);
-    console.log('📍 Floating nodes by IFC type (JSON):', JSON.stringify(floatingByIfcType, null, 2));
-    
-    // Sample first few floating nodes
-    const samples = floatingNodes.slice(0, 10).map(n => ({
-      id: n.id,
-      label: n.label,
-      type: n.type,
-      ifcType: n.ifcType
-    }));
-    console.log('📍 Sample floating nodes (first 10):');
-    console.table(samples);
-  }
-  
-  // Log disconnected edges for debugging - these identify references to filtered nodes
-  if (disconnectedEdges.length > 0) {
-    console.error(`❌ Found ${disconnectedEdges.length} edges referencing non-existent nodes`);
-    
-    // Group by edge type to identify patterns
-    const disconnectedByType: Record<string, number> = {};
-    disconnectedEdges.forEach(edge => {
-      disconnectedByType[edge.type] = (disconnectedByType[edge.type] || 0) + 1;
-    });
-    console.log('❌ Disconnected edge types (JSON):');
-    console.table(disconnectedByType);
-    console.log('Details:', JSON.stringify(disconnectedByType, null, 2));
-    
-    console.log('❌ Sample disconnected edges:');
-    disconnectedEdges.slice(0, 15).forEach((edge, idx) => {
-      const sourceExists = graphNodeIds.has(edge.source);
-      const targetExists = graphNodeIds.has(edge.target);
-      console.log(`  [${idx}] ${edge.type} | ${edge.source}(${sourceExists ? '✓' : '✗'}) → ${edge.target}(${targetExists ? '✓' : '✗'})`);
-    });
-  }
-  
-  // Log node distribution
+  // Log node distribution by type
   const nodesByType: Record<string, number> = {};
-  graphNodes.forEach(node => {
+  allEntities.forEach(node => {
     nodesByType[node.type] = (nodesByType[node.type] || 0) + 1;
   });
   console.log('📊 Node distribution in graph:', nodesByType);
@@ -933,16 +1003,17 @@ export async function parseIFCFile(
   });
   
   return {
-    graphData: { nodes: graphNodes, edges },
+    graphData: { nodes: allEntities, edges },
     allEntities,
     metadata: {
       fileName: file.name,
       fileSize: file.size,
       entityCount: allEntities.length,
-      geometryEntityCount,
-      propertyEntityCount,
       relationshipCount: edges.length,
       parseTime: endTime - startTime,
+      geometryEntityCount: 0,
+      propertyEntityCount: 0,
+      ifcHeader,
     },
     validation,
   };
@@ -1028,7 +1099,15 @@ export function generateSampleData(): ParsedIFCData {
       propertyEntityCount: 2,
       relationshipCount: edges.length,
       parseTime: 0,
+      ifcHeader: {
+        fileDescription: 'Sample IFC Building Model for Demonstration',
+        fileName: 'sample_building.ifc',
+        fileSchema: 'IFC2X3',
+        timeStamp: String(Date.now()),
+        fullHeader: 'FILE_DESCRIPTION((\'Sample IFC Building Model for Demonstration\'),\'2;1\');\nFILE_NAME(\'sample_building.ifc\',\'\',\'\',\'\',\'\',\'\',\'\');\nFILE_SCHEMA((\'IFC2X3\'));',
+      },
     },
+    validation: validateIFCData(allEntities, edges),
   };
 }
 

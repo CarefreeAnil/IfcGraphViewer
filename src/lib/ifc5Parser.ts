@@ -1,5 +1,6 @@
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
-import { validateIFCData, validateIFC5JSONStructure } from '@/lib/ifcValidator';
+import { validateIFC5JSONStructure } from '@/lib/ifcValidator';
+import { ValidationError, ValidationResult } from '@/lib/ifcValidatorEnhanced';
 
 /**
  * IFC5 Parser - Handles JSON-based .ifcx files
@@ -16,6 +17,9 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
     const nodeMap = new Map<string, GraphNode>();
+    
+    // Extract header information from IFC5 JSON structure
+    const fileHeader = extractIFC5Header(jsonData);
     
     // Extract data array
     const dataArray = jsonData.data || [];
@@ -59,6 +63,9 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
         }
       });
       
+      // Generate STEP-like representation for Referenced By algorithm
+      const ifcStepLine = generateIFC5StepLine(uuid, ifcType, properties, attributes);
+      
       const node: GraphNode = {
         id: uuid,
         label: label,
@@ -66,6 +73,8 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
         ifcType: ifcType,
         expressId: uuid,
         properties: properties,
+        _ifcStep: ifcStepLine,
+        _fileFormat: 'JSON',
       };
       
       nodes.push(node);
@@ -159,16 +168,29 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
     const endTime = performance.now();
 
     // Validate JSON structure only (IFC5 semantic validation is different from IFC4)
-    const syntaxErrors = validateIFC5JSONStructure(jsonData);
+    const baseValidationErrors = validateIFC5JSONStructure(jsonData);
+    
+    // Convert to enhanced validation errors with code field
+    const syntaxErrors: ValidationError[] = baseValidationErrors.map((err: any) => ({
+      severity: err.severity || 'error',
+      type: err.type || 'SYNTAX_ERROR',
+      code: err.code || 'IFC5_JSON_SYNTAX',
+      message: err.message,
+      entityId: err.entityId,
+      entityType: err.entityType,
+      lineNumber: err.lineNumber,
+    }));
     
     // Create validation result for IFC5 (only JSON structure checks)
-    const validation = {
+    const validation: ValidationResult = {
       valid: syntaxErrors.length === 0,
+      schemaVersion: 'IFC5',
       errors: syntaxErrors,
       warnings: [],
       info: [{
-        severity: 'info' as const,
+        severity: 'info',
         type: 'IFC5_FORMAT',
+        code: 'IFC5_JSON_FORMAT',
         message: `IFC5 (JSON) format detected. Semantic validation rules are specific to IFC4 STEP format.`,
       }],
       stats: {
@@ -177,8 +199,13 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
         totalInfo: 1,
         checkedEntities: nodes.length,
         checkedRelationships: edges.length,
+        checkedProperties: 0,
         entityTypeCount: {},
         relationshipTypeCount: {},
+        missingRequiredProperties: 0,
+        invalidDataTypes: 0,
+        brokenReferences: 0,
+        circularReferences: 0,
       },
     };
     
@@ -193,6 +220,7 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
         propertyEntityCount: 0,
         relationshipCount: edges.length,
         parseTime: endTime - startTime,
+        ifcHeader: fileHeader,
       },
       validation,
     };
@@ -218,4 +246,81 @@ function classifyNodeTypeIFC5(ifcType: string): NodeType {
     return 'relationship';
   }
   return 'element';
+}
+
+/**
+ * Generate a STEP-like representation for IFC5 JSON nodes
+ * This allows the Referenced By algorithm to work with JSON-parsed entities
+ */
+function generateIFC5StepLine(uuid: string, ifcType: string, properties: Record<string, any>, attributes: any): string {
+  // Build a STEP-like line that includes the UUID and type
+  // Format: #UUID = IFCTYPE(prop1, prop2, ...)
+  
+  const propArray: string[] = [];
+  
+  // Add class code if available
+  if (attributes['bsi::ifc::class']?.code) {
+    propArray.push(`'${attributes['bsi::ifc::class'].code}'`);
+  }
+  
+  // Add key properties
+  Object.entries(properties).forEach(([key, value]) => {
+    if (key !== 'OriginalSTEP' && key !== 'ifc::') {
+      if (typeof value === 'string') {
+        propArray.push(`'${value}'`);
+      } else if (typeof value === 'number') {
+        propArray.push(String(value));
+      } else if (typeof value === 'object' && value.code) {
+        propArray.push(`'${value.code}'`);
+      }
+    }
+  });
+  
+  // Use originalStepInstance if available
+  if (properties['OriginalSTEP']) {
+    return properties['OriginalSTEP'];
+  }
+  
+  // Construct synthetic STEP line
+  return `#${uuid} = ${ifcType}(${propArray.join(', ')});`;
+}
+
+/**
+ * Extract header information from IFC5 JSON structure
+ */
+function extractIFC5Header(jsonData: any) {
+  const header = {
+    fileDescription: '',
+    fileName: 'Unknown',
+    fileSchema: 'IFC5',
+    timeStamp: new Date().toISOString(),
+    fullHeader: 'IFC5 (JSON Format)',
+  };
+  
+  // Try to extract header from JSON structure
+  if (jsonData.header) {
+    const fdArray = jsonData.header.fileDescription || [];
+    header.fileDescription = Array.isArray(fdArray) ? fdArray.join(', ') : String(fdArray);
+    header.fileName = jsonData.header.fileName || 'Unknown';
+    header.fileSchema = jsonData.header.fileSchema || 'IFC5';
+    
+    if (jsonData.header.timeStamp) {
+      header.timeStamp = jsonData.header.timeStamp;
+    }
+    
+    // Build fullHeader from available fields
+    const headerLines = [
+      `HEADER;`,
+      `FILE_DESCRIPTION('${header.fileDescription}', '${header.fileSchema}');`,
+      `FILE_NAME('${header.fileName}', '${header.timeStamp}');`,
+      `FILE_SCHEMA(('${header.fileSchema}'));`,
+      `ENDSEC;`,
+    ];
+    header.fullHeader = headerLines.join('\n');
+  } else {
+    // Minimal header if not available
+    header.fullHeader = `HEADER;\nFILE_SCHEMA(('IFC5 - JSON Format'));\nENDSEC;`;
+  }
+  
+  return header;
 }
