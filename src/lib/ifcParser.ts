@@ -1,8 +1,12 @@
 import * as WebIFC from 'web-ifc';
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
 import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
-import { parseIFC5File } from '@/lib/ifc5Parser';
 import { getEntityDef, getEntityColor, getEntityIcon, getEntityDisplayName, getEntityCategory } from '@/lib/ifcSchema';
+// IFC5 imports
+import { isIFC5File, loadIFC5FromFile, getIFC5FileInfo } from '@/lib/ifc5ParserMain';
+import { parseIFC5File as parseIFC5Tree } from '@/lib/ifc5ParserMain';
+import { convertToComposedObject, convertToGraph, getIFC5Statistics } from '@/lib/ifc5ToGraph';
+import { IFC5File, ComposedObject } from '@/types/ifc5';
 
 // Geometry-related IFC types to exclude (these deal with visual representations)
 const GEOMETRY_TYPES = new Set([
@@ -210,6 +214,10 @@ const NODE_COLORS: Record<NodeType, string> = {
   relationship: '#f472b6', // pink (for relationships)
   geometry: '#9ca3af',    // gray (for geometry - not visible in graph but in tree)
   other: '#6b7280',       // dark gray (for other types)
+  Mesh: '#60a5fa',        // blue (IFC5)
+  Curve: '#fb923c',       // orange (IFC5)
+  Points: '#c084fc',      // violet (IFC5)
+  Group: '#34d399',       // emerald (IFC5)
 };
 
 const IFC_TYPE_MAPPING: Record<number, NodeType> = {
@@ -504,29 +512,88 @@ export async function parseIFCFile(
     fileText = new TextDecoder().decode(data);
     
     // Check if it's a JSON file (IFC5) or STEP file
-    if (fileText.trim().startsWith('{')) {
+    if (fileText.trim().startsWith('{') || isIFC5File(file)) {
       fileFormat = 'JSON';
       
-      // For JSON/IFC5 files, use the dedicated parser
+      // For JSON/IFC5 files, use the dedicated IFC5 parser
       onProgress?.({
         stage: 'parsing',
         percentage: 20,
-        message: 'Parsing IFC5 JSON format...'
+        message: 'Parsing IFC5 (.ifcx) JSON format...'
       });
       
       try {
-        const result = await parseIFC5File(file);
+        // Load IFC5 file structure
+        const ifc5File: IFC5File = await loadIFC5FromFile(file);
         
-        // Ensure the result has proper metadata
-        if (result.metadata && !result.metadata.ifcHeader) {
-          result.metadata.ifcHeader = {
-            fileDescription: '',
-            fileName: file.name,
-            fileSchema: 'IFC5',
-            timeStamp: new Date().toISOString(),
-            fullHeader: 'IFC5 Format (JSON-based)',
-          };
-        }
+        onProgress?.({
+          stage: 'parsing',
+          percentage: 40,
+          message: 'Composing IFC5 tree structure...'
+        });
+        
+        // Parse and compose the tree (skip schema validation for now as not all schemas are included)
+        const composedTree = parseIFC5Tree(ifc5File, {
+          validateSchemas: false,
+          createArtificialRoot: true,
+        });
+        
+        onProgress?.({
+          stage: 'parsing',
+          percentage: 60,
+          message: 'Converting IFC5 to graph representation...'
+        });
+        
+        // Convert to ComposedObject for rendering
+        const composedObject: ComposedObject = convertToComposedObject(
+          '',
+          composedTree,
+          ifc5File.schemas
+        );
+        
+        // Convert to graph structure
+        const { nodes, edges } = convertToGraph(composedObject);
+        
+        // Get statistics
+        const stats = getIFC5Statistics(composedObject);
+        const fileInfo = getIFC5FileInfo(ifc5File);
+        
+        onProgress?.({
+          stage: 'processing',
+          percentage: 80,
+          message: 'Finalizing IFC5 data...'
+        });
+        
+        // Build the result structure
+        const result: ParsedIFCData = {
+          graphData: {
+            nodes,
+            edges,
+          },
+          metadata: {
+            ifcHeader: {
+              fileDescription: `IFC5 file with ${stats.totalNodes} nodes`,
+              fileName: file.name,
+              fileSchema: `IFC5 (${fileInfo.version})`,
+              timeStamp: fileInfo.timestamp,
+              fullHeader: `IFC5 Format - Author: ${fileInfo.author}, Version: ${fileInfo.version}`,
+            },
+            parseTime: performance.now() - startTime,
+            totalEntities: stats.totalNodes,
+            entityCounts: {
+              Mesh: stats.meshCount,
+              Curve: stats.curveCount,
+              Points: stats.pointCloudCount,
+              Group: stats.groupCount,
+            },
+            relationships: edges.length,
+            isIFC5: true,
+          },
+          rawData: {
+            composedObject, // Store the composed object for 3D rendering
+            ifc5File,       // Store the original file for reference
+          },
+        };
         
         onProgress?.({
           stage: 'complete',
@@ -537,6 +604,13 @@ export async function parseIFCFile(
         return result;
       } catch (err) {
         console.error('Failed to parse as IFC5:', err);
+        // Don't re-throw here - instead, log and provide user feedback
+        // The user can try loading as IFC4 if this is actually an IFC4 file
+        onProgress?.({
+          stage: 'complete',
+          percentage: 100,
+          message: `Failed to parse IFC5 file: ${err instanceof Error ? err.message : 'Unknown error'}`
+        });
         throw new Error(`Failed to parse IFC5 file: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     } else {

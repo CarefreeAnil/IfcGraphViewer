@@ -3,8 +3,7 @@
  * Renders large lists efficiently with automatic pagination
  */
 
-import { forwardRef, ReactNode, useMemo } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { forwardRef, ReactNode, useMemo, useState } from 'react';
 
 interface VirtualListProps<T> {
   items: T[];
@@ -17,17 +16,23 @@ interface VirtualListProps<T> {
 
 export const VirtualList = forwardRef<HTMLDivElement, VirtualListProps<any>>(
   ({ items, itemHeight, containerHeight, renderItem, bufferSize = 5, className = '' }, ref) => {
+    const [scrollTop, setScrollTop] = useState(0);
     const bufferSizeValue = bufferSize;
 
-    // Calculate visible range
     const visibleItems = Math.ceil(containerHeight / itemHeight) + bufferSizeValue * 2;
-    
-    // Pre-render virtualized items
+    const shouldVirtualize = items.length > visibleItems;
+    const startIndex = shouldVirtualize
+      ? Math.max(0, Math.floor(scrollTop / itemHeight) - bufferSizeValue)
+      : 0;
+    const endIndex = shouldVirtualize
+      ? Math.min(items.length, startIndex + visibleItems)
+      : items.length;
+    const offsetY = shouldVirtualize ? startIndex * itemHeight : 0;
+    const paddingBottom = shouldVirtualize ? (items.length - endIndex) * itemHeight : 0;
+
     const virtualItems = useMemo(() => {
-      const total = items.length;
       const result = [];
-      
-      for (let i = 0; i < total; i++) {
+      for (let i = startIndex; i < endIndex; i++) {
         result.push(
           <div
             key={i}
@@ -41,18 +46,21 @@ export const VirtualList = forwardRef<HTMLDivElement, VirtualListProps<any>>(
           </div>
         );
       }
-      
       return result;
-    }, [items, itemHeight, renderItem]);
+    }, [items, itemHeight, renderItem, startIndex, endIndex]);
 
     return (
       <div
         ref={ref}
         className={`overflow-y-auto overflow-x-hidden ${className}`}
         style={{ height: containerHeight }}
+        onScroll={(e) => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
       >
-        <div style={{ height: items.length * itemHeight }}>
-          {virtualItems}
+        <div style={{ height: items.length * itemHeight, position: 'relative' }}>
+          <div style={shouldVirtualize ? { transform: `translateY(${offsetY}px)` } : undefined}>
+            {virtualItems}
+          </div>
+          {paddingBottom > 0 && <div style={{ height: paddingBottom }} />}
         </div>
       </div>
     );

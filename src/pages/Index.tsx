@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -9,8 +9,11 @@ import { StatsPanel } from '@/components/StatsPanel';
 import { Legend } from '@/components/Legend';
 import { IFCBrowser } from '@/components/IFCBrowser';
 import { ValidationDialog } from '@/components/ValidationDialog';
+import { IFC5TreeBrowser } from '@/components/IFC5TreeBrowser';
+import { IFC5PropertyViewer } from '@/components/IFC5PropertyViewer';
 import { generateSampleData } from '@/lib/ifcParser';
 import { ParsedIFCData, GraphNode, GraphEdge, NodeType } from '@/types/graph';
+import { ComposedObject } from '@/types/ifc5';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
@@ -18,6 +21,7 @@ import { useIFCWorker } from '@/hooks/useIFCWorker';
 import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
 import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
 import { logger } from '@/utils/logger';
+import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
 
 // Lazy load heavy components
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
@@ -26,6 +30,7 @@ const Viewer3D = lazy(() => import('@/components/Viewer3D'));
 const Index = () => {
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedIFC5Node, setSelectedIFC5Node] = useState<ComposedObject | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4 | 5>(2); // Default to LoD2 (Minimal)
@@ -48,9 +53,54 @@ const Index = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const graphCanvasRef = useRef<HTMLCanvasElement>(null);
   const ifcFileBufferRef = useRef<ArrayBuffer | undefined>(undefined);
+  const ifc5ViewerContainerRef = useRef<HTMLDivElement>(null);
+  const lastLoadedIFC5Ref = useRef<ComposedObject | null>(null);
+  
+  // Check if current file is IFC5
+  const isIFC5 = parsedData?.metadata?.isIFC5 === true;
+
+  // Handle 3D object click
+  const handleIFC5ObjectClick = useCallback((path: string) => {
+    // Find the node with this path in the composed object
+    if (parsedData?.rawData?.composedObject) {
+      const findNodeByPath = (node: ComposedObject, targetPath: string): ComposedObject | null => {
+        if (node.name === targetPath) return node;
+        if (node.children) {
+          for (const child of node.children) {
+            const found = findNodeByPath(child, targetPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const node = findNodeByPath(parsedData.rawData.composedObject, path);
+      if (node) {
+        handleIFC5NodeSelect(path, node);
+      }
+    }
+  }, [parsedData]);
+
+  // IFC5 3D Viewer hook
+  const { 
+    loadComposedObject, 
+    selectObject,
+    isInitialized: viewer3DInitialized
+  } = useIFC5Viewer(ifc5ViewerContainerRef, viewer3DLoaded, handleIFC5ObjectClick);
 
   // Use Web Worker for parsing
   const { parseFile, isLoading, progress, error: workerError } = useIFCWorker();
+
+  // Load composed object once viewer is initialized (avoid repeated re-fit)
+  useEffect(() => {
+    if (!isIFC5 || !viewer3DInitialized || !parsedData?.rawData?.composedObject) {
+      return;
+    }
+
+    if (lastLoadedIFC5Ref.current !== parsedData.rawData.composedObject) {
+      lastLoadedIFC5Ref.current = parsedData.rawData.composedObject;
+      loadComposedObject(parsedData.rawData.composedObject);
+    }
+  }, [isIFC5, viewer3DInitialized, parsedData?.rawData?.composedObject, loadComposedObject]);
 
   const handleFileSelect = useCallback(async (file: File) => {
     try {
@@ -69,6 +119,10 @@ const Index = () => {
       data.validation = undefined;
       
       setParsedData(data);
+      // Auto-load 3D viewer for IFC5 files
+      if (data.metadata?.isIFC5) {
+        setViewer3DLoaded(true);
+      }
       toast.success(`Parsed ${data.metadata.entityCount} entities and ${data.metadata.relationshipCount} relationships`);
     } catch (error) {
       logger.error('Error parsing IFC file:', error);
@@ -107,6 +161,7 @@ const Index = () => {
   const handleReset = useCallback(() => {
     setParsedData(null);
     setSelectedNode(null);
+    setSelectedIFC5Node(null);
     setHighlightedTypes([]);
     setSearchQuery('');
     setGraphLoD(2);
@@ -121,6 +176,21 @@ const Index = () => {
   const handleNodeClick = useCallback((node: GraphNode | null) => {
     setSelectedNode(node);
   }, []);
+  
+  const handleIFC5NodeSelect = useCallback((path: string, node: ComposedObject) => {
+    setSelectedIFC5Node(node);
+    // Also highlight in 3D viewer if loaded
+    if (viewer3DLoaded && isIFC5) {
+      selectObject(path);
+    }
+  }, [viewer3DLoaded, isIFC5, selectObject]);
+
+  // Keep 3D selection in sync when selection changes in panels
+  useEffect(() => {
+    if (viewer3DLoaded && isIFC5 && selectedIFC5Node?.name) {
+      selectObject(selectedIFC5Node.name);
+    }
+  }, [viewer3DLoaded, isIFC5, selectedIFC5Node?.name, selectObject]);
 
   const handleTypeToggle = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -245,22 +315,26 @@ const Index = () => {
                 {/* Properties Panel - 15% (Left) */}
                 <ResizablePanel defaultSize={15} minSize={10} maxSize={30}>
                   <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
-                    <div className="space-y-4 p-4">
-                      {/* Node Details */}
-                      <div>
-                        {selectedNode ? (
-                          <NodeDetailsPanel
-                            node={selectedNode}
-                            onClose={() => setSelectedNode(null)}
-                            inline={true}
-                          />
-                        ) : (
-                          <div className="text-center text-muted-foreground p-4">
-                            <p className="text-sm">Select an entity to view details</p>
-                          </div>
-                        )}
+                    {isIFC5 ? (
+                      <IFC5PropertyViewer node={selectedIFC5Node} />
+                    ) : (
+                      <div className="space-y-4 p-4">
+                        {/* Node Details */}
+                        <div>
+                          {selectedNode ? (
+                            <NodeDetailsPanel
+                              node={selectedNode}
+                              onClose={() => setSelectedNode(null)}
+                              inline={true}
+                            />
+                          ) : (
+                            <div className="text-center text-muted-foreground p-4">
+                              <p className="text-sm">Select an entity to view details</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </ResizablePanel>
 
@@ -268,7 +342,18 @@ const Index = () => {
 
                 {/* Graph Panel - 35% (Middle-Left) */}
                 <ResizablePanel defaultSize={35} minSize={25} maxSize={60}>
-                  {!graphLoaded ? (
+                  {isIFC5 ? (
+                    <div className="h-full w-full bg-background/50 flex items-center justify-center p-8">
+                      <div className="text-center space-y-3 max-w-md">
+                        <div className="text-4xl mb-2">🌳</div>
+                        <p className="text-lg font-medium">IFC5 Tree-Based Navigation</p>
+                        <p className="text-muted-foreground text-sm">
+                          IFC5 files use a hierarchical tree structure instead of a traditional graph. 
+                          Use the Tree Browser panel to explore the building structure.
+                        </p>
+                      </div>
+                    </div>
+                  ) : !graphLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center">
                       <div className="text-center space-y-4">
                         <p className="text-muted-foreground text-sm">Graph visualization not loaded</p>
@@ -358,13 +443,21 @@ const Index = () => {
                 {/* Tree Browser Panel - 25% (Middle-Right) */}
                 <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
                   <div className="h-full overflow-hidden border-r border-border">
-                    <IFCBrowser
-                      nodes={parsedData.allEntities || parsedData.graphData.nodes}
-                      edges={parsedData.graphData.edges}
-                      selectedNodeId={selectedNode?.id || null}
-                      onNodeSelect={handleNodeClick}
-                      metadata={parsedData.metadata}
-                    />
+                    {isIFC5 ? (
+                      <IFC5TreeBrowser
+                        composedObject={parsedData.rawData?.composedObject}
+                        onNodeSelect={handleIFC5NodeSelect}
+                        selectedPath={selectedIFC5Node?.name}
+                      />
+                    ) : (
+                      <IFCBrowser
+                        nodes={parsedData.allEntities || parsedData.graphData.nodes}
+                        edges={parsedData.graphData.edges}
+                        selectedNodeId={selectedNode?.id || null}
+                        onNodeSelect={handleNodeClick}
+                        metadata={parsedData.metadata}
+                      />
+                    )}
                   </div>
                 </ResizablePanel>
 
@@ -386,18 +479,22 @@ const Index = () => {
                     </div>
                   ) : (
                     <div className="h-full w-full bg-background border-l border-border overflow-hidden relative">
-                      <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading 3D viewer...</div>}>
-                        <Viewer3D 
-                          selectedNodeId={selectedNode?.id}
-                          onSelectNode={(nodeId) => {
-                            const node = parsedData?.graphData.nodes.find(n => n.id === nodeId);
-                            if (node) {
-                              handleNodeClick(node);
-                            }
-                          }}
-                          ifcFileBuffer={ifcFileBufferRef.current}
-                        />
-                      </Suspense>
+                      {isIFC5 ? (
+                        <div ref={ifc5ViewerContainerRef} className="h-full w-full" />
+                      ) : (
+                        <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading 3D viewer...</div>}>
+                          <Viewer3D 
+                            selectedNodeId={selectedNode?.id}
+                            onSelectNode={(nodeId) => {
+                              const node = parsedData?.graphData.nodes.find(n => n.id === nodeId);
+                              if (node) {
+                                handleNodeClick(node);
+                              }
+                            }}
+                            ifcFileBuffer={ifcFileBufferRef.current}
+                          />
+                        </Suspense>
+                      )}
                       
                       {/* Unload 3D Viewer Button */}
                       <div className="absolute bottom-2 right-2 z-20">
