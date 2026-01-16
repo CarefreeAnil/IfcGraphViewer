@@ -1,12 +1,13 @@
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
+import { ComposedObject, IFC5File } from './ifc5';
 
-export type NodeType = 'building' | 'space' | 'element' | 'property' | 'relationship' | 'geometry' | 'other';
+export type NodeType = 'building' | 'space' | 'element' | 'property' | 'relationship' | 'geometry' | 'other' | 'Mesh' | 'Curve' | 'Points' | 'Group';
 
 export interface GraphNode {
   id: string;
   label: string;
-  type: NodeType;
-  ifcType: string;
+  type: NodeType | string;
+  ifcType?: string;
   properties: Record<string, any>;
   expressId?: number;
   isGraphVisible?: boolean; // Whether this entity is visible in the graph (not geometry)
@@ -31,15 +32,18 @@ export interface GraphData {
 
 export interface ParsedIFCData {
   graphData: GraphData;
-  allEntities: GraphNode[]; // ALL parsed entities (including geometry, properties)
+  allEntities?: GraphNode[]; // ALL parsed entities (including geometry, properties) - for IFC4
   metadata: {
-    fileName: string;
-    fileSize: number;
-    entityCount: number;
-    relationshipCount: number;
+    fileName?: string;
+    fileSize?: number;
+    entityCount?: number;
+    relationshipCount?: number;
     parseTime: number;
-    geometryEntityCount: number;
-    propertyEntityCount: number;
+    geometryEntityCount?: number;
+    propertyEntityCount?: number;
+    totalEntities?: number;
+    entityCounts?: Record<string, number>;
+    relationships?: number;
     ifcHeader?: {
       fullHeader: string;
       fileDescription: string;
@@ -47,6 +51,12 @@ export interface ParsedIFCData {
       fileSchema: string;
       timeStamp?: string;
     };
+    isIFC5?: boolean; // Flag to indicate IFC5 format
   };
   validation?: ValidationResult;
+  rawData?: {
+    composedObject?: ComposedObject; // IFC5 composed object for 3D rendering
+    ifc5File?: IFC5File; // IFC5 file structure
+  };
 }
+

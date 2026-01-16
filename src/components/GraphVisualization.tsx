@@ -37,6 +37,10 @@ const NODE_COLORS: Record<NodeType, string> = {
   relationship: '#f472b6', // pink
   geometry: '#9ca3af',    // gray
   other: '#6b7280',       // dark gray
+  Mesh: '#60a5fa',        // blue (IFC5)
+  Curve: '#fb923c',       // orange (IFC5)
+  Points: '#c084fc',      // violet (IFC5)
+  Group: '#34d399',       // emerald (IFC5)
 };
 
 const NODE_SIZES: Record<NodeType, number> = {
@@ -47,6 +51,10 @@ const NODE_SIZES: Record<NodeType, number> = {
   relationship: 5,
   geometry: 4,
   other: 4,
+  Mesh: 8,                // IFC5
+  Curve: 6,               // IFC5
+  Points: 5,              // IFC5
+  Group: 10,              // IFC5
 };
 
 // Relationship explanations for hover tooltips
@@ -290,11 +298,11 @@ export function GraphVisualization({
 
   const isNodeVisible = useCallback(
     (node: GraphNode) => {
-      const typeMatch = highlightedTypes.length === 0 || highlightedTypes.includes(node.type);
+      const typeMatch = highlightedTypes.length === 0 || highlightedTypes.includes(node.type as NodeType);
       const searchMatch =
         searchQuery === '' ||
         node.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        node.ifcType.toLowerCase().includes(searchQuery.toLowerCase());
+        (node.ifcType && node.ifcType.toLowerCase().includes(searchQuery.toLowerCase()));
       return typeMatch && searchMatch;
     },
     [highlightedTypes, searchQuery]

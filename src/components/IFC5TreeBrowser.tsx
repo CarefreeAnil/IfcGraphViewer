@@ -1,0 +1,340 @@
+/**
+ * IFC5 Tree Browser Component
+ * Displays hierarchical tree structure for IFC5 (.ifcx) files
+ */
+
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, ChevronDown, Box, Circle, Minus, Database } from 'lucide-react';
+import { ComposedObject } from '@/types/ifc5';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { VirtualList } from '@/components/VirtualList';
+
+interface IFC5TreeBrowserProps {
+  composedObject: ComposedObject;
+  onNodeSelect?: (path: string, node: ComposedObject) => void;
+  selectedPath?: string | null;
+}
+
+interface TreeNodeProps {
+  node: ComposedObject;
+  level: number;
+  onNodeSelect?: (path: string, node: ComposedObject) => void;
+  selectedPath?: string | null;
+  hasChildren: boolean;
+  isExpanded: boolean;
+  onToggle?: (path: string) => void;
+}
+
+const getNodeIcon = (type?: string) => {
+  switch (type) {
+    case 'Mesh':
+      return <Box className="w-4 h-4 text-blue-500" />;
+    case 'Curve':
+      return <Minus className="w-4 h-4 text-green-500" />;
+    case 'Points':
+      return <Circle className="w-4 h-4 text-purple-500" />;
+    default:
+      return <Database className="w-4 h-4 text-gray-500" />;
+  }
+};
+
+const getNodeColor = (type?: string) => {
+  switch (type) {
+    case 'Mesh':
+      return 'bg-card border-blue-500/30 hover:bg-secondary';
+    case 'Curve':
+      return 'bg-card border-green-500/30 hover:bg-secondary';
+    case 'Points':
+      return 'bg-card border-purple-500/30 hover:bg-secondary';
+    default:
+      return 'bg-card border-gray-500/30 hover:bg-secondary';
+  }
+};
+
+const TreeNode: React.FC<TreeNodeProps> = ({
+  node,
+  level,
+  onNodeSelect,
+  selectedPath,
+  hasChildren,
+  isExpanded,
+  onToggle,
+}) => {
+  const isSelected = selectedPath === node.name;
+  const displayName = node.name.split('/').pop() || node.name || 'root';
+
+  const handleClick = () => {
+    onNodeSelect?.(node.name, node);
+  };
+
+  const handleChevronClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hasChildren) {
+      onToggle?.(node.name);
+    }
+  };
+
+  const getAttributeCount = () => {
+    if (!node.attributes) return 0;
+    return Object.keys(node.attributes).filter(
+      key => !key.startsWith('_') && !key.startsWith('usd::')
+    ).length;
+  };
+
+  const attributeCount = getAttributeCount();
+
+  return (
+    <div className="select-none">
+      <div
+        className={`
+          flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer border
+          transition-colors duration-150
+          ${isSelected ? 'border-blue-500 ring-2 ring-blue-500 ring-opacity-50 bg-card' : getNodeColor(node.type)}
+        `}
+        style={{ paddingLeft: `${level * 16 + 8}px` }}
+        onClick={handleClick}
+      >
+        <div className="flex items-center gap-1 flex-shrink-0" onClick={handleChevronClick}>
+          {hasChildren ? (
+            isExpanded ? (
+              <ChevronDown className="w-4 h-4 text-gray-600 hover:text-gray-700" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-gray-600 hover:text-gray-700" />
+            )
+          ) : (
+            <div className="w-4" />
+          )}
+        </div>
+
+        {getNodeIcon(node.type)}
+
+        <span className="font-medium text-sm truncate flex-1 text-foreground" title={node.name}>
+          {displayName}
+        </span>
+
+        {node.type && (
+          <Badge variant="outline" className="text-xs px-1.5 py-0">
+            {node.type}
+          </Badge>
+        )}
+
+        {attributeCount > 0 && (
+          <Badge variant="secondary" className="text-xs px-1.5 py-0">
+            {attributeCount}
+          </Badge>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
+  composedObject,
+  onNodeSelect,
+  selectedPath,
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const [containerHeight, setContainerHeight] = useState(400);
+  const itemHeight = 36;
+
+  if (!composedObject) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-muted-foreground">
+        <p className="text-sm">IFC5 data not loaded. Please reload the file.</p>
+      </div>
+    );
+  }
+
+  const setInitialExpanded = (root: ComposedObject) => {
+    const initial = new Set<string>();
+    const walk = (node: ComposedObject, level: number) => {
+      if (level < 2) {
+        initial.add(node.name);
+      }
+      node.children?.forEach((child) => walk(child, level + 1));
+    };
+    walk(root, 0);
+    setExpandedNodes(initial);
+  };
+
+  React.useEffect(() => {
+    setInitialExpanded(composedObject);
+  }, [composedObject]);
+
+  const toggleNode = (path: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const matchesSearch = (node: ComposedObject, term: string) => {
+    const name = node.name.split('/').pop() || node.name;
+    return (
+      name.toLowerCase().includes(term.toLowerCase()) ||
+      node.type?.toLowerCase().includes(term.toLowerCase())
+    );
+  };
+
+  const hasMatchingDescendant = (node: ComposedObject, term: string): boolean => {
+    if (!node.children) return false;
+    for (const child of node.children) {
+      if (matchesSearch(child, term)) return true;
+      if (hasMatchingDescendant(child, term)) return true;
+    }
+    return false;
+  };
+
+  const visibleNodes = useMemo(() => {
+    const list: Array<{ node: ComposedObject; level: number; hasChildren: boolean; isExpanded: boolean }> = [];
+    const term = searchTerm.trim();
+
+    const walk = (node: ComposedObject, level: number) => {
+      const hasChildren = !!node.children?.length;
+      const match = term ? matchesSearch(node, term) : true;
+      const childMatch = term ? hasMatchingDescendant(node, term) : false;
+      const shouldShow = !term || match || childMatch;
+
+      if (!shouldShow) return;
+
+      const shouldExpand =
+        expandedNodes.has(node.name) ||
+        (!!term && childMatch) ||
+        (!!selectedPath && node.name && selectedPath.startsWith(node.name));
+
+      list.push({ node, level, hasChildren, isExpanded: shouldExpand });
+
+      if (hasChildren && shouldExpand) {
+        node.children!.forEach((child) => walk(child, level + 1));
+      }
+    };
+
+    walk(composedObject, 0);
+    return list;
+  }, [composedObject, expandedNodes, searchTerm, selectedPath]);
+
+  // Calculate statistics
+  const stats = useMemo(() => {
+    let totalNodes = 0;
+    let meshCount = 0;
+    let curveCount = 0;
+    let pointsCount = 0;
+    let groupCount = 0;
+
+    const traverse = (node: ComposedObject) => {
+      totalNodes++;
+      switch (node.type) {
+        case 'Mesh': meshCount++; break;
+        case 'Curve': curveCount++; break;
+        case 'Points': pointsCount++; break;
+        default: groupCount++; break;
+      }
+      if (node.children) {
+        node.children.forEach(traverse);
+      }
+    };
+
+    traverse(composedObject);
+
+    return { totalNodes, meshCount, curveCount, pointsCount, groupCount };
+  }, [composedObject]);
+
+  useLayoutEffect(() => {
+    if (!listContainerRef.current) return;
+    const container = listContainerRef.current;
+    const handleResize = () => setContainerHeight(container.clientHeight || 400);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  React.useEffect(() => {
+    if (!selectedPath || !listRef.current) return;
+    const index = visibleNodes.findIndex((item) => item.node.name === selectedPath);
+    if (index === -1) return;
+    const targetTop = Math.max(0, index * itemHeight - containerHeight / 2 + itemHeight / 2);
+    listRef.current.scrollTo({ top: targetTop, behavior: 'smooth' });
+  }, [selectedPath, visibleNodes, containerHeight]);
+
+  return (
+    <div className="flex flex-col h-full bg-card">
+      <div className="p-4 border-b space-y-3 bg-card">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">IFC5 Model Tree</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Navigate the IFC5 (.ifcx) structure
+          </p>
+        </div>
+
+        <Input
+          type="text"
+          placeholder="Search nodes..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="h-8 text-sm"
+        />
+
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-blue-500/30">
+            <Box className="w-4 h-4 text-blue-500" />
+            <div>
+              <div className="font-medium text-foreground">Meshes</div>
+              <div className="text-muted-foreground">{stats.meshCount}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-green-500/30">
+            <Minus className="w-4 h-4 text-green-500" />
+            <div>
+              <div className="font-medium text-foreground">Curves</div>
+              <div className="text-muted-foreground">{stats.curveCount}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-purple-500/30">
+            <Circle className="w-4 h-4 text-purple-500" />
+            <div>
+              <div className="font-medium text-foreground">Points</div>
+              <div className="text-muted-foreground">{stats.pointsCount}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-gray-500/30">
+            <Database className="w-4 h-4 text-gray-500" />
+            <div>
+              <div className="font-medium text-foreground">Groups</div>
+              <div className="text-muted-foreground">{stats.groupCount}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div ref={listContainerRef} className="flex-1 bg-card">
+        <VirtualList
+          ref={listRef}
+          items={visibleNodes}
+          itemHeight={itemHeight}
+          containerHeight={containerHeight}
+          className="p-2"
+          renderItem={(item) => (
+            <TreeNode
+              node={item.node}
+              level={item.level}
+              onNodeSelect={onNodeSelect}
+              selectedPath={selectedPath}
+              hasChildren={item.hasChildren}
+              isExpanded={item.isExpanded}
+              onToggle={toggleNode}
+            />
+          )}
+        />
+      </div>
+    </div>
+  );
+};

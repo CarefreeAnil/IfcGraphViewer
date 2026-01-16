@@ -5,7 +5,6 @@
  */
 
 import { parseIFCFile, ParseProgressCallback } from '../lib/ifcParser';
-import { parseIFC5File } from '../lib/ifc5Parser';
 
 export interface WorkerMessage {
   type: 'parse' | 'cancel';
@@ -37,8 +36,6 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
   if (type === 'parse' && file && fileId) {
     try {
-      const fileName = file.name.toLowerCase();
-      
       // Progress callback
       const progressCallback: ParseProgressCallback = (progress) => {
         const response: WorkerResponse = {
@@ -54,22 +51,8 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         self.postMessage(response);
       };
 
-      // Parse based on file type
-      let result;
-      if (fileName.endsWith('.ifcx')) {
-        // Send progress for IFC5
-        progressCallback({
-          percentage: 50,
-          message: 'Parsing IFC5 file...',
-        });
-        result = await parseIFC5File(file);
-        progressCallback({
-          percentage: 100,
-          message: 'IFC5 parsing complete',
-        });
-      } else {
-        result = await parseIFCFile(file, progressCallback);
-      }
+      // Parse all files with the unified parser (handles both IFC4 and IFC5)
+      const result = await parseIFCFile(file, progressCallback);
 
       // Send completion message
       const response: WorkerResponse = {
