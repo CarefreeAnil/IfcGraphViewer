@@ -63,7 +63,9 @@ const Index = () => {
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
       
-      // Initialize without validation (validation is on-demand)
+      // Initialize without validation (validation is on-demand).
+      // Note: ParsedIFCData.validation is intentionally allowed to be undefined
+      // to represent "no validation has been run yet".
       data.validation = undefined;
       
       setParsedData(data);
