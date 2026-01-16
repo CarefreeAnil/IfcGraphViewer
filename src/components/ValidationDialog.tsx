@@ -8,13 +8,38 @@ import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 interface ValidationDialogProps {
   validation?: ValidationResult;
   hasErrors?: boolean;
+  onValidate?: () => void;
+  isValidating?: boolean;
 }
 
-export function ValidationDialog({ validation, hasErrors }: ValidationDialogProps) {
+export function ValidationDialog({ validation, hasErrors, onValidate, isValidating }: ValidationDialogProps) {
   const [open, setOpen] = useState(false);
 
+  // If no validation has been run, show validate button
   if (!validation) {
-    return null;
+    if (!onValidate) return null;
+    
+    return (
+      <Button
+        onClick={onValidate}
+        disabled={isValidating}
+        variant="outline"
+        size="sm"
+        className="gap-2"
+      >
+        {isValidating ? (
+          <>
+            <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+            Validating...
+          </>
+        ) : (
+          <>
+            <AlertCircle className="w-4 h-4" />
+            Run Validation
+          </>
+        )}
+      </Button>
+    );
   }
 
   const totalIssues = validation.stats.totalErrors + validation.stats.totalWarnings;

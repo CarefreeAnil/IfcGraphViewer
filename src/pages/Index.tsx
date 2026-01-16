@@ -1,16 +1,14 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
 import { FileUpload } from '@/components/FileUpload';
-import { GraphVisualization } from '@/components/GraphVisualization';
 import { NodeDetailsPanel } from '@/components/NodeDetailsPanel';
 import { GraphControls } from '@/components/GraphControls';
 import { StatsPanel } from '@/components/StatsPanel';
 import { Legend } from '@/components/Legend';
 import { IFCBrowser } from '@/components/IFCBrowser';
 import { ValidationDialog } from '@/components/ValidationDialog';
-import { AnalyticsDashboard } from '@/components/AnalyticsDashboard';
 import { generateSampleData } from '@/lib/ifcParser';
 import { ParsedIFCData, GraphNode, GraphEdge, NodeType } from '@/types/graph';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
@@ -21,6 +19,10 @@ import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
 import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
 import { logger } from '@/utils/logger';
 
+// Lazy load heavy components
+const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
+const Viewer3D = lazy(() => import('@/components/Viewer3D'));
+
 const Index = () => {
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -28,13 +30,15 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4 | 5>(2); // Default to LoD2 (Minimal)
   const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
+  const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
+  const [viewer3DLoaded, setViewer3DLoaded] = useState(false); // 3D viewer unloaded by default
+  const [isValidating, setIsValidating] = useState(false); // Validation in progress
   const [relationshipFilters, setRelationshipFilters] = useState({
     showContainment: true,
     showAggregation: true,
     showProperties: true,
     showAuxiliary: false,
   });
-  const [showAnalytics, setShowAnalytics] = useState(false);
   const [graphStats, setGraphStats] = useState({
     totalNodes: 0,
     totalEdges: 0,
@@ -43,6 +47,7 @@ const Index = () => {
   });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const graphCanvasRef = useRef<HTMLCanvasElement>(null);
+  const ifcFileBufferRef = useRef<ArrayBuffer | undefined>(undefined);
 
   // Use Web Worker for parsing
   const { parseFile, isLoading, progress, error: workerError } = useIFCWorker();
@@ -51,27 +56,51 @@ const Index = () => {
     try {
       logger.parsing.start(file.name);
       
+      // Store the file buffer in a Ref for the 3D viewer (doesn't need state)
+      const buffer = await file.arrayBuffer();
+      ifcFileBufferRef.current = buffer;
+      
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
       
-      // Run enhanced validation
-      logger.validation.start(data.graphData.nodes.length);
-      const validationResult = validateIFCData(data.graphData.nodes, data.graphData.edges);
-      data.validation = validationResult;
-      logger.validation.complete(validationResult.stats.totalErrors, validationResult.stats.totalWarnings);
+      // Initialize without validation (validation is on-demand)
+      data.validation = undefined;
       
       setParsedData(data);
       toast.success(`Parsed ${data.metadata.entityCount} entities and ${data.metadata.relationshipCount} relationships`);
-      
-      if (validationResult.stats.totalErrors > 0) {
-        toast.warning(`Found ${validationResult.stats.totalErrors} validation errors`);
-      }
     } catch (error) {
       logger.error('Error parsing IFC file:', error);
       console.error('Error parsing IFC file:', error);
       toast.error('Failed to parse IFC file. Please try a valid IFC file.');
     }
   }, [parseFile]);
+
+  const handleValidate = useCallback(async () => {
+    if (!parsedData) return;
+    
+    try {
+      setIsValidating(true);
+      logger.validation.start(parsedData.graphData.nodes.length);
+      
+      // Run validation (can be expensive for large files)
+      const validationResult = validateIFCData(parsedData.graphData.nodes, parsedData.graphData.edges);
+      logger.validation.complete(validationResult.stats.totalErrors, validationResult.stats.totalWarnings);
+      
+      // Update parsed data with validation results
+      setParsedData(prev => prev ? { ...prev, validation: validationResult } : null);
+      
+      toast.success(`Validation complete: ${validationResult.stats.totalErrors} errors, ${validationResult.stats.totalWarnings} warnings`);
+      
+      if (validationResult.stats.totalErrors > 0) {
+        toast.warning(`Found ${validationResult.stats.totalErrors} validation errors`);
+      }
+    } catch (error) {
+      logger.error('Validation error:', error);
+      toast.error('Validation failed. Please try again.');
+    } finally {
+      setIsValidating(false);
+    }
+  }, [parsedData]);
 
   const handleReset = useCallback(() => {
     setParsedData(null);
@@ -80,6 +109,10 @@ const Index = () => {
     setSearchQuery('');
     setGraphLoD(2);
     setIncludeAuxiliaryLayer(false);
+    ifcFileBufferRef.current = undefined;
+    setGraphLoaded(false);
+    setViewer3DLoaded(false);
+    setIsValidating(false);
     setRelationshipFilters({ showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false });
   }, []);
 
@@ -154,28 +187,11 @@ const Index = () => {
         hasData={!!parsedData} 
         onReset={handleReset}
         onLoadSample={handleLoadSample}
-        onShowAnalytics={() => setShowAnalytics(true)}
+        validation={parsedData?.validation}
+        hasErrors={parsedData?.validation?.stats.totalErrors ? parsedData.validation.stats.totalErrors > 0 : false}
+        onValidate={handleValidate}
+        isValidating={isValidating}
       />
-
-      {/* Analytics Modal */}
-      {parsedData && (
-        <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Analytics Dashboard</DialogTitle>
-            </DialogHeader>
-            <AnalyticsDashboard 
-              nodes={parsedData.graphData.nodes}
-              edges={parsedData.graphData.edges}
-              graphLoD={graphLoD}
-              onNodeSelect={(node) => {
-                setSelectedNode(node);
-                setShowAnalytics(false);
-              }}
-            />
-          </DialogContent>
-        </Dialog>
-      )}
 
       <main className="pt-20 h-screen">
         <AnimatePresence mode="wait">
@@ -222,10 +238,10 @@ const Index = () => {
               exit={{ opacity: 0 }}
               className="h-full flex flex-col"
             >
-              {/* Three-Panel Layout: Properties (20%) | Graph (50%) | Tree (30%) */}
+              {/* Four-Panel Horizontal Layout: Properties (15%) | Graph (35%) | Tree (25%) | 3D Viewer (25%) */}
               <ResizablePanelGroup direction="horizontal" className="h-full">
-                {/* Properties Panel - 20% (Left) */}
-                <ResizablePanel defaultSize={20} minSize={15} maxSize={40}>
+                {/* Properties Panel - 15% (Left) */}
+                <ResizablePanel defaultSize={15} minSize={10} maxSize={30}>
                   <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
                     <div className="space-y-4 p-4">
                       {/* Node Details */}
@@ -248,78 +264,97 @@ const Index = () => {
 
                 <ResizableHandle />
 
-                {/* Graph Panel - 50% (Middle) */}
-                <ResizablePanel defaultSize={50} minSize={30} maxSize={70}>
-                  <div className="h-full relative flex flex-col">
-                    <div className="absolute top-2 right-2 z-20">
-                      <ValidationDialog 
-                        validation={parsedData.validation}
-                        hasErrors={parsedData.validation?.stats.totalErrors ? parsedData.validation.stats.totalErrors > 0 : false}
-                      />
+                {/* Graph Panel - 35% (Middle-Left) */}
+                <ResizablePanel defaultSize={35} minSize={25} maxSize={60}>
+                  {!graphLoaded ? (
+                    <div className="h-full w-full bg-background/50 flex items-center justify-center">
+                      <div className="text-center space-y-4">
+                        <p className="text-muted-foreground text-sm">Graph visualization not loaded</p>
+                        <button
+                          onClick={() => setGraphLoaded(true)}
+                          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                        >
+                          Load Graph
+                        </button>
+                      </div>
                     </div>
-                    
-                    <GraphVisualization
-                      data={parsedData.graphData}
-                      onNodeClick={handleNodeClick}
-                      selectedNodeId={selectedNode?.id || null}
-                      highlightedTypes={highlightedTypes}
-                      searchQuery={searchQuery}
-                      graphLoD={graphLoD}
-                      includeAuxiliaryLayer={includeAuxiliaryLayer}
-                      relationshipFilters={relationshipFilters}
-                      onStatsUpdate={setGraphStats}
-                    />
+                  ) : (
+                    <div className="h-full relative flex flex-col">
+                      <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading graph visualization...</div>}>
+                        <GraphVisualization
+                          data={parsedData.graphData}
+                          onNodeClick={handleNodeClick}
+                          selectedNodeId={selectedNode?.id || null}
+                          highlightedTypes={highlightedTypes}
+                          searchQuery={searchQuery}
+                          graphLoD={graphLoD}
+                          includeAuxiliaryLayer={includeAuxiliaryLayer}
+                          relationshipFilters={relationshipFilters}
+                          onStatsUpdate={setGraphStats}
+                        />
+                      </Suspense>
 
-                    <GraphControls
-                      searchQuery={searchQuery}
-                      onSearchChange={setSearchQuery}
-                      highlightedTypes={highlightedTypes}
-                      onTypeToggle={handleTypeToggle}
-                      selectedNode={selectedNode}
-                      graphLoD={graphLoD}
-                      onLoDChange={handleLoDChange}
-                      includeAuxiliaryLayer={includeAuxiliaryLayer}
-                      onIncludeAuxiliaryToggle={setIncludeAuxiliaryLayer}
-                      relationshipFilters={relationshipFilters}
-                      onRelationshipFilterChange={handleRelationshipFilterChange}
-                      searchInputRef={searchInputRef}
-                      onExport={(format) => {
-                        const { nodes, edges } = parsedData.graphData;
-                        switch (format) {
-                          case 'json':
-                            exportToJSON(nodes, edges);
-                            break;
-                          case 'csv-nodes':
-                            exportNodesToCSV(nodes);
-                            break;
-                          case 'csv-edges':
-                            exportEdgesToCSV(edges);
-                            break;
-                          case 'step':
-                            exportToSTEP(nodes);
-                            break;
-                          case 'png':
-                            // Get canvas from graph visualization
-                            const canvasElement = document.querySelector('canvas') as HTMLCanvasElement;
-                            if (canvasElement) {
-                              exportToPNG(canvasElement);
-                            } else {
-                              toast.error('Could not access graph canvas');
-                            }
-                            break;
-                        }
-                      }}
-                    />
+                      <GraphControls
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        highlightedTypes={highlightedTypes}
+                        onTypeToggle={handleTypeToggle}
+                        selectedNode={selectedNode}
+                        graphLoD={graphLoD}
+                        onLoDChange={handleLoDChange}
+                        includeAuxiliaryLayer={includeAuxiliaryLayer}
+                        onIncludeAuxiliaryToggle={setIncludeAuxiliaryLayer}
+                        relationshipFilters={relationshipFilters}
+                        onRelationshipFilterChange={handleRelationshipFilterChange}
+                        searchInputRef={searchInputRef}
+                        onExport={(format) => {
+                          const { nodes, edges } = parsedData.graphData;
+                          switch (format) {
+                            case 'json':
+                              exportToJSON(nodes, edges);
+                              break;
+                            case 'csv-nodes':
+                              exportNodesToCSV(nodes);
+                              break;
+                            case 'csv-edges':
+                              exportEdgesToCSV(edges);
+                              break;
+                            case 'step':
+                              exportToSTEP(nodes);
+                              break;
+                            case 'png':
+                              // Get canvas from graph visualization
+                              const canvasElement = document.querySelector('canvas') as HTMLCanvasElement;
+                              if (canvasElement) {
+                                exportToPNG(canvasElement);
+                              } else {
+                                toast.error('Could not access graph canvas');
+                              }
+                              break;
+                          }
+                        }}
+                      />
 
-                    <StatsPanel metadata={parsedData.metadata} />
-                    <Legend />
-                  </div>
+                      <StatsPanel metadata={parsedData.metadata} />
+                      <Legend />
+
+                      {/* Unload Graph Button */}
+                      <div className="absolute bottom-2 right-2 z-20">
+                        <button
+                          onClick={() => setGraphLoaded(false)}
+                          className="px-3 py-1 bg-destructive/20 text-destructive rounded text-xs hover:bg-destructive/30 transition-colors"
+                        >
+                          Unload Graph
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </ResizablePanel>
 
                 <ResizableHandle />
 
-                {/* Tree Browser Panel - 30% (Right) */}
-                <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+                {/* Tree Browser Panel - 25% (Middle-Right) */}
+                <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
                   <div className="h-full overflow-hidden border-r border-border">
                     <IFCBrowser
                       nodes={parsedData.allEntities || parsedData.graphData.nodes}
@@ -329,6 +364,50 @@ const Index = () => {
                       metadata={parsedData.metadata}
                     />
                   </div>
+                </ResizablePanel>
+
+                <ResizableHandle />
+
+                {/* 3D Viewer Panel - 25% (Right) */}
+                <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+                  {!viewer3DLoaded ? (
+                    <div className="h-full w-full bg-background/50 flex items-center justify-center border-l border-border">
+                      <div className="text-center space-y-4">
+                        <p className="text-muted-foreground text-sm">3D Viewer not loaded</p>
+                        <button
+                          onClick={() => setViewer3DLoaded(true)}
+                          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                        >
+                          Load 3D Viewer
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full w-full bg-background border-l border-border overflow-hidden relative">
+                      <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading 3D viewer...</div>}>
+                        <Viewer3D 
+                          selectedNodeId={selectedNode?.id}
+                          onSelectNode={(nodeId) => {
+                            const node = parsedData?.graphData.nodes.find(n => n.id === nodeId);
+                            if (node) {
+                              handleNodeClick(node);
+                            }
+                          }}
+                          ifcFileBuffer={ifcFileBufferRef.current}
+                        />
+                      </Suspense>
+                      
+                      {/* Unload 3D Viewer Button */}
+                      <div className="absolute bottom-2 right-2 z-20">
+                        <button
+                          onClick={() => setViewer3DLoaded(false)}
+                          className="px-3 py-1 bg-destructive/20 text-destructive rounded text-xs hover:bg-destructive/30 transition-colors"
+                        >
+                          Unload 3D
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </ResizablePanel>
               </ResizablePanelGroup>
             </motion.div>

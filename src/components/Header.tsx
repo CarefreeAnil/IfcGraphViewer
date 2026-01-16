@@ -1,14 +1,19 @@
 import { motion } from 'framer-motion';
-import { Network, Upload, RotateCcw, BarChart3 } from 'lucide-react';
+import { Network, Upload, RotateCcw } from 'lucide-react';
+import { ValidationDialog } from '@/components/ValidationDialog';
+import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 
 interface HeaderProps {
   hasData: boolean;
   onReset: () => void;
   onLoadSample: () => void;
-  onShowAnalytics?: () => void;
+  validation?: ValidationResult;
+  hasErrors?: boolean;
+  onValidate?: () => void;
+  isValidating?: boolean;
 }
 
-export function Header({ hasData, onReset, onLoadSample, onShowAnalytics }: HeaderProps) {
+export function Header({ hasData, onReset, onLoadSample, validation, hasErrors, onValidate, isValidating }: HeaderProps) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -27,18 +32,6 @@ export function Header({ hasData, onReset, onLoadSample, onShowAnalytics }: Head
         </div>
 
         <div className="flex items-center gap-3">
-          {hasData && (
-            <>
-              <button
-                onClick={onShowAnalytics}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium text-foreground transition-colors"
-                title="Show analytics and metrics"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Analytics
-              </button>
-            </>
-          )}
           {!hasData && (
             <button
               onClick={onLoadSample}
@@ -49,13 +42,21 @@ export function Header({ hasData, onReset, onLoadSample, onShowAnalytics }: Head
             </button>
           )}
           {hasData && (
-            <button
-              onClick={onReset}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium text-foreground transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Reset
-            </button>
+            <div className="flex items-center gap-2">
+              <ValidationDialog
+                validation={validation}
+                hasErrors={hasErrors}
+                onValidate={onValidate}
+                isValidating={isValidating}
+              />
+              <button
+                onClick={onReset}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium text-foreground transition-colors"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Reset
+              </button>
+            </div>
           )}
         </div>
       </div>

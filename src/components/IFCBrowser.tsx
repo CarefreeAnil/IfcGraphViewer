@@ -191,7 +191,7 @@ function StepLineViewer({
       
       parts.push(
         <span
-          key={`ref-${ref.stepId}`}
+          key={`ref-${ref.stepId}-${ref.index}`}
           className={SYNTAX_COLORS.reference}
           onClick={() => onReferenceClick(ref.stepId)}
         >

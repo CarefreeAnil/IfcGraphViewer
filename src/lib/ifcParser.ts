@@ -780,8 +780,8 @@ export async function parseIFCFile(
               nodeClassification = 'property';
               console.debug(`Parsed admin entity: ${typeName}`);
             } else if (isGeometryType(typeName)) {
-              nodeTypeFromSchema = 'geometry';
-              nodeClassification = 'geometry';
+              // Skip geometry types entirely - they bloat the graph with no value
+              continue;
             } else if (PROPERTY_TYPES.has(typeNameUpper) || 
                        typeNameUpper.includes('QUANTITY') || 
                        typeNameUpper.includes('PROPERTY') ||

@@ -17,6 +17,9 @@ interface UIStateContextType {
   setShowRelatedMetadata: (show: boolean) => void;
   graphLoD: number;
   setGraphLoD: (lod: number) => void;
+  // 3D Viewer state
+  show3DViewer: boolean;
+  setShow3DViewer: (show: boolean) => void;
   resetFilters: () => void;
 }
 
@@ -28,6 +31,7 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
   const [showAttributes, setShowAttributes] = useState(false);
   const [showRelatedMetadata, setShowRelatedMetadata] = useState(false);
   const [graphLoD, setGraphLoD] = useState(4); // Default to LoD4 (Core Graph)
+  const [show3DViewer, setShow3DViewer] = useState(false); // Lazy load 3D viewer
 
   const toggleType = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -59,6 +63,8 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
         setShowRelatedMetadata,
         graphLoD,
         setGraphLoD,
+        show3DViewer,
+        setShow3DViewer,
         resetFilters,
       }}
     >

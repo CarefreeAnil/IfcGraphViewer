@@ -188,7 +188,7 @@ export function GraphVisualization({
     const visited = new Set<string>();
     const queue: string[] = [nodeId];
     
-    // BFS to find path upward through spatial hierarchy
+    // BFS to find path upward through spatial hierarchy, stop only at Project
     while (queue.length > 0) {
       const currentId = queue.shift()!;
       if (visited.has(currentId)) continue;
@@ -198,19 +198,43 @@ export function GraphVisualization({
       const currentNode = data.nodes.find(n => n.id === currentId);
       if (!currentNode) continue;
       
-      // Stop at Site or Project
+      // Keep climbing until IFCProject; continue past Site/Building
       const type = (currentNode.ifcType || '').toUpperCase();
-      if (type === 'IFCSITE' || type === 'IFCPROJECT') break;
+      if (type === 'IFCPROJECT') break;
       
-      // Find parent via AGGREGATES or CONTAINEDINSPATIALSTRUCTURE relationships
+      let parentFound = false;
+      
+      // For property/quantity entities (like IfcElementQuantity, IfcPropertySet),
+      // we need to first traverse to the element they're attached to (reverse direction)
+      const isPropertyEntity = type.includes('PROPERTYSET') || 
+                              type.includes('ELEMENTQUANTITY') ||
+                              type.includes('PROPERTY');
+      
       finalFilteredData.edges.forEach(edge => {
         const relType = (edge.relationshipType || edge.type || '').toUpperCase();
-        const isHierarchyRel = relType.includes('AGGREGATES') || relType.includes('CONTAINEDINSPATIALSTRUCTURE');
         
-        if (edge.target === currentId && isHierarchyRel) {
-          queue.push(edge.source);
+        if (isPropertyEntity && relType.includes('DEFINESBYPROPERTIES')) {
+          // For property entities, follow DefinesByProperties backwards (we are the target, go to source)
+          if (edge.target === currentId) {
+            parentFound = true;
+            queue.push(edge.source);
+          }
+        } else {
+          // For regular entities, follow spatial hierarchy upwards
+          const isHierarchyRel = relType.includes('AGGREGATES') || 
+                                 relType.includes('CONTAINEDINSPATIALSTRUCTURE') ||
+                                 relType.includes('VOIDSELEMENT') ||
+                                 relType.includes('FILLSELEMENT');
+          
+          if (edge.target === currentId && isHierarchyRel) {
+            parentFound = true;
+            queue.push(edge.source);
+          }
         }
       });
+
+      // Break if no parent to avoid infinite loop
+      if (!parentFound) break;
     }
     
     return pathIds;
@@ -438,11 +462,18 @@ export function GraphVisualization({
       const targetVisible = isNodeVisible(targetNode);
       const isVisible = sourceVisible && targetVisible;
       
-      // Focus mode: highlight only edges connected to focused node
+      // Focus mode: highlight only edges connected to focused node OR edges in the path to root
       const isFocusMode = focusedNodeId !== null;
+      const sourceId = (link.source as any).id;
+      const targetId = (link.target as any).id;
+      
+      // For path-to-root mode, highlight edges where BOTH nodes are in the path
+      const isPathEdge = showPathToRoot && connectedNodeIds.has(sourceId) && connectedNodeIds.has(targetId);
+      
       const isConnectedEdge = isFocusMode && (
-        (link.source as any).id === focusedNodeId ||
-        (link.target as any).id === focusedNodeId
+        sourceId === focusedNodeId ||
+        targetId === focusedNodeId ||
+        isPathEdge  // Include path edges
       );
       const isDimmedEdge = isFocusMode && !isConnectedEdge;
 
@@ -581,7 +612,7 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, focusedNodeId]
+    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot]
   );
 
   const handleNodeClick = useCallback(
