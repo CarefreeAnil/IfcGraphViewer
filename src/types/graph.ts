@@ -14,6 +14,13 @@ export interface GraphNode {
   isMetadata?: boolean; // Whether this is a metadata entity (Person, Organization, OwnerHistory, etc.)
   _ifcStep?: string; // STEP representation of the entity (for Referenced By algorithm)
   _fileFormat?: 'STEP' | 'JSON'; // File format indicator (STEP vs IFC5 JSON)
+  
+  // D3-force layout properties
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  index?: number;
 }
 
 export interface GraphEdge {
@@ -44,19 +51,14 @@ export interface ParsedIFCData {
     totalEntities?: number;
     entityCounts?: Record<string, number>;
     relationships?: number;
-    ifcHeader?: {
-      fullHeader: string;
-      fileDescription: string;
-      fileName: string;
-      fileSchema: string;
-      timeStamp?: string;
-    };
+    ifcHeader?: any;
     isIFC5?: boolean; // Flag to indicate IFC5 format
   };
   validation?: ValidationResult;
   rawData?: {
     composedObject?: ComposedObject; // IFC5 composed object for 3D rendering
     ifc5File?: IFC5File; // IFC5 file structure
+    rawStepLines?: Map<number, string>; // Raw STEP lines from file for validation
   };
 }
 

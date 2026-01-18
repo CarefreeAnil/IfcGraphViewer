@@ -89,7 +89,7 @@ export function useIFC5Viewer(
         logarithmicDepthBuffer: true,
       });
       renderer.setSize(container.clientWidth, container.clientHeight);
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       container.appendChild(renderer.domElement);
       rendererRef.current = renderer;
 
@@ -446,7 +446,20 @@ export function useIFC5Viewer(
     const objectsToRemove = scene.children.filter(
       (child) => !(child instanceof THREE.Light) && !(child instanceof THREE.GridHelper) && !(child instanceof THREE.AxesHelper)
     );
-    objectsToRemove.forEach((obj) => scene.remove(obj));
+    objectsToRemove.forEach((obj) => {
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+          const mat = child.material as THREE.Material | THREE.Material[];
+          if (Array.isArray(mat)) {
+            mat.forEach((m) => m.dispose());
+          } else {
+            mat.dispose();
+          }
+        }
+      });
+      scene.remove(obj);
+    });
     objectMapRef.current.clear();
 
     // Render new object
@@ -558,6 +571,12 @@ export function useIFC5Viewer(
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         if (child.userData._origMaterial) {
+          const currentMat = child.material as THREE.Material | THREE.Material[];
+          if (Array.isArray(currentMat)) {
+            currentMat.forEach((m) => m.dispose());
+          } else {
+            currentMat.dispose();
+          }
           child.material = child.userData._origMaterial;
           delete child.userData._origMaterial;
         }

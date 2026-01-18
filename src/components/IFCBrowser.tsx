@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, useDeferredValue } from 'react';
 import { Copy, ChevronDown, ChevronRight, Search, Hash, ArrowUpFromLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -410,8 +410,14 @@ function buildReferenceIndexWithContext(nodes: GraphNode[]): Map<string, Map<num
 
 export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadata }: IFCBrowserProps) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredQuery = useDeferredValue(searchQuery);
   const [goToId, setGoToId] = useState('');
+  const [scrollTop, setScrollTop] = useState(0);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const isProgrammaticScroll = useRef(false);
   const selectedRef = useRef<HTMLDivElement>(null);
+  const entityListRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   // Pre-compute reference index with property context
   const referenceIndexWithContext = useMemo(() => buildReferenceIndexWithContext(nodes), [nodes]);
@@ -523,16 +529,26 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
 
   // Filter nodes
   const filteredNodes = useMemo(() => {
-    if (!searchQuery.trim()) return sortedNodes;
+    if (!deferredQuery.trim()) return sortedNodes;
 
-    const query = searchQuery.toLowerCase();
+    const query = deferredQuery.toLowerCase();
     return sortedNodes.filter(
       (n) =>
         n.label.toLowerCase().includes(query) ||
         n.ifcType.toLowerCase().includes(query) ||
         (n.expressId && n.expressId.toString().includes(query))
     );
-  }, [sortedNodes, searchQuery]);
+  }, [sortedNodes, deferredQuery]);
+
+  // CRITICAL: Virtual scrolling window - only render visible items
+  const ITEM_HEIGHT = 24; // Height of each entity row in pixels
+  const VISIBLE_ITEMS = 50; // Number of items to render (50 items = ~1200px)
+  
+  const visibleStartIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VISIBLE_ITEMS);
+  const visibleEndIndex = Math.min(filteredNodes.length, visibleStartIndex + VISIBLE_ITEMS * 3); // 3x buffer
+  const visibleNodes = filteredNodes.slice(visibleStartIndex, visibleEndIndex);
+  const offsetY = visibleStartIndex * ITEM_HEIGHT;
+  const totalHeight = filteredNodes.length * ITEM_HEIGHT;
 
   // Selected node data
   const selectedNode = selectedNodeId ? nodeById.get(selectedNodeId) : null;
@@ -557,6 +573,13 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     [nodeByExpressId, onNodeSelect]
   );
 
+  // Reset scroll when search changes
+  useEffect(() => {
+    if (entityListRef.current) {
+      entityListRef.current.scrollTop = 0;
+    }
+  }, [deferredQuery]);
+
   // Handle Go to ID
   const handleGoToId = useCallback(() => {
     const id = parseInt(goToId.replace('#', ''), 10);
@@ -565,18 +588,72 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
       if (targetNode) {
         onNodeSelect(targetNode);
         setGoToId('');
+        
+        // Scroll to item
+        const nodeIndex = filteredNodes.findIndex(n => n.id === targetNode.id);
+        if (nodeIndex >= 0 && entityListRef.current) {
+          const targetScrollTop = nodeIndex * ITEM_HEIGHT;
+          entityListRef.current.scrollTop = Math.max(0, targetScrollTop - 300);
+        }
       } else {
         toast.error(`Entity #${id} not found`);
       }
     }
-  }, [goToId, nodeByExpressId, onNodeSelect]);
+  }, [goToId, nodeByExpressId, onNodeSelect, filteredNodes]);
 
   // Auto-scroll to selected node
   useEffect(() => {
-    if (selectedRef.current) {
-      selectedRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!selectedNodeId || !entityListRef.current) return;
+    
+    // Find the selected node's index in the filtered list
+    const nodeIndex = filteredNodes.findIndex(n => n.id === selectedNodeId);
+    if (nodeIndex < 0) {
+      console.warn('[IFCBrowser] Selected node not found in filtered list:', selectedNodeId);
+      return;
     }
-  }, [selectedNodeId]);
+    
+    // Calculate scroll position - position item at 150px from top (about 6-7 items)
+    const OFFSET_FROM_TOP = 150;
+    const targetScrollTop = nodeIndex * ITEM_HEIGHT;
+    const scrollPosition = Math.max(0, targetScrollTop - OFFSET_FROM_TOP);
+    
+    console.log('[IFCBrowser] Auto-scroll:', {
+      selectedNodeId,
+      nodeIndex,
+      itemHeight: ITEM_HEIGHT,
+      targetScrollTop,
+      scrollPosition,
+      currentScroll: entityListRef.current.scrollTop,
+      currentStateScroll: scrollTop
+    });
+    
+    // Only scroll if the item is not already visible in a good position
+    const currentScroll = entityListRef.current.scrollTop;
+    const containerHeight = entityListRef.current.clientHeight;
+    const itemTopInViewport = targetScrollTop - currentScroll;
+    const isInGoodPosition = itemTopInViewport >= 100 && itemTopInViewport <= (containerHeight - 200);
+    
+    if (isInGoodPosition) {
+      console.log('[IFCBrowser] Item already in good position, skipping scroll');
+      return;
+    }
+    
+    // Mark as programmatic scroll to prevent onScroll from interfering
+    isProgrammaticScroll.current = true;
+    
+    // Update state immediately (synchronously) for virtual list calculations
+    setScrollTop(scrollPosition);
+    
+    // Set DOM scroll position
+    if (entityListRef.current) {
+      entityListRef.current.scrollTop = scrollPosition;
+    }
+    
+    // Reset flag after scroll completes
+    setTimeout(() => {
+      isProgrammaticScroll.current = false;
+    }, 200);
+  }, [selectedNodeId, filteredNodes, ITEM_HEIGHT, scrollTop]);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -659,51 +736,91 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
         {/* Upper Panel: IFC File View with Header, Data, and Footer */}
         <ResizablePanel defaultSize={65} minSize={40}>
           <div className="h-full flex flex-col">
-            <ScrollArea className="flex-1">
-              <div className="p-1 font-mono text-xs">
-                {/* IFC Header - Display full header from file */}
-                <div className="text-muted-foreground mb-2">
-                  <div>ISO-10303-21;</div>
-                  <div>HEADER;</div>
-                  {metadata?.ifcHeader?.fullHeader ? (
-                    <>
-                      {metadata.ifcHeader.fullHeader.split('\n').map((line, idx) => (
-                        <div key={idx}>{line}</div>
-                      ))}
-                    </>
-                  ) : (
-                    <>
-                      <div>FILE_DESCRIPTION((<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileDescription || 'ViewDefinition [CoordinationView]'}'</span>),'2;1');</div>
-                      <div>FILE_NAME(<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileName || ''}'</span>,'','','','','','');</div>
-                      <div>FILE_SCHEMA((<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileSchema || 'IFC2X3'}'</span>));</div>
-                    </>
-                  )}
-                  <div>ENDSEC;</div>
-                  <div className="my-1"></div>
-                  <div>DATA;</div>
-                </div>
-
-                {/* Entity List */}
-                {filteredNodes.map((node) => (
-                  <StepLineViewer
-                    key={node.id}
-                    node={node}
-                    nodes={nodes}
-                    nodeByExpressId={nodeByExpressId}
-                    onReferenceClick={handleRefClick}
-                    isSelected={selectedNodeId === node.id}
-                    onClick={() => onNodeSelect(node)}
-                    selectedRef={selectedNodeId === node.id ? selectedRef : null}
-                  />
-                ))}
-
-                {/* IFC Footer */}
-                <div className="text-muted-foreground mt-2">
-                  <div>ENDSEC;</div>
-                  <div>END-ISO-10303-21;</div>
-                </div>
+            {/* Header Section - Collapsible */}
+            <div ref={headerRef} className="border-b border-border/30 bg-muted/20 relative">
+              <button
+                onClick={() => setIsHeaderExpanded(!isHeaderExpanded)}
+                className="absolute right-1 top-1 z-10 px-2 py-0.5 text-[10px] rounded bg-muted/50 hover:bg-muted transition-colors"
+              >
+                {isHeaderExpanded ? 'Collapse' : 'Expand'}
+              </button>
+              <div className="p-1 font-mono text-xs text-muted-foreground">
+                <div>ISO-10303-21;</div>
+                {isHeaderExpanded ? (
+                  <>
+                    <div>HEADER;</div>
+                    {metadata?.ifcHeader?.fullHeader ? (
+                      <>
+                        {metadata.ifcHeader.fullHeader.split('\n').map((line, idx) => (
+                          <div key={idx}>{line}</div>
+                        ))}
+                      </>
+                    ) : (
+                      <>
+                        <div>FILE_DESCRIPTION((<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileDescription || 'ViewDefinition [CoordinationView]'}'</span>),'2;1');</div>
+                        <div>FILE_NAME(<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileName || ''}'</span>,'','','','','','');</div>
+                        <div>FILE_SCHEMA((<span className={SYNTAX_COLORS.string}>'{metadata?.ifcHeader?.fileSchema || 'IFC2X3'}'</span>));</div>
+                      </>
+                    )}
+                    <div>ENDSEC;</div>
+                    <div className="my-1"></div>
+                  </>
+                ) : null}
+                <div>DATA;</div>
               </div>
-            </ScrollArea>
+            </div>
+
+            {/* Virtualized Entity List */}
+            <div 
+              ref={entityListRef}
+              className="flex-1 overflow-y-auto font-mono text-xs"
+              onScroll={(e) => {
+                // Ignore scroll events during programmatic scrolls
+                if (!isProgrammaticScroll.current) {
+                  setScrollTop((e.target as HTMLDivElement).scrollTop);
+                }
+              }}
+            >
+              <div style={{ height: totalHeight, position: 'relative' }}>
+                {/* Top spacer */}
+                {visibleStartIndex > 0 && (
+                  <div style={{ height: offsetY }} />
+                )}
+                
+                {/* Visible items */}
+                <div>
+                  {visibleNodes.length > 0 ? (
+                    visibleNodes.map((node) => (
+                      <StepLineViewer
+                        key={node.id}
+                        node={node}
+                        nodes={nodes}
+                        nodeByExpressId={nodeByExpressId}
+                        onReferenceClick={handleRefClick}
+                        isSelected={selectedNodeId === node.id}
+                        onClick={() => onNodeSelect(node)}
+                        selectedRef={selectedNodeId === node.id ? selectedRef : null}
+                      />
+                    ))
+                  ) : (
+                    <div className="p-4 text-muted-foreground text-center text-xs">
+                      No entities match search
+                    </div>
+                  )}
+                </div>
+                
+                {/* Bottom spacer */}
+                {visibleEndIndex < filteredNodes.length && (
+                  <div style={{ height: (filteredNodes.length - visibleEndIndex) * ITEM_HEIGHT }} />
+                )}
+              </div>
+            </div>
+
+            {/* Footer Section - Not virtualized, always visible */}
+            <div className="p-1 font-mono text-xs text-muted-foreground border-t border-border/30 bg-muted/20">
+              <div>ENDSEC;</div>
+              <div>END-ISO-10303-21;</div>
+            </div>
           </div>
         </ResizablePanel>
 

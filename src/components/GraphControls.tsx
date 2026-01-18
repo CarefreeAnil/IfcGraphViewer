@@ -64,8 +64,8 @@ export function GraphControls({
   const getLoDLabel = (lod: 1 | 2 | 3 | 4 | 5): string => {
     const labels = {
       1: 'LoD1: Utility',
-      2: 'LoD2: Least',
-      3: 'LoD3: Essential',
+      2: 'LoD2: Least (Uni)',
+      3: 'LoD3: Essential (Bi)',
       4: 'LoD4: Core',
       5: 'LoD5: Full',
     };
@@ -116,10 +116,10 @@ export function GraphControls({
                 <span className={graphLoD === 4 ? 'font-bold' : ''}>LoD4: Core Graph (No Geometry)</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onLoDChange(3)}>
-                <span className={graphLoD === 3 ? 'font-bold' : ''}>LoD3: Essential (Bidirectional)</span>
+                <span className={graphLoD === 3 ? 'font-bold' : ''}>LoD3: Essential (Bidirectional rel↔obj)</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onLoDChange(2)}>
-                <span className={graphLoD === 2 ? 'font-bold' : ''}>LoD2: Least (Unidirectional)</span>
+                <span className={graphLoD === 2 ? 'font-bold' : ''}>LoD2: Least (Rel→Obj only)</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onLoDChange(1)}>
                 <span className={graphLoD === 1 ? 'font-bold' : ''}>LoD1: Utility (Spatial Only)</span>
@@ -211,7 +211,7 @@ export function GraphControls({
                 className="rounded border-border"
               />
               <span className="text-foreground">Containment</span>
-              <span className="text-muted-foreground text-[10px]">(Storey → Elements)</span>
+              <span className="text-muted-foreground text-[10px]">(IfcRelContainedInSpatialStructure)</span>
             </label>
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <input
@@ -221,7 +221,7 @@ export function GraphControls({
                 className="rounded border-border"
               />
               <span className="text-foreground">Aggregation</span>
-              <span className="text-muted-foreground text-[10px]">(Project → Site → Building)</span>
+              <span className="text-muted-foreground text-[10px]">(IfcRelAggregates / Decomposes)</span>
             </label>
             <label className="flex items-center gap-2 text-xs cursor-pointer">
               <input
@@ -231,7 +231,7 @@ export function GraphControls({
                 className="rounded border-border"
               />
               <span className="text-foreground">Properties</span>
-              <span className="text-muted-foreground text-[10px]">(Element → PropertySets)</span>
+              <span className="text-muted-foreground text-[10px]">(IfcRelDefinesByProperties/Type)</span>
             </label>
             {graphLoD === 5 && (
               <label className="flex items-center gap-2 text-xs cursor-pointer">

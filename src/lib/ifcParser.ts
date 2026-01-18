@@ -1,6 +1,6 @@
 import * as WebIFC from 'web-ifc';
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
-import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
+import { validateIFCData, validateIFCFileSyntax, ValidationError } from '@/lib/ifcValidatorEnhanced';
 import { getEntityDef, getEntityColor, getEntityIcon, getEntityDisplayName, getEntityCategory } from '@/lib/ifcSchema';
 // IFC5 imports
 import { isIFC5File, loadIFC5FromFile, getIFC5FileInfo } from '@/lib/ifc5ParserMain';
@@ -221,11 +221,13 @@ const NODE_COLORS: Record<NodeType, string> = {
 };
 
 const IFC_TYPE_MAPPING: Record<number, NodeType> = {
+  // Spatial entities
   [WebIFC.IFCBUILDING]: 'building',
   [WebIFC.IFCBUILDINGSTOREY]: 'building',
   [WebIFC.IFCSITE]: 'building',
   [WebIFC.IFCPROJECT]: 'building',
   [WebIFC.IFCSPACE]: 'space',
+  // Structural elements
   [WebIFC.IFCWALL]: 'element',
   [WebIFC.IFCWALLSTANDARDCASE]: 'element',
   [WebIFC.IFCDOOR]: 'element',
@@ -237,11 +239,15 @@ const IFC_TYPE_MAPPING: Record<number, NodeType> = {
   [WebIFC.IFCSTAIR]: 'element',
   [WebIFC.IFCRAILING]: 'element',
   [WebIFC.IFCFURNISHINGELEMENT]: 'element',
+  // Relationship entities
   [WebIFC.IFCRELCONTAINEDINSPATIALSTRUCTURE]: 'relationship',
   [WebIFC.IFCRELAGGREGATES]: 'relationship',
   [WebIFC.IFCRELVOIDSELEMENT]: 'relationship',
   [WebIFC.IFCRELFILLSELEMENT]: 'relationship',
   [WebIFC.IFCRELDEFINESBYPROPERTIES]: 'property',
+  // Property and quantity entities - these have type codes in WebIFC
+  ...(WebIFC.IFCPROPERTYSET !== undefined && { [WebIFC.IFCPROPERTYSET]: 'property' }),
+  ...(WebIFC.IFCELEMENTQUANTITY !== undefined && { [WebIFC.IFCELEMENTQUANTITY]: 'property' }),
 };
 
 function getNodeType(ifcType: number): NodeType {
@@ -404,19 +410,12 @@ function extractRawStepLines(fileText: string): Map<number, string> {
   
   return stepLineMap;
 }
-function extractIFCHeader(fileText: string): {
-  fullHeader: string;
-  fileDescription: string;
-  fileName: string;
-  fileSchema: string;
-  timeStamp?: string;
-} {
+function extractIFCHeader(fileText: string): any {
   const result = {
     fullHeader: '',
-    fileDescription: '',
-    fileName: '',
-    fileSchema: '',
-    timeStamp: undefined as string | undefined,
+    fileDescription: { description: [] as string[], implementationLevel: '' },
+    fileName: { name: '', timeStamp: '', author: [] as string[], organization: [] as string[], preprocessorVersion: '', originatingSystem: '', authorization: '' },
+    fileSchema: { schemaIdentifiers: [] as string[] },
   };
 
   try {
@@ -428,37 +427,40 @@ function extractIFCHeader(fileText: string): {
     }
 
     const headerContent = headerMatch[1].trim();
-    
-    // Store the full header text for display
-    result.fullHeader = headerContent
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .join('\n');
+    result.fullHeader = headerContent;
 
-    // Extract FILE_DESCRIPTION - format: FILE_DESCRIPTION((...), '...');
-    const fileDescMatch = headerContent.match(/FILE_DESCRIPTION\s*\(([\s\S]*?)\s*;/i);
-    if (fileDescMatch) {
-      // Extract the description content - look for quoted strings in first parameter
-      const descContent = fileDescMatch[1];
-      const descMatch = descContent.match(/\(\s*'([^']*)'/);
-      if (descMatch) {
-        result.fileDescription = descMatch[1];
-      }
+    // FILE_DESCRIPTION
+    const fdMatch = headerContent.match(/FILE_DESCRIPTION\s*\(\s*\(([\s\S]*?)\)\s*,\s*'([^']*)'\s*\);/i);
+    if (fdMatch) {
+        const descStr = fdMatch[1];
+        result.fileDescription.description = descStr.split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+        result.fileDescription.implementationLevel = fdMatch[2];
     }
 
-    // Extract FILE_NAME - format: FILE_NAME('filename', 'timestamp', ...);
-    // Need to handle multi-line FILE_NAME entries
-    const fileNameMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'/i);
-    if (fileNameMatch) {
-      result.fileName = fileNameMatch[1];
-      result.timeStamp = fileNameMatch[2];
+    // FILE_NAME
+    // Try robust match first
+    const fnMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*\(([\s\S]*?)\)\s*,\s*\(([\s\S]*?)\)\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\);/i);
+    if (fnMatch) {
+        result.fileName.name = fnMatch[1];
+        result.fileName.timeStamp = fnMatch[2];
+        result.fileName.author = fnMatch[3].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+        result.fileName.organization = fnMatch[4].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+        result.fileName.preprocessorVersion = fnMatch[5];
+        result.fileName.originatingSystem = fnMatch[6];
+        result.fileName.authorization = fnMatch[7];
+    } else {
+        // Fallback or partial match
+        const nameMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'/i);
+        if (nameMatch) result.fileName.name = nameMatch[1];
+        
+        const timeMatch = headerContent.match(/FILE_NAME\s*\([^,]*,\s*'([^']*)'/i);
+        if (timeMatch) result.fileName.timeStamp = timeMatch[1];
     }
 
-    // Extract FILE_SCHEMA - format: FILE_SCHEMA((...));
-    const fileSchemaMatch = headerContent.match(/FILE_SCHEMA\s*\(\s*\(\s*'([^']*)'\s*\)\s*\)/i);
-    if (fileSchemaMatch) {
-      result.fileSchema = fileSchemaMatch[1];
+    // FILE_SCHEMA
+    const fsMatch = headerContent.match(/FILE_SCHEMA\s*\(\s*\(([\s\S]*?)\)\s*\);/i);
+    if (fsMatch) {
+        result.fileSchema.schemaIdentifiers = fsMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
     }
   } catch (err) {
     console.warn('Error extracting IFC header:', err);
@@ -497,13 +499,10 @@ export async function parseIFCFile(
   let isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
   
   // Extract IFC header metadata from raw file content
-  let ifcHeader = {
+  let ifcHeader: any = {
     fullHeader: '',
-    fileDescription: '',
-    fileName: '',
-    fileSchema: '',
-    timeStamp: undefined as string | undefined,
   };
+  let syntaxErrors: ValidationError[] = [];
   
   let rawStepLines: Map<number, string> = new Map();
   
@@ -619,27 +618,27 @@ export async function parseIFCFile(
     
     // Only extract header for STEP files
     if (fileFormat === 'STEP') {
-      const extractedHeader = extractIFCHeader(fileText);
-      ifcHeader = {
-        fullHeader: extractedHeader.fullHeader,
-        fileDescription: extractedHeader.fileDescription,
-        fileName: extractedHeader.fileName,
-        fileSchema: extractedHeader.fileSchema,
-        timeStamp: extractedHeader.timeStamp,
-      };
+      ifcHeader = extractIFCHeader(fileText);
       
       // Extract raw STEP lines from the file
       rawStepLines = extractRawStepLines(fileText);
+      console.debug(`[Parser] Extracted ${rawStepLines.size} raw STEP lines from file`);
+      
+      // Perform syntax validation (STEP format)
+      syntaxErrors = validateIFCFileSyntax(fileText);
     }
     
     // If fileName wasn't extracted from header, use the file name
-    if (!ifcHeader.fileName) {
-      ifcHeader.fileName = file.name;
+    if (ifcHeader.fileName && typeof ifcHeader.fileName === 'object' && !ifcHeader.fileName.name) {
+      ifcHeader.fileName.name = file.name;
+    } else if (!ifcHeader.fileName) {
+       // Fallback
+       ifcHeader.fileName = { name: file.name };
     }
   } catch (err) {
     console.warn('Could not extract IFC header from file text:', err);
     // Fallback: use file name
-    ifcHeader.fileName = file.name;
+    ifcHeader.fileName = { name: file.name };
   }
   
   const modelId = ifcApi.OpenModel(data);
@@ -729,9 +728,8 @@ export async function parseIFCFile(
       // Allow UI to update
       await allowUIUpdate();
     }
-    
-    // Skip relationship types for now - we'll process them separately
-    if (typeName.startsWith('IFCREL')) continue;
+
+    // if (typeName.startsWith('IFCREL')) continue;
     
     try {
       const entityIds = ifcApi.GetLineIDsWithType(modelId, typeId);
@@ -745,72 +743,66 @@ export async function parseIFCFile(
           if (entity) {
             const nodeType = getNodeType(typeId);
             const properties: Record<string, any> = {};
+            // We do NOT skip geometry properties anymore. 1:1 Parsing.
+            const isGeometryEntity = isGeometryType(typeName);
             
             // Store the raw entity type and ID for debugging
             const rawEntityType = entity.type;
             const rawEntityId = entity.expressID;
             
-            // Extract all properties from the entity (excluding geometry and metadata references)
-            for (const key of Object.keys(entity)) {
-              if (key === 'type' || key === 'expressID') {
-                // Store these for reference
-                if (key === 'type') {
-                  properties['_entityType'] = entity[key];
-                } else if (key === 'expressID') {
-                  properties['_expressID'] = entity[key];
+            // Extract all properties from ALL entities (including geometry/metadata)
+              for (const key of Object.keys(entity)) {
+                if (key === 'type' || key === 'expressID') {
+                  // Store these for reference
+                  if (key === 'type') {
+                    properties['_entityType'] = entity[key];
+                  } else if (key === 'expressID') {
+                    properties['_expressID'] = entity[key];
+                  }
+                  continue;
                 }
-                continue;
-              }
-              
-              const value = entity[key];
-              if (value === null || value === undefined) continue;
-              
-              // CRITICAL FIX: Skip metadata properties that create false references
-              if (METADATA_PROPERTIES.has(key)) {
-                console.debug(`Skipping metadata property: ${key}`);
-                continue;
-              }
-              
-              // Skip representation/geometry properties but keep them for structural entities
-              if (key === 'Representation') {
-                // For now, skip representation
-                continue;
-              }
-              
-              if (key === 'ObjectPlacement') {
-                // Skip object placement for now
-                continue;
-              }
-              
-              // Handle IFC values - they often come wrapped with .value property
-              if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                if (value.value !== undefined) {
-                  properties[key] = value.value;
-                } else {
-                  // For complex objects without .value, try to extract useful data
-                  // This helps with GlobalId and other IfcValue types
+                
+                const value = entity[key];
+                if (value === null || value === undefined) continue;
+                
+                // CRITICAL FIX: DO NOT SKIP metadata properties
+                // if (METADATA_PROPERTIES.has(key)) { ... }
+                
+                // Skip representation/geometry properties but keep them for structural entities
+                // Actually, for 1:1, we should probably keep Representation too, 
+                // but usually it's huge objects. Let's keep it but maybe not recursively expand.
+                
+                // Handle IFC values - they often come wrapped with .value property
+
+                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                  if (value.value !== undefined) {
+                    properties[key] = value.value;
+                  } else {
+                    // For complex objects without .value, try to extract useful data
+                    // This helps with GlobalId and other IfcValue types
+                    properties[key] = value;
+                  }
+                } else if (Array.isArray(value)) {
+                  // Handle arrays - extract values
+                  const arrayValues = value.map((v: any) => {
+                    if (typeof v === 'object' && v?.value !== undefined) {
+                      return v.value;
+                    } else if (typeof v === 'object' && v?.GlobalId !== undefined) {
+                      return v.GlobalId;
+                    }
+                    return v;
+                  }).filter((v: any) => v !== undefined && v !== null);
+                  if (arrayValues.length > 0) {
+                    properties[key] = arrayValues;
+                  }
+                } else if (typeof value !== 'function') {
                   properties[key] = value;
                 }
-              } else if (Array.isArray(value)) {
-                // Handle arrays - extract values
-                const arrayValues = value.map((v: any) => {
-                  if (typeof v === 'object' && v?.value !== undefined) {
-                    return v.value;
-                  } else if (typeof v === 'object' && v?.GlobalId !== undefined) {
-                    return v.GlobalId;
-                  }
-                  return v;
-                }).filter((v: any) => v !== undefined && v !== null);
-                if (arrayValues.length > 0) {
-                  properties[key] = arrayValues;
-                }
-              } else if (typeof value !== 'function') {
-                properties[key] = value;
               }
-            }
             
             // For debugging: log IFCPROJECT entities
             if (typeName.toUpperCase() === 'IFCPROJECT') {
+
               console.debug('IFCPROJECT entity found:', {
                 expressId,
                 typeName,
@@ -854,8 +846,8 @@ export async function parseIFCFile(
               nodeClassification = 'property';
               console.debug(`Parsed admin entity: ${typeName}`);
             } else if (isGeometryType(typeName)) {
-              // Skip geometry types entirely - they bloat the graph with no value
-              continue;
+              nodeTypeFromSchema = 'property';
+              nodeClassification = 'geometry';
             } else if (PROPERTY_TYPES.has(typeNameUpper) || 
                        typeNameUpper.includes('QUANTITY') || 
                        typeNameUpper.includes('PROPERTY') ||
@@ -879,6 +871,8 @@ export async function parseIFCFile(
               label: properties.Name || properties.name || properties.label || getEntityDisplayName(typeName),
               type: finalNodeType,
               ifcType: typeName,
+              // Only show structural/spatial elements in the force-directed graph to prevent explosion
+              isGraphVisible: nodeClassification !== 'geometry' && nodeClassification !== 'property',
               properties: {
                 _ifcStep: ifcStepRepresentation,  // Full IFC STEP representation from file (or reconstructed)
                 _fileFormat: fileFormat,           // Store file format (STEP or JSON)
@@ -922,6 +916,46 @@ export async function parseIFCFile(
     WebIFC.IFCRELASSOCIATESMATERIAL,
     WebIFC.IFCRELASSOCIATESCLASSIFICATION,
   ];
+
+  const ensureRelationshipNode = (relId: number, typeName: string, rel: any) => {
+    if (!nodeMap.has(relId)) {
+      const fallbackNode: GraphNode = {
+        id: `node_${relId}`,
+        label: typeName,
+        type: 'relationship',
+        ifcType: typeName,
+        isGraphVisible: true,
+        properties: {
+          _ifcStep: rawStepLines.get(relId) || `#${relId}= ${typeName}(...)`,
+          _fileFormat: fileFormat,
+          Name: typeName,
+        },
+        expressId: relId,
+      };
+      allEntities.push(fallbackNode);
+      nodeMap.set(relId, fallbackNode);
+    }
+  };
+
+  const hasNodeByExpressId = (value: number | string) => {
+    const id = typeof value === 'number' ? value : parseInt(String(value).replace('node_', ''), 10);
+    return Number.isFinite(id) && nodeMap.has(id);
+  };
+
+  const addRelEdge = (relId: number, typeName: string, label: string, targetId: number | string) => {
+    const targetNodeId = typeof targetId === 'string' ? targetId : `node_${targetId}`;
+    if (!hasNodeByExpressId(targetNodeId)) {
+      return;
+    }
+    edges.push({
+      id: `edge_${relId}_${label}_${targetNodeId}`,
+      source: `node_${relId}`,
+      target: targetNodeId,
+      label,
+      type: label,
+      relationshipType: typeName,
+    });
+  };
   
   for (const relType of relationshipTypes) {
     try {
@@ -935,22 +969,21 @@ export async function parseIFCFile(
           const rel = ifcApi.GetLine(modelId, relId);
           
           if (rel) {
+            ensureRelationshipNode(relId, typeName, rel);
+
             // Handle IFCRELAGGREGATES
             if (rel.RelatingObject && rel.RelatedObjects) {
               const sourceId = rel.RelatingObject.value;
               const relatedObjects = rel.RelatedObjects;
-              
+
+              if (nodeMap.has(sourceId)) {
+                addRelEdge(relId, typeName, 'relating', sourceId);
+              }
+
               for (let j = 0; j < relatedObjects.length; j++) {
                 const targetId = relatedObjects[j].value;
-                
-                if (nodeMap.has(sourceId) && nodeMap.has(targetId)) {
-                  edges.push({
-                    id: `edge_${relId}_${j}`,
-                    source: `node_${sourceId}`,
-                    target: `node_${targetId}`,
-                    label: 'aggregates',
-                    type: typeName,
-                  });
+                if (nodeMap.has(targetId)) {
+                  addRelEdge(relId, typeName, 'related', targetId);
                 }
               }
             }
@@ -959,18 +992,15 @@ export async function parseIFCFile(
             if (rel.RelatingStructure && rel.RelatedElements) {
               const sourceId = rel.RelatingStructure.value;
               const relatedElements = rel.RelatedElements;
-              
+
+              if (nodeMap.has(sourceId)) {
+                addRelEdge(relId, typeName, 'relating', sourceId);
+              }
+
               for (let j = 0; j < relatedElements.length; j++) {
                 const targetId = relatedElements[j].value;
-                
-                if (nodeMap.has(sourceId) && nodeMap.has(targetId)) {
-                  edges.push({
-                    id: `edge_${relId}_${j}`,
-                    source: `node_${sourceId}`,
-                    target: `node_${targetId}`,
-                    label: 'contains',
-                    type: typeName,
-                  });
+                if (nodeMap.has(targetId)) {
+                  addRelEdge(relId, typeName, 'related', targetId);
                 }
               }
             }
@@ -979,15 +1009,12 @@ export async function parseIFCFile(
             if (rel.RelatingBuildingElement && rel.RelatedOpeningElement) {
               const sourceId = rel.RelatingBuildingElement.value;
               const targetId = rel.RelatedOpeningElement.value;
-              
-              if (nodeMap.has(sourceId) && nodeMap.has(targetId)) {
-                edges.push({
-                  id: `edge_${relId}`,
-                  source: `node_${sourceId}`,
-                  target: `node_${targetId}`,
-                  label: 'voids',
-                  type: typeName,
-                });
+
+              if (nodeMap.has(sourceId)) {
+                addRelEdge(relId, typeName, 'relating', sourceId);
+              }
+              if (nodeMap.has(targetId)) {
+                addRelEdge(relId, typeName, 'related', targetId);
               }
             }
             
@@ -995,15 +1022,12 @@ export async function parseIFCFile(
             if (rel.RelatingOpeningElement && rel.RelatedBuildingElement) {
               const sourceId = rel.RelatingOpeningElement.value;
               const targetId = rel.RelatedBuildingElement.value;
-              
-              if (nodeMap.has(sourceId) && nodeMap.has(targetId)) {
-                edges.push({
-                  id: `edge_${relId}`,
-                  source: `node_${sourceId}`,
-                  target: `node_${targetId}`,
-                  label: 'fills',
-                  type: typeName,
-                });
+
+              if (nodeMap.has(sourceId)) {
+                addRelEdge(relId, typeName, 'relating', sourceId);
+              }
+              if (nodeMap.has(targetId)) {
+                addRelEdge(relId, typeName, 'related', targetId);
               }
             }
             
@@ -1011,18 +1035,49 @@ export async function parseIFCFile(
             if (rel.RelatingPropertyDefinition && rel.RelatedObjects) {
               const propDefId = rel.RelatingPropertyDefinition.value;
               const relatedObjects = rel.RelatedObjects;
-              
+
+              if (nodeMap.has(propDefId)) {
+                addRelEdge(relId, typeName, 'relating', propDefId);
+              }
+
               for (let j = 0; j < relatedObjects.length; j++) {
                 const targetId = relatedObjects[j].value;
-                
-                if (nodeMap.has(propDefId) && nodeMap.has(targetId)) {
-                  edges.push({
-                    id: `edge_${relId}_${j}`,
-                    source: `node_${targetId}`,
-                    target: `node_${propDefId}`,
-                    label: 'hasProperties',
-                    type: typeName,
-                  });
+                if (nodeMap.has(targetId)) {
+                  addRelEdge(relId, typeName, 'related', targetId);
+                }
+              }
+            }
+
+            // Handle IFCRELASSOCIATESMATERIAL
+            if (rel.RelatingMaterial && rel.RelatedObjects) {
+              const materialId = rel.RelatingMaterial.value;
+              const relatedObjects = rel.RelatedObjects;
+
+              if (nodeMap.has(materialId)) {
+                addRelEdge(relId, typeName, 'relating', materialId);
+              }
+
+              for (let j = 0; j < relatedObjects.length; j++) {
+                const targetId = relatedObjects[j].value;
+                if (nodeMap.has(targetId)) {
+                  addRelEdge(relId, typeName, 'related', targetId);
+                }
+              }
+            }
+
+            // Handle IFCRELASSOCIATESCLASSIFICATION
+            if (rel.RelatingClassification && rel.RelatedObjects) {
+              const classificationId = rel.RelatingClassification.value;
+              const relatedObjects = rel.RelatedObjects;
+
+              if (nodeMap.has(classificationId)) {
+                addRelEdge(relId, typeName, 'relating', classificationId);
+              }
+
+              for (let j = 0; j < relatedObjects.length; j++) {
+                const targetId = relatedObjects[j].value;
+                if (nodeMap.has(targetId)) {
+                  addRelEdge(relId, typeName, 'related', targetId);
                 }
               }
             }
@@ -1041,6 +1096,53 @@ export async function parseIFCFile(
   if (!hasProject) {
     console.warn('Warning: No IFCPROJECT entity found in parsed IFC file');
   }
+
+  // RECOVERY: Scan rawStepLines for entities that were skipped/failed by WebIFC
+  // This ensures even malformed entities like "IFCPERSON(...,UK)" appear in the list.
+  if (rawStepLines.size > 0) {
+    for (const [id, line] of rawStepLines.entries()) {
+      if (!nodeMap.has(id)) {
+        // This ID exists in the file but not in our parsed node map.
+        // It was skipped by WebIFC (likely due to syntax error).
+        // Let's manually parse it.
+        try {
+          // STEP Regex: #123= IFCTYPE(...)
+          // Match: [Full, ID, Type, Content]
+          const match = line.match(/^\s*#(\d+)\s*=\s*([A-Za-z0-9_]+)\s*\(([\s\S]*)\)\s*;\s*$/);
+          
+          if (match) {
+             const typeName = match[2];
+             const content = match[3];
+             
+             // Construct a fallback node
+             const node: GraphNode = {
+               id: `node_${id}`,
+               label: `${typeName} (Parse Error)`, // Flag it clearly
+               type: 'other', // Mark as other so it's not confused with valid elements
+               ifcType: typeName,
+               isGraphVisible: false, // Don't show broken nodes in graph
+               properties: {
+                 _ifcStep: line,
+                 _fileFormat: 'STEP',
+                 _isSyntaxError: true, // Flag for UI
+                 _rawContent: content,
+                 Name: `${typeName} #${id}`,
+                 // Description removed to prevent clutter in node details
+               },
+               expressId: id
+             };
+             
+             allEntities.push(node);
+             nodeMap.set(id, node);
+             
+             console.warn(`Recovered malformed entity #${id} (${typeName}) via manual parsing`);
+          }
+        } catch (recoveryErr) {
+          console.error(`Failed to recover entity #${id}`, recoveryErr);
+        }
+      }
+    }
+  }
   
   ifcApi.CloseModel(modelId);
   
@@ -1058,16 +1160,11 @@ export async function parseIFCFile(
   allEntities.forEach(node => {
     nodesByType[node.type] = (nodesByType[node.type] || 0) + 1;
   });
-  console.log('📊 Node distribution in graph:', nodesByType);
+  console.log('📊 Parsed entities by type:', nodesByType);
 
-  // Validate parsed data - VALIDATE ALL ENTITIES, NOT JUST GRAPH NODES
-  onProgress?.({
-    stage: 'validating',
-    percentage: 85,
-    message: 'Validating parsed IFC data...'
-  });
-  
-  const validation = validateIFCData(allEntities, edges);
+  // NOTE: Validation is NOT performed or returned here. 
+  // Parser only parses and extracts data.
+  // Validation is handled entirely by the UI (on-demand) via validateIFCData().
   
   // Progress complete
   onProgress?.({
@@ -1089,7 +1186,9 @@ export async function parseIFCFile(
       propertyEntityCount: 0,
       ifcHeader,
     },
-    validation,
+    rawData: {
+      rawStepLines, // Store raw STEP lines for on-demand validation
+    },
   };
 }
 
@@ -1174,14 +1273,27 @@ export function generateSampleData(): ParsedIFCData {
       relationshipCount: edges.length,
       parseTime: 0,
       ifcHeader: {
-        fileDescription: 'Sample IFC Building Model for Demonstration',
-        fileName: 'sample_building.ifc',
-        fileSchema: 'IFC2X3',
-        timeStamp: String(Date.now()),
+        fileDescription: { description: ['Sample IFC Building Model for Demonstration'], implementationLevel: '2;1' },
+        fileName: { 
+            name: 'sample_building.ifc', 
+            timeStamp: new Date().toISOString(),
+            author: ['Architect'],
+            organization: ['BuildingSmart'] 
+        },
+        fileSchema: { schemaIdentifiers: ['IFC2X3'] },
         fullHeader: 'FILE_DESCRIPTION((\'Sample IFC Building Model for Demonstration\'),\'2;1\');\nFILE_NAME(\'sample_building.ifc\',\'\',\'\',\'\',\'\',\'\',\'\');\nFILE_SCHEMA((\'IFC2X3\'));',
       },
     },
-    validation: validateIFCData(allEntities, edges),
+    validation: validateIFCData(allEntities, edges, {
+        fileDescription: { description: ['Sample IFC Building Model for Demonstration'], implementationLevel: '2;1' },
+        fileName: { 
+            name: 'sample_building.ifc', 
+            timeStamp: new Date().toISOString(),
+            author: ['Architect'],
+            organization: ['BuildingSmart']
+        },
+        fileSchema: { schemaIdentifiers: ['IFC2X3'] },
+    }),
   };
 }
 

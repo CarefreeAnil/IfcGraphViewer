@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Network, Upload, RotateCcw } from 'lucide-react';
+import { Network, Upload, RotateCcw, BookOpen } from 'lucide-react';
 import { ValidationDialog } from '@/components/ValidationDialog';
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 

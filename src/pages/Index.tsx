@@ -55,6 +55,7 @@ const Index = () => {
   const ifcFileBufferRef = useRef<ArrayBuffer | undefined>(undefined);
   const ifc5ViewerContainerRef = useRef<HTMLDivElement>(null);
   const lastLoadedIFC5Ref = useRef<ComposedObject | null>(null);
+  const sampleLoadedRef = useRef(false);
   
   // Check if current file is IFC5
   const isIFC5 = parsedData?.metadata?.isIFC5 === true;
@@ -113,10 +114,8 @@ const Index = () => {
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
       
-      // Initialize without validation (validation is on-demand).
-      // Note: ParsedIFCData.validation is intentionally allowed to be undefined
-      // to represent "no validation has been run yet".
-      data.validation = undefined;
+      // Parser returns parsed data only - no validation.
+      // Validation is on-demand via handleValidate().
       
       setParsedData(data);
       // Auto-load 3D viewer for IFC5 files
@@ -131,6 +130,27 @@ const Index = () => {
     }
   }, [parseFile]);
 
+  useEffect(() => {
+    if (sampleLoadedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const samplePath = params.get('sample');
+    if (!samplePath) return;
+
+    sampleLoadedRef.current = true;
+    (async () => {
+      try {
+        const response = await fetch(samplePath);
+        const blob = await response.blob();
+        const fileName = samplePath.split('/').pop() || 'sample.ifc';
+        const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        await handleFileSelect(file);
+      } catch (error) {
+        console.error('Failed to load sample file:', error);
+        toast.error('Failed to load sample file.');
+      }
+    })();
+  }, [handleFileSelect]);
+
   const handleValidate = useCallback(async () => {
     if (!parsedData) return;
     
@@ -139,7 +159,13 @@ const Index = () => {
       logger.validation.start(parsedData.graphData.nodes.length);
       
       // Run validation (can be expensive for large files)
-      const validationResult = validateIFCData(parsedData.graphData.nodes, parsedData.graphData.edges);
+      const validationResult = validateIFCData(
+        parsedData.graphData.nodes, 
+        parsedData.graphData.edges, 
+        parsedData.metadata.ifcHeader,
+        [],
+        parsedData.rawData?.rawStepLines
+      );
       logger.validation.complete(validationResult.stats.totalErrors, validationResult.stats.totalWarnings);
       
       // Update parsed data with validation results
@@ -159,6 +185,7 @@ const Index = () => {
   }, [parsedData]);
 
   const handleReset = useCallback(() => {
+    // Clear all state explicitly
     setParsedData(null);
     setSelectedNode(null);
     setSelectedIFC5Node(null);
@@ -166,11 +193,20 @@ const Index = () => {
     setSearchQuery('');
     setGraphLoD(2);
     setIncludeAuxiliaryLayer(false);
-    ifcFileBufferRef.current = undefined;
     setGraphLoaded(false);
     setViewer3DLoaded(false);
     setIsValidating(false);
     setRelationshipFilters({ showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false });
+    ifcFileBufferRef.current = undefined;
+    lastLoadedIFC5Ref.current = null;
+    
+    // Force a micro-task to allow cleanup
+    setTimeout(() => {
+      // Try to trigger garbage collection hint (if available)
+      if (window.gc) {
+        window.gc();
+      }
+    }, 0);
   }, []);
 
   const handleNodeClick = useCallback((node: GraphNode | null) => {
@@ -228,7 +264,12 @@ const Index = () => {
       ...DEFAULT_SHORTCUTS.VALIDATE,
       action: () => {
         if (parsedData) {
-          const validation = validateIFCData(parsedData.graphData.nodes, parsedData.graphData.edges);
+          const validation = validateIFCData(
+            parsedData.graphData.nodes, 
+            parsedData.graphData.edges, 
+            parsedData.metadata.ifcHeader,
+            parsedData.validation?.syntaxErrors
+          );
           setParsedData({ ...parsedData, validation });
           toast.success('Validation complete');
         }

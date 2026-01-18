@@ -259,11 +259,25 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
 
   React.useEffect(() => {
     if (!selectedPath || !listRef.current) return;
+    
+    // Ensure the selected item's parent is expanded
+    const pathParts = selectedPath.split('/');
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const parentPath = pathParts.slice(0, i + 1).join('/');
+      setExpandedNodes(prev => new Set([...prev, parentPath]));
+    }
+    
+    // Find and scroll to the selected item
     const index = visibleNodes.findIndex((item) => item.node.name === selectedPath);
-    if (index === -1) return;
-    const targetTop = Math.max(0, index * itemHeight - containerHeight / 2 + itemHeight / 2);
-    listRef.current.scrollTo({ top: targetTop, behavior: 'smooth' });
-  }, [selectedPath, visibleNodes, containerHeight]);
+    if (index !== -1) {
+      const targetTop = Math.max(0, index * itemHeight - containerHeight / 2 + itemHeight / 2);
+      requestAnimationFrame(() => {
+        if (listRef.current) {
+          listRef.current.scrollTo({ top: targetTop, behavior: 'auto' });
+        }
+      });
+    }
+  }, [selectedPath, visibleNodes, containerHeight, itemHeight]);
 
   return (
     <div className="flex flex-col h-full bg-card">

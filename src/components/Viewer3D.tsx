@@ -5,7 +5,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import * as WebIFC from 'web-ifc';
 import { AlertCircle } from 'lucide-react';
 
 interface Viewer3DProps {
@@ -21,8 +20,9 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const meshesRef = useRef<THREE.Mesh[]>([]);
-  const selectedMeshRef = useRef<THREE.Mesh | null>(null);
+  const selectedMeshRef = useRef<THREE.Mesh | THREE.InstancedMesh | null>(null);
   const originalMaterialRef = useRef<THREE.Material | null>(null);
+  const selectedInstanceRef = useRef<{ mesh: THREE.InstancedMesh; id: number; color: THREE.Color } | null>(null);
   
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +55,15 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
 
     // Reset previous selection
     if (selectedMeshRef.current && originalMaterialRef.current) {
-      selectedMeshRef.current.material = originalMaterialRef.current;
+      (selectedMeshRef.current as THREE.Mesh).material = originalMaterialRef.current;
       selectedMeshRef.current = null;
       originalMaterialRef.current = null;
+    }
+    if (selectedInstanceRef.current) {
+      const { mesh, id, color } = selectedInstanceRef.current;
+      mesh.setColorAt(id, color);
+      mesh.instanceColor!.needsUpdate = true;
+      selectedInstanceRef.current = null;
     }
 
     // Find and highlight the selected mesh
@@ -132,6 +138,16 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
           
           animateCamera();
         }
+      } else {
+        const instanced = meshesRef.current.find(m => Array.isArray(m.userData.instanceExpressIds) && m.userData.instanceExpressIds.includes(expressId));
+        if (instanced && instanced instanceof THREE.InstancedMesh) {
+          const instanceIndex = instanced.userData.instanceExpressIds.indexOf(expressId);
+          const currentColor = new THREE.Color();
+          instanced.getColorAt(instanceIndex, currentColor);
+          instanced.setColorAt(instanceIndex, new THREE.Color(0xffff00));
+          instanced.instanceColor!.needsUpdate = true;
+          selectedInstanceRef.current = { mesh: instanced, id: instanceIndex, color: currentColor };
+        }
       }
     }
   }, [selectedNodeId]);
@@ -162,7 +178,8 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
         // Renderer setup
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(width, height);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         containerRef.current!.appendChild(renderer.domElement);
@@ -271,12 +288,22 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
           const intersects = raycaster.intersectObjects(meshes);
 
           if (intersects.length > 0) {
-            const mesh = intersects[0].object as THREE.Mesh;
+            const hit = intersects[0];
+            const mesh = hit.object as THREE.Mesh;
             const { ifcExpressId } = mesh.userData;
+            const instanceId = (hit as any).instanceId as number | undefined;
+            let resolvedId = ifcExpressId;
+
+            if (resolvedId === undefined && mesh instanceof THREE.InstancedMesh && typeof instanceId === 'number') {
+              const ids = mesh.userData.instanceExpressIds as number[] | undefined;
+              if (ids && ids[instanceId] !== undefined) {
+                resolvedId = ids[instanceId];
+              }
+            }
             
             // Just notify parent - the useEffect will handle highlighting
-            if (ifcExpressId && onSelectNode) {
-              onSelectNode(`node_${ifcExpressId}`);
+            if (resolvedId && onSelectNode) {
+              onSelectNode(`node_${resolvedId}`);
             }
           } else {
             // Clicked empty space - deselect
@@ -302,6 +329,16 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
         return () => {
           window.removeEventListener('resize', handleResize);
           renderer.domElement.removeEventListener('click', handleClick);
+          meshesRef.current.forEach((mesh) => {
+            mesh.geometry?.dispose();
+            const mat = mesh.material as THREE.Material | THREE.Material[];
+            if (Array.isArray(mat)) {
+              mat.forEach((m) => m.dispose());
+            } else {
+              mat.dispose();
+            }
+          });
+          meshesRef.current = [];
           controls.dispose();
           renderer.dispose();
           if (containerRef.current?.contains(renderer.domElement)) {
@@ -318,143 +355,133 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer }
     init();
   }, [ifcFileBuffer]);
 
+  interface MeshPayload {
+    positions: Float32Array;
+    normals: Float32Array;
+    indices: Uint32Array;
+    color: number;
+    transforms: Float32Array;
+    expressIds: Int32Array;
+    ifcType: string;
+    instanceCount: number;
+  }
+
   const loadIFC = async (scene: THREE.Scene, buffer: ArrayBuffer): Promise<THREE.Mesh[]> => {
-    console.log('[Viewer3D] Loading IFC file using StreamAllMeshes');
+    console.log('[Viewer3D] Loading IFC file in worker');
     const meshes: THREE.Mesh[] = [];
 
-    try {
-      const ifcApi = new WebIFC.IfcAPI();
-      await ifcApi.Init();
-      
-      const uint8Array = new Uint8Array(buffer);
-      const modelId = ifcApi.OpenModel(uint8Array);
-      console.log('[Viewer3D] IFC model opened, ID:', modelId);
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(
+        new URL('../workers/ifcGeometryWorker.ts', import.meta.url),
+        { type: 'module' }
+      );
 
-      // Default colors for entity types
-      const typeColors: Record<string, number> = {
-        'IFCWALL': 0xCCBBB8,
-        'IFCWALLSTANDARDCASE': 0xCCBBB8,
-        'IFCSLAB': 0xCCCCCC,
-        'IFCSLABSTANDARDCASE': 0xCCCCCC,
-        'IFCDOOR': 0x996633,
-        'IFCWINDOW': 0xB3D9FF,
-        'IFCCOLUMN': 0xB3B3B3,
-        'IFCBEAM': 0xC0C0C0,
-        'IFCROOF': 0x996622,
-        'IFCSTAIR': 0xD9D9D9,
-        'IFCRAILING': 0x808080,
-        'IFCFURNISHINGELEMENT': 0x805020,
-        'IFCOPENINGELEMENT': 0x4D4D4D,
-      };
+      worker.onmessage = (event: MessageEvent) => {
+        const { type, meshes: payloads, error } = event.data as {
+          type: 'complete' | 'error';
+          meshes?: MeshPayload[];
+          error?: string;
+        };
 
-      // Stream all meshes efficiently
-      ifcApi.StreamAllMeshes(modelId, (flatMesh: WebIFC.FlatMesh) => {
-        const expressId = flatMesh.expressID;
-        
-        // Get type name
-        let typeName = 'default';
-        try {
-          const lineData = ifcApi.GetLine(modelId, expressId, false);
-          if (lineData) {
-            typeName = ifcApi.GetNameFromTypeCode(lineData.type)?.toUpperCase() || 'default';
-          }
-        } catch (e) {
-          // Ignore
+        if (type === 'error') {
+          worker.terminate();
+          reject(new Error(error || 'IFC geometry worker failed'));
+          return;
         }
 
-        const color = new THREE.Color(typeColors[typeName] || 0xB3B3B3);
-        
-        // Process each geometry in the mesh
-        for (let i = 0; i < flatMesh.geometries.size(); i++) {
-          const geometry = flatMesh.geometries.get(i);
-          const geometryData = ifcApi.GetGeometry(modelId, geometry.geometryExpressID);
-          
-          if (!geometryData) continue;
+        if (type === 'complete' && payloads) {
+          payloads.forEach((payload) => {
+            const bufferGeometry = new THREE.BufferGeometry();
+            bufferGeometry.setAttribute(
+              'position',
+              new THREE.Float32BufferAttribute(payload.positions, 3)
+            );
+            bufferGeometry.setAttribute(
+              'normal',
+              new THREE.Float32BufferAttribute(payload.normals, 3)
+            );
+            if (payload.indices && payload.indices.length > 0) {
+              bufferGeometry.setIndex(new THREE.BufferAttribute(payload.indices, 1));
+            }
 
-          // Get interleaved vertex data (position + normal = 6 floats per vertex)
-          const vertexData = ifcApi.GetVertexArray(
-            geometryData.GetVertexData(),
-            geometryData.GetVertexDataSize()
-          );
-          const indices = ifcApi.GetIndexArray(
-            geometryData.GetIndexData(),
-            geometryData.GetIndexDataSize()
-          );
+            const baseColor = new THREE.Color(payload.color);
+            const material = new THREE.MeshStandardMaterial({
+              color: baseColor,
+              side: THREE.DoubleSide,
+              metalness: 0.3,
+              roughness: 0.4,
+              flatShading: false,
+              envMapIntensity: 1.0,
+              vertexColors: false,
+            });
 
-          if (!vertexData || vertexData.length === 0) {
-            geometryData.delete();
-            continue;
-          }
+            if (payload.instanceCount > 1) {
+              const instancedMaterial = material.clone();
+              instancedMaterial.vertexColors = true;
+              instancedMaterial.color = new THREE.Color(0xffffff);
+              const instanced = new THREE.InstancedMesh(
+                bufferGeometry,
+                instancedMaterial,
+                payload.instanceCount
+              );
+              instanced.frustumCulled = true;
+              instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+              instanced.instanceColor = new THREE.InstancedBufferAttribute(
+                new Float32Array(payload.instanceCount * 3),
+                3
+              );
 
-          // Create BufferGeometry and separate position/normal
-          const bufferGeometry = new THREE.BufferGeometry();
-          
-          const positions: number[] = [];
-          const normals: number[] = [];
-          
-          // web-ifc returns [x, y, z, nx, ny, nz, ...] - 6 floats per vertex
-          for (let v = 0; v < vertexData.length; v += 6) {
-            positions.push(vertexData[v], vertexData[v + 1], vertexData[v + 2]);
-            normals.push(vertexData[v + 3], vertexData[v + 4], vertexData[v + 5]);
-          }
-          
-          bufferGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          bufferGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-          
-          if (indices && indices.length > 0) {
-            bufferGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
-          }
+              const matrix = new THREE.Matrix4();
+              const color = new THREE.Color(payload.color);
+              for (let i = 0; i < payload.instanceCount; i++) {
+                const offset = i * 16;
+                matrix.fromArray(payload.transforms.subarray(offset, offset + 16));
+                instanced.setMatrixAt(i, matrix);
+                instanced.setColorAt(i, color);
+              }
 
-          // Create material - optimized for sharp appearance
-          const material = new THREE.MeshStandardMaterial({
-            color,
-            side: THREE.DoubleSide,
-            metalness: 0.3,
-            roughness: 0.4,
-            flatShading: false,
-            envMapIntensity: 1.0,
+              instanced.instanceMatrix.needsUpdate = true;
+              instanced.instanceColor.needsUpdate = true;
+
+              instanced.userData = {
+                ifcType: payload.ifcType,
+                instanceExpressIds: Array.from(payload.expressIds),
+              };
+
+              scene.add(instanced);
+              meshes.push(instanced as unknown as THREE.Mesh);
+            } else {
+              const mesh = new THREE.Mesh(bufferGeometry, material);
+              mesh.frustumCulled = true;
+
+              const matrix = new THREE.Matrix4();
+              matrix.fromArray(payload.transforms.subarray(0, 16));
+              mesh.matrix.copy(matrix);
+              mesh.matrixAutoUpdate = false;
+
+              mesh.userData = {
+                ifcType: payload.ifcType,
+                ifcExpressId: payload.expressIds[0],
+              };
+
+              scene.add(mesh);
+              meshes.push(mesh);
+            }
           });
 
-          // Create mesh
-          const mesh = new THREE.Mesh(bufferGeometry, material);
-          
-          // Extract transformation matrix (4x4)
-          const matrix = new THREE.Matrix4();
-          const transform = geometry.flatTransformation;
-          
-          if (transform && typeof transform !== 'number') {
-            const matrixArray: number[] = [];
-            for (let j = 0; j < 16; j++) {
-              const val = Array.isArray(transform) ? transform[j] : (transform as any).get?.(j) ?? 0;
-              matrixArray.push(typeof val === 'number' ? val : 0);
-            }
-            matrix.fromArray(matrixArray);
-          }
-          
-          // Apply transformation and disable auto-update
-          mesh.matrix.copy(matrix);
-          mesh.matrixAutoUpdate = false;
-          
-          mesh.userData = {
-            ifcType: typeName,
-            ifcExpressId: expressId,
-          };
-
-          scene.add(mesh);
-          meshes.push(mesh);
-          
-          geometryData.delete();
+          worker.terminate();
+          resolve(meshes);
         }
-      });
+      };
 
-      console.log(`[Viewer3D] Loaded ${meshes.length} meshes`);
-      ifcApi.CloseModel(modelId);
-    } catch (err) {
-      console.error('[Viewer3D] IFC loading error:', err);
-      throw err;
-    }
+      worker.onerror = (err) => {
+        worker.terminate();
+        reject(err);
+      };
 
-    return meshes;
+      const transferBuffer = buffer.slice(0);
+      worker.postMessage({ type: 'parse', buffer: transferBuffer }, [transferBuffer]);
+    });
   };
 
   if (error) {

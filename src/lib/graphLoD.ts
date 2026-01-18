@@ -5,8 +5,8 @@
  * Implements 5 levels of detail:
  * LoD5 (Full Graph): Resource layer + full semantics + geometry
  * LoD4 (Core Graph): Full semantics, no geometry
- * LoD3 (Essential Graph): Objects + two-way relationships only
- * LoD2 (Least Graph): One-way outgoing edges only
+ * LoD3 (Essential Graph): Objects + bidirectional relationship-node links
+ * LoD2 (Least Graph): Unidirectional relationship-node → object links
  * LoD1 (Utility Graph): Application-specific minimal subset
  */
 
@@ -122,7 +122,7 @@ export enum EntityClass {
  * Classify entity based on type
  */
 export function classifyEntity(node: GraphNode): EntityClass {
-  const type = node.ifcType.toUpperCase();
+  const type = (node.ifcType || '').toUpperCase();
   
   // Resource entities (no GUID)
   const resourceTypes = new Set([
@@ -138,9 +138,19 @@ export function classifyEntity(node: GraphNode): EntityClass {
     return EntityClass.Bridging;
   }
   
+  const globalId = node.properties?.GlobalId ??
+    node.properties?.GLOBALID ??
+    node.properties?.globalId ??
+    node.properties?.globalid;
+
   // Resource entities
-  if (resourceTypes.has(type) || !node.properties.GlobalId) {
+  if (resourceTypes.has(type)) {
     return EntityClass.Resource;
+  }
+
+  // If GlobalId missing, treat as full unless explicitly resource type
+  if (!globalId) {
+    return EntityClass.Full;
   }
   
   // Full entities
@@ -407,10 +417,10 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
       };
       
     case GraphLoD.LoD3_Essential:
-      // Essential graph: objects + two-way relationships + property sets + system relationships
+      // Essential graph: objects + relationships (exclude property sets and geometry)
       return {
         includeGeometry: false,
-        includePropertySets: true,
+        includePropertySets: false,
         includeResourceLayer: false,
         bidirectionalOnly: false,
         unidirectionalOnly: false,
@@ -435,7 +445,7 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
       };
       
     case GraphLoD.LoD2_Least:
-      // Minimal graph: core elements only (one-way outgoing edges)
+      // Least graph: objects + relationships (one-way only, exclude property/material relationships)
       return {
         includeGeometry: false,
         includePropertySets: false,
@@ -501,6 +511,34 @@ export function applyLoD(
   lod: GraphLoD,
   options?: { includeAuxiliary?: boolean }
 ): LoDResult {
+  const addBidirectionalEdges = (inputEdges: GraphEdge[]): GraphEdge[] => {
+    const result: GraphEdge[] = [...inputEdges];
+    const seen = new Set(inputEdges.map(e => e.id));
+    inputEdges.forEach(edge => {
+      // Create inverse edges to simulate bidirectional links (relationship-node model)
+      const inverseId = `${edge.id}__inv`;
+      if (!seen.has(inverseId)) {
+        // Swap role labels for inverse edges
+        let inverseLabel = edge.label;
+        if (edge.label === 'relating') {
+          inverseLabel = 'related';
+        } else if (edge.label === 'related') {
+          inverseLabel = 'relating';
+        }
+        result.push({
+          ...edge,
+          id: inverseId,
+          source: edge.target,
+          target: edge.source,
+          label: inverseLabel,
+          type: edge.type,
+          __isInverse: true,
+        });
+        seen.add(inverseId);
+      }
+    });
+    return result;
+  };
   const config = getLoDConfig(lod, options?.includeAuxiliary ?? false);
   logger.graph.lodChanged(lod);
   
@@ -530,10 +568,26 @@ export function applyLoD(
   });
   
   const nodeIds = new Set(filteredNodes.map(n => n.id));
+  const nodeById = new Map(filteredNodes.map(n => [n.id, n]));
+
+  const normalizeNodeId = (value: GraphEdge['source']): string => {
+    if (typeof value === 'string') return value;
+    if (value && typeof value === 'object' && 'id' in value) {
+      return String((value as { id: string }).id);
+    }
+    return String(value);
+  };
+
+  // Normalize edges to avoid mutated source/target objects from force-graph
+  const normalizedEdges: GraphEdge[] = edges.map(edge => ({
+    ...edge,
+    source: normalizeNodeId(edge.source),
+    target: normalizeNodeId(edge.target),
+  }));
   
   // Build edge connectivity map for bidirectional filtering
   const edgeMap = new Map<string, Set<string>>();
-  edges.forEach(edge => {
+  normalizedEdges.forEach(edge => {
     if (!edgeMap.has(edge.source)) {
       edgeMap.set(edge.source, new Set());
     }
@@ -544,28 +598,61 @@ export function applyLoD(
     edgeMap.get(edge.target)!.add(edge.source);
   });
   
+  const getEdgeType = (edge: GraphEdge): string => {
+    return (edge.relationshipType || edge.type || edge.label || '').toUpperCase();
+  };
+
+  const isRelationshipNodeId = (nodeId: string): boolean => {
+    const node = nodeById.get(nodeId);
+    if (!node) return false;
+    return node.type === 'relationship' || (node.ifcType || '').toUpperCase().startsWith('IFCREL');
+  };
+
   // Filter edges based on LoD
-  const filteredEdges = edges.filter(edge => {
+  const filteredEdges = normalizedEdges.filter(edge => {
     // Must have both nodes present
     if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
       return false;
     }
     
-    // LoD3: Only keep relationship edges (IFCREL*), exclude property assignments for clarity
+    const type = getEdgeType(edge);
+
     if (lod === GraphLoD.LoD3_Essential) {
-      const type = edge.type?.toUpperCase() || '';
-      // Keep relationship edges but filter out non-semantic ones
-      if (type.startsWith('IFCREL') && !type.includes('GEOMETRY')) {
-        return true;
-      }
-      // Keep other semantic connections
-      return !type.includes('CONTAINS') && !type.includes('ASSIGNED');
+      // Keep core semantic relationships, drop property/material/geometry links
+      if (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET')) return false;
+      if (type.includes('ASSOCIATESMATERIAL') || type.includes('ASSOCIATESCLASSIFICATION')) return false;
+      if (type.includes('GEOMETRY') || type.includes('REPRESENTATION') || type.includes('MATERIAL')) return false;
+      return true;
     }
-    
+
+    if (lod === GraphLoD.LoD2_Least) {
+      // Keep only primary spatial/decomposition/connectivity relationships (one-way)
+      // Unidirectional in relationship-node model: relationship -> object only
+      if (!isRelationshipNodeId(edge.source)) return false;
+      if (edge.label !== 'relating' && edge.label !== 'related') return false;
+      if (type.includes('AGGREGATES')) return true;
+      if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
+      if (type.includes('VOIDSELEMENT') || type.includes('FILLSELEMENT')) return true;
+      if (type.includes('CONNECTS') || type.includes('CONNECTEDTO')) return true;
+      if (type.includes('RELATES')) return true;
+      return false;
+    }
+
+    if (lod === GraphLoD.LoD1_Utility) {
+      // Spatial hierarchy only
+      if (type.includes('AGGREGATES')) return true;
+      if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
+      return false;
+    }
+
     return true;
   });
   
-  logger.info(`LoD${lod} applied: ${filteredNodes.length} nodes, ${filteredEdges.length} edges (reduced from ${nodes.length} nodes, ${edges.length} edges)`);
+  const finalEdges = (lod >= GraphLoD.LoD3_Essential)
+    ? addBidirectionalEdges(filteredEdges)
+    : filteredEdges;
+
+  logger.info(`LoD${lod} applied: ${filteredNodes.length} nodes, ${finalEdges.length} edges (reduced from ${nodes.length} nodes, ${edges.length} edges)`);
   
   const nodeReduction = nodes.length > 0 ? ((1 - filteredNodes.length / nodes.length) * 100).toFixed(1) : '0';
   const edgeReduction = edges.length > 0 ? ((1 - filteredEdges.length / edges.length) * 100).toFixed(1) : '0';
@@ -573,7 +660,7 @@ export function applyLoD(
   return {
     filteredData: {
       nodes: filteredNodes,
-      edges: filteredEdges,
+      edges: finalEdges,
     },
     stats: {
       originalNodes: nodes.length,

@@ -1,8 +1,16 @@
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import ForceGraph2D, { ForceGraphMethods } from 'react-force-graph-2d';
+import { toast } from 'sonner';
 import { GraphData, GraphNode, NodeType } from '@/types/graph';
 import { getEntityColor, getEntityDisplayName } from '@/lib/ifcSchema';
 import { applyLoD, LoDLevel, GraphLoD, getLoDConfig, isAuxiliaryType } from '@/lib/graphLoD';
+
+// Track selection changes for animation
+interface SelectionState {
+  nodeId: string | null;
+  timestamp: number;
+  source: 'graph' | 'external'; // Track if selection came from external source
+}
 
 interface GraphVisualizationProps {
   data: GraphData;
@@ -130,52 +138,67 @@ export function GraphVisualization({
   const [connectedNodeIds, setConnectedNodeIds] = useState<Set<string>>(new Set());
   const [showPathToRoot, setShowPathToRoot] = useState(false);
   const [pathToRootIds, setPathToRootIds] = useState<Set<string>>(new Set());
+  const [debugClickInfo, setDebugClickInfo] = useState<{
+    kind: 'node' | 'background';
+    clientX: number;
+    clientY: number;
+    graphX?: number;
+    graphY?: number;
+    nodeId?: string;
+    nodeType?: string;
+  } | null>(null);
+  const lastNodeClickAt = useRef<number>(0);
+  
+  // Track selection state for animations
+  const [selectionState, setSelectionState] = useState<SelectionState>({
+    nodeId: null,
+    timestamp: 0,
+    source: 'graph'
+  });
+  const prevSelectedNodeIdRef = useRef<string | null>(null);
 
   // Apply LoD filtering (LoD5 can optionally include auxiliary layer)
   const filteredData = useMemo(() => {
     const includeAux = graphLoD === GraphLoD.LoD5_Full && includeAuxiliaryLayer;
     const lodResult = applyLoD(data.nodes, data.edges, graphLoD as GraphLoD, { includeAuxiliary: includeAux });
-    
-    // Apply relationship type filters
-    const filteredEdges = lodResult.filteredData.edges.filter(edge => {
-      const relType = (edge.relationshipType || edge.type || '').toUpperCase();
-      
-      if (!relationshipFilters.showContainment && relType.includes('CONTAINEDINSPATIALSTRUCTURE')) {
-        return false;
-      }
-      if (!relationshipFilters.showAggregation && relType.includes('AGGREGATES')) {
-        return false;
-      }
-      if (!relationshipFilters.showProperties && (relType.includes('DEFINESBYPROPERTIES') || relType.includes('PROPERTYSET'))) {
-        return false;
-      }
+
+    // Filter relationship NODES (paper-accurate model) and keep edges consistent
+    const isRelationshipNode = (node: GraphNode) =>
+      node.type === 'relationship' || (node.ifcType || '').toUpperCase().startsWith('IFCREL');
+
+    const isRelationshipAllowed = (ifcType: string) => {
+      const type = ifcType.toUpperCase();
+
+      if (!relationshipFilters.showContainment && type.includes('CONTAINEDINSPATIALSTRUCTURE')) return false;
+      if (!relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES'))) return false;
+      if (!relationshipFilters.showProperties && (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET') || type.includes('DEFINESBYTYPE'))) return false;
       if (!relationshipFilters.showAuxiliary && (
-        relType.includes('GEOMETRY') || relType.includes('MATERIAL') || relType.includes('REPRESENTATION')
-      )) {
-        return false;
-      }
-      
+        type.includes('ASSOCIATESMATERIAL') ||
+        type.includes('ASSOCIATESCLASSIFICATION') ||
+        type.includes('REPRESENTATION') ||
+        type.includes('GEOMETRY') ||
+        type.includes('MATERIAL')
+      )) return false;
+
       return true;
+    };
+
+    const filteredNodes = lodResult.filteredData.nodes.filter(node => {
+      if (!isRelationshipNode(node)) return true;
+      return isRelationshipAllowed(node.ifcType || '');
     });
-    
-    return { nodes: lodResult.filteredData.nodes, edges: filteredEdges };
+
+    const nodeIdSet = new Set(filteredNodes.map(n => n.id));
+    const filteredEdges = lodResult.filteredData.edges.filter(edge =>
+      nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target)
+    );
+
+    return { nodes: filteredNodes, edges: filteredEdges };
   }, [data, graphLoD, includeAuxiliaryLayer, relationshipFilters]);
 
-  // Remove orphaned nodes (nodes with no edges) - especially important for auxiliary nodes
+  // Keep all filtered nodes (don't drop orphans) to preserve selection and LoD coverage
   const finalFilteredData = useMemo(() => {
-    const connectedNodeIds = new Set<string>();
-    filteredData.edges.forEach(edge => {
-      connectedNodeIds.add(edge.source);
-      connectedNodeIds.add(edge.target);
-    });
-    
-    const connectedNodes = filteredData.nodes.filter(node => 
-      connectedNodeIds.has(node.id) || 
-      // Always keep spatial structure nodes even if orphaned
-      node.type === 'building' || node.type === 'space'
-    );
-    
-    return { nodes: connectedNodes, edges: filteredData.edges };
+    return { nodes: filteredData.nodes, edges: filteredData.edges };
   }, [filteredData]);
 
   // Update stats when data changes
@@ -192,6 +215,7 @@ export function GraphVisualization({
 
   // Compute path to root (Site/Project) from selected node
   const computePathToRoot = useCallback((nodeId: string): Set<string> => {
+    console.log('[GraphViz] computePathToRoot starting from:', nodeId);
     const pathIds = new Set<string>();
     const visited = new Set<string>();
     const queue: string[] = [nodeId];
@@ -203,12 +227,20 @@ export function GraphVisualization({
       visited.add(currentId);
       pathIds.add(currentId);
       
-      const currentNode = data.nodes.find(n => n.id === currentId);
-      if (!currentNode) continue;
+      const currentNode = finalFilteredData.nodes.find(n => n.id === currentId);
+      if (!currentNode) {
+        console.warn('[GraphViz] Node not found:', currentId);
+        continue;
+      }
       
       // Keep climbing until IFCProject; continue past Site/Building
       const type = (currentNode.ifcType || '').toUpperCase();
-      if (type === 'IFCPROJECT') break;
+      console.log('[GraphViz] Visiting node:', currentId, type);
+      
+      if (type === 'IFCPROJECT') {
+        console.log('[GraphViz] Reached IFCPROJECT');
+        break;
+      }
       
       let parentFound = false;
       
@@ -217,44 +249,82 @@ export function GraphVisualization({
       const isPropertyEntity = type.includes('PROPERTYSET') || 
                               type.includes('ELEMENTQUANTITY') ||
                               type.includes('PROPERTY');
-      
-      finalFilteredData.edges.forEach(edge => {
-        const relType = (edge.relationshipType || edge.type || '').toUpperCase();
-        
-        if (isPropertyEntity && relType.includes('DEFINESBYPROPERTIES')) {
-          // For property entities, follow DefinesByProperties backwards (we are the target, go to source)
-          if (edge.target === currentId) {
-            parentFound = true;
-            queue.push(edge.source);
+      const isRelationshipNode = type.startsWith('IFCREL') || currentNode.type === 'relationship';
+
+      const edgesToCurrent = finalFilteredData.edges.filter(e => e.target === currentId);
+
+      if (isRelationshipNode) {
+        // If a relationship node is selected, walk to its relating object
+        const relatingEdge = finalFilteredData.edges.find(e => e.source === currentId && e.label === 'relating');
+        if (relatingEdge) {
+          parentFound = true;
+          queue.push(relatingEdge.target);
+          console.log('[GraphViz] Relationship node -> relating:', relatingEdge.target);
+        }
+      } else if (isPropertyEntity) {
+        // For property entities, follow DefinesByProperties via relationship node
+        edgesToCurrent.forEach(edge => {
+          const relType = (edge.relationshipType || edge.type || '').toUpperCase();
+          if (edge.label === 'relating' && relType.includes('DEFINESBYPROPERTIES')) {
+            const relNodeId = edge.source;
+            // From relationship node, go to related objects
+            finalFilteredData.edges.forEach(relEdge => {
+              if (relEdge.source === relNodeId && relEdge.label === 'related') {
+                parentFound = true;
+                queue.push(relEdge.target);
+                console.log('[GraphViz] Property -> related object via rel:', relEdge.target);
+              }
+            });
           }
-        } else {
-          // For regular entities, follow spatial hierarchy upwards
+        });
+      } else {
+        // For regular entities, follow spatial hierarchy upwards via relationship node
+        edgesToCurrent.forEach(edge => {
+          const relType = (edge.relationshipType || edge.type || '').toUpperCase();
           const isHierarchyRel = relType.includes('AGGREGATES') || 
                                  relType.includes('CONTAINEDINSPATIALSTRUCTURE') ||
                                  relType.includes('VOIDSELEMENT') ||
-                                 relType.includes('FILLSELEMENT');
-          
-          if (edge.target === currentId && isHierarchyRel) {
-            parentFound = true;
-            queue.push(edge.source);
+                                 relType.includes('FILLSELEMENT') ||
+                                 relType === 'CHILD';
+          if (edge.label === 'related' && isHierarchyRel) {
+            const relNodeId = edge.source;
+            const parentEdge = finalFilteredData.edges.find(e => e.source === relNodeId && e.label === 'relating');
+            if (parentEdge) {
+              parentFound = true;
+              queue.push(parentEdge.target);
+              console.log('[GraphViz] Following hierarchy via rel', relType, 'to:', parentEdge.target);
+            }
           }
-        }
-      });
+        });
+      }
 
       // Break if no parent to avoid infinite loop
-      if (!parentFound) break;
+      if (!parentFound) {
+        console.log('[GraphViz] No parent found for:', currentId, type);
+        break;
+      }
     }
     
+    console.log('[GraphViz] Path computation complete. Path size:', pathIds.size);
     return pathIds;
-  }, [data.nodes, finalFilteredData.edges]);
+  }, [finalFilteredData.nodes, finalFilteredData.edges]);
 
   const handleShowPathToRoot = useCallback(() => {
     if (selectedNodeId) {
+      console.log('[GraphViz] Computing path to root for:', selectedNodeId);
       const pathIds = computePathToRoot(selectedNodeId);
+      console.log('[GraphViz] Path to root found:', pathIds.size, 'nodes', Array.from(pathIds));
+      
+      if (pathIds.size === 0 || pathIds.size === 1) {
+        toast.error('Could not find path to root. This node may not be connected to the spatial hierarchy.');
+        return;
+      }
+      
       setPathToRootIds(pathIds);
       setShowPathToRoot(true);
       setFocusedNodeId(selectedNodeId);
       setConnectedNodeIds(pathIds);
+      toast.success(`Found path with ${pathIds.size} nodes`);
     }
   }, [selectedNodeId, computePathToRoot]);
 
@@ -264,6 +334,53 @@ export function GraphVisualization({
     setFocusedNodeId(null);
     setConnectedNodeIds(new Set());
   }, []);
+
+  const handleResetGraph = useCallback(() => {
+    setShowPathToRoot(false);
+    setPathToRootIds(new Set());
+    setFocusedNodeId(null);
+    setConnectedNodeIds(new Set());
+    onNodeClick(null);
+    
+    // Reset graph forces
+    if (graphRef.current) {
+      graphRef.current.d3ReheatSimulation();
+    }
+  }, [onNodeClick]);
+
+  const findNearestNode = useCallback((x: number, y: number, maxDist: number) => {
+    let nearest: GraphNode | null = null;
+    let bestDist = Infinity;
+    let candidatesChecked = 0;
+    let nodesWithCoords = 0;
+    
+    // Add tolerance buffer for edge cases
+    const tolerance = 1.5;
+    const effectiveMaxDist = maxDist + tolerance;
+
+    for (const node of finalFilteredData.nodes) {
+      candidatesChecked++;
+      const nx = node.x ?? 0;
+      const ny = node.y ?? 0;
+      
+      // Skip nodes without coordinates
+      if (nx === 0 && ny === 0) continue;
+      nodesWithCoords++;
+      
+      const dx = nx - x;
+      const dy = ny - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      // Find the closest node within the effective max distance
+      if (dist <= effectiveMaxDist && dist < bestDist) {
+        bestDist = dist;
+        nearest = node;
+      }
+    }
+
+    console.log(`[FindNearest] Checked ${candidatesChecked} nodes, ${nodesWithCoords} with coords, best dist: ${bestDist.toFixed(2)}, maxDist: ${maxDist.toFixed(2)}, effective: ${effectiveMaxDist.toFixed(2)}, found: ${nearest?.id || 'none'}`);
+    return nearest;
+  }, [finalFilteredData.nodes]);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -287,14 +404,60 @@ export function GraphVisualization({
     }
   }, [finalFilteredData]);
 
-  const graphData = {
-    nodes: finalFilteredData.nodes.map((node) => ({ ...node })),
-    links: finalFilteredData.edges.map((edge) => ({
-      ...edge,
-      source: edge.source,
-      target: edge.target,
-    })),
-  };
+  // Track selection changes and detect if selection came from external source
+  useEffect(() => {
+    if (selectedNodeId !== prevSelectedNodeIdRef.current) {
+      const isExternalChange = prevSelectedNodeIdRef.current !== null && selectedNodeId !== prevSelectedNodeIdRef.current;
+      setSelectionState({
+        nodeId: selectedNodeId,
+        timestamp: Date.now(),
+        source: isExternalChange ? 'external' : 'graph'
+      });
+      prevSelectedNodeIdRef.current = selectedNodeId;
+
+      // Auto-center on selected node when selection comes from external source
+      if (isExternalChange && selectedNodeId && graphRef.current) {
+        const node = finalFilteredData.nodes.find(n => n.id === selectedNodeId);
+        if (node && node.x !== undefined && node.y !== undefined) {
+          // Center the graph on the selected node with animation
+          graphRef.current.centerAt(node.x, node.y, 800);
+          graphRef.current.zoom(2.5, 800);
+          
+          // Show toast notification to indicate cross-view selection
+          toast.success(`Navigated to ${node.label} from external view`, {
+            position: 'top-right',
+            duration: 2000,
+          });
+        }
+      }
+    }
+  }, [selectedNodeId, finalFilteredData.nodes]);
+
+  useEffect(() => {
+    return () => {
+      // Destroy the graph instance to free WebGL/Canvas resources
+      if (graphRef.current) {
+        try {
+          (graphRef.current as any)._destroy?.();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+    };
+  }, []);
+
+  // CRITICAL: Memoize graphData to avoid creating 51k+ new objects on every render
+  const graphData = useMemo(() => {
+    console.log('[GraphViz] Graph data updated:', {
+      nodes: finalFilteredData.nodes.length,
+      edges: finalFilteredData.edges.length,
+      selectedNodeId
+    });
+    return {
+      nodes: finalFilteredData.nodes,  // Don't shallow-copy - reuse references
+      links: finalFilteredData.edges,  // Don't shallow-copy - reuse references
+    };
+  }, [finalFilteredData.nodes, finalFilteredData.edges, selectedNodeId]);
 
   const isNodeVisible = useCallback(
     (node: GraphNode) => {
@@ -390,15 +553,67 @@ export function GraphVisualization({
       const x = node.x || 0;
       const y = node.y || 0;
 
-      // Draw glow for selected node
-      if (isSelected) {
+      // Draw hit area in debug mode
+      if (false) {
+        const ifcType = (graphNode.ifcType || '').toUpperCase();
+        let hitSize = size;
+        if (graphNode.type === 'relationship' || ifcType.startsWith('IFCREL')) {
+          hitSize = hitSize * 0.7;
+        }
+        if (graphNode.type === 'element') {
+          hitSize = hitSize * 1.4;
+        }
+        if (ifcType === 'IFCWALL' || ifcType === 'IFCWALLSTANDARDCASE') {
+          hitSize = hitSize * 1.6;
+        }
+        
         ctx.beginPath();
-        ctx.arc(x, y, size + 6, 0, 2 * Math.PI);
-        const gradient = ctx.createRadialGradient(x, y, size, x, y, size + 10);
-        gradient.addColorStop(0, color + '60');
-        gradient.addColorStop(1, 'transparent');
-        ctx.fillStyle = gradient;
-        ctx.fill();
+        ctx.arc(x, y, hitSize + 6, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Check if this node is externally selected for special animation
+      const isExternallySelected = isSelected && selectionState.source === 'external';
+      const timeSinceSelection = Date.now() - selectionState.timestamp;
+      const pulsePhase = (timeSinceSelection % 1000) / 1000; // 0 to 1 over 1 second
+      const isPulsing = isExternallySelected && timeSinceSelection < 2000; // Pulse for 2 seconds
+
+      // Draw outer pulse ring for externally selected nodes
+      if (isPulsing) {
+        const maxPulseRadius = size + 16;
+        const minPulseRadius = size + 6;
+        const currentPulseRadius = minPulseRadius + (maxPulseRadius - minPulseRadius) * pulsePhase;
+        const pulseOpacity = 1 - pulsePhase; // Fade out as it expands
+        
+        ctx.beginPath();
+        ctx.arc(x, y, currentPulseRadius, 0, 2 * Math.PI);
+        ctx.strokeStyle = `rgba(255, 215, 0, ${pulseOpacity * 0.8})`; // Gold pulse
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      // Draw enhanced glow for selected node
+      if (isSelected) {
+        // Bright glow for external selections
+        const glowIntensity = isExternallySelected ? 2.5 : 1.5;
+        const glowColor = isExternallySelected ? '#FFD700' : color; // Gold for external
+        
+        // Draw multiple layers for intense glow
+        for (let i = 3; i >= 1; i--) {
+          ctx.beginPath();
+          ctx.arc(x, y, size + i * 2 * glowIntensity, 0, 2 * Math.PI);
+          const gradient = ctx.createRadialGradient(x, y, size, x, y, size + i * 3 * glowIntensity);
+          const alpha = (4 - i) * 0.15 / glowIntensity;
+          gradient.addColorStop(0, glowColor.startsWith('#') 
+            ? glowColor + Math.floor(alpha * 255).toString(16).padStart(2, '0')
+            : glowColor
+          );
+          gradient.addColorStop(1, 'transparent');
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        }
       }
 
       // Draw node with reduced opacity for metadata
@@ -417,8 +632,10 @@ export function GraphVisualization({
        if (isAuxiliary) {
          ctx.setLineDash([4, 3]);
        }
+       // Enhanced border for selected nodes
+       const isExternalSelection = node.id === selectedNodeId && selectionState.source === 'external';
        ctx.strokeStyle = isVisible ? (isSelected ? '#fff' : color) : color + '20';
-       ctx.lineWidth = isSelected ? 2 : 1;
+       ctx.lineWidth = isSelected ? (isExternalSelection ? 3.5 : 2.5) : 1;
        if (isDimmed) {
          ctx.strokeStyle = color + '15';
        }
@@ -457,7 +674,7 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds]
+    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState]
   );
 
   const linkCanvasObject = useCallback(
@@ -465,6 +682,10 @@ export function GraphVisualization({
       const sourceNode = link.source as GraphNode;
       const targetNode = link.target as GraphNode;
       const isAuxEdge = isAuxiliaryType(sourceNode?.ifcType || '') || isAuxiliaryType(targetNode?.ifcType || '');
+      const isRelationshipNode = (node: GraphNode) =>
+        node?.type === 'relationship' || (node?.ifcType || '').toUpperCase().startsWith('IFCREL');
+      const sourceIsRel = isRelationshipNode(sourceNode);
+      const targetIsRel = isRelationshipNode(targetNode);
       
       const sourceVisible = isNodeVisible(sourceNode);
       const targetVisible = isNodeVisible(targetNode);
@@ -494,7 +715,9 @@ export function GraphVisualization({
       const isMetadataEdge = (sourceNode.isMetadata || targetNode.isMetadata) || false;
       
       // Get relationship-specific color for educational visualization
-      const relType = ((link as any).type || '').toUpperCase();
+      const relTypeSource = (sourceIsRel ? sourceNode?.ifcType : '') || '';
+      const relTypeTarget = (targetIsRel ? targetNode?.ifcType : '') || '';
+      const relType = (relTypeSource || relTypeTarget || (link as any).relationshipType || (link as any).type || '').toUpperCase();
       const getRelationshipColor = (type: string): string => {
         if (type.includes('AGGREGATES')) return '#22d3ee'; // cyan - hierarchy
         if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return '#a78bfa'; // purple - containment
@@ -506,14 +729,37 @@ export function GraphVisualization({
       };
       const edgeColor = getRelationshipColor(relType);
 
-      // Draw main line
+      const isInverseEdge = (link as any).__isInverse === true || (typeof (link as any).id === 'string' && (link as any).id.endsWith('__inv'));
+      const dx = targetX - sourceX;
+      const dy = targetY - sourceY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      const curveOffset = isInverseEdge ? 8 : 0;
+
+      const sx = sourceX + nx * curveOffset;
+      const sy = sourceY + ny * curveOffset;
+      const tx = targetX + nx * curveOffset;
+      const ty = targetY + ny * curveOffset;
+
+      // Draw main line (slightly curved for inverse edges)
       ctx.beginPath();
-      ctx.moveTo(sourceX, sourceY);
-      ctx.lineTo(targetX, targetY);
-      // Metadata or auxiliary edges are lighter/dashed appearance
-      if ((isMetadataEdge || isAuxEdge) && isVisible) {
+      if (curveOffset !== 0) {
+        const midX = (sx + tx) / 2 + nx * curveOffset;
+        const midY = (sy + ty) / 2 + ny * curveOffset;
+        ctx.moveTo(sx, sy);
+        ctx.quadraticCurveTo(midX, midY, tx, ty);
+      } else {
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(tx, ty);
+      }
+      // Metadata, auxiliary, or inverse edges are dashed for clarity
+      if ((isMetadataEdge || isAuxEdge || isInverseEdge) && isVisible) {
         ctx.strokeStyle = isAuxEdge ? 'rgba(148,163,184,0.7)' : '#888888';
-        ctx.setLineDash([5, 5]); // Dashed line for metadata/aux relationships
+        if (isInverseEdge) {
+          ctx.strokeStyle = edgeColor + '88';
+        }
+        ctx.setLineDash(isInverseEdge ? [3, 4] : [5, 5]);
       } else if (isDimmedEdge) {
         ctx.strokeStyle = edgeColor + '10'; // Heavy dimming
       } else {
@@ -528,12 +774,12 @@ export function GraphVisualization({
 
       // Draw arrow and label
       if (isVisible && !isDimmedEdge) {
-        const arrowAngle = Math.atan2(targetY - sourceY, targetX - sourceX);
-        const arrowLength = 8;
+        const arrowAngle = Math.atan2(ty - sy, tx - sx);
+        const arrowLength = 5;
         const targetSize = NODE_SIZES[(targetNode as any).type] || 8;
         
-        const arrowX = targetX - Math.cos(arrowAngle) * (targetSize + 4);
-        const arrowY = targetY - Math.sin(arrowAngle) * (targetSize + 4);
+        const arrowX = tx - Math.cos(arrowAngle) * (targetSize + 3);
+        const arrowY = ty - Math.sin(arrowAngle) * (targetSize + 3);
 
         // Draw arrow head
         ctx.beginPath();
@@ -550,15 +796,69 @@ export function GraphVisualization({
          ctx.fillStyle = isMetadataEdge || isAuxEdge ? '#a3a3a3' : edgeColor;
         ctx.fill();
         
-        // Draw relationship label on edge - only at higher zoom to improve performance
+        // Draw relationship label on edge
         const relationshipType = (link as any).relationshipType || (link as any).type || (link as any).label || '';
-        if (relationshipType && globalScale > 1.5) {
-          const midX = (sourceX + targetX) / 2;
-          const midY = (sourceY + targetY) / 2;
-          let labelAngle = Math.atan2(targetY - sourceY, targetX - sourceX);
+        const showRelNodeLabels = sourceIsRel || targetIsRel;
+        const shouldRenderLabel = showRelNodeLabels && (isFocusMode || isPathEdge || isInverseEdge) && globalScale > 1.5;
+        if (shouldRenderLabel && relationshipType) {
+          const midX = (sx + tx) / 2;
+          const midY = (sy + ty) / 2;
+          let labelAngle = Math.atan2(ty - sy, tx - sx);
           
           // Extract clean relationship name
           let labelText = relationshipType;
+
+          // For relationship-node edges, label the role
+          if (showRelNodeLabels) {
+            const edgeRole = (link as any).label;
+            const relType = relationshipType.toUpperCase();
+            const isInverse = (link as any).__isInverse === true || (typeof (link as any).id === 'string' && (link as any).id.endsWith('__inv'));
+
+            // Actual IFC property names for forward edges
+            const ifcPropertyNameMap: Record<string, { relating: string; related: string }> = {
+              IFCRELAGGREGATES: { relating: 'RelatingObject', related: 'RelatedObjects' },
+              IFCRELDECOMPOSES: { relating: 'RelatingObject', related: 'RelatedObjects' },
+              IFCRELCONTAINEDINSPATIALSTRUCTURE: { relating: 'RelatingStructure', related: 'RelatedElements' },
+              IFCRELVOIDSELEMENT: { relating: 'RelatingBuildingElement', related: 'RelatedOpeningElement' },
+              IFCRELFILLSELEMENT: { relating: 'RelatingOpeningElement', related: 'RelatedBuildingElement' },
+              IFCRELDEFINESBYPROPERTIES: { relating: 'RelatingPropertyDefinition', related: 'RelatedObjects' },
+              IFCRELDEFINESBYTYPE: { relating: 'RelatingType', related: 'RelatedObjects' },
+              IFCRELASSOCIATESMATERIAL: { relating: 'RelatingMaterial', related: 'RelatedObjects' },
+              IFCRELASSOCIATESCLASSIFICATION: { relating: 'RelatingClassification', related: 'RelatedObjects' },
+            };
+
+            // Human-readable labels for inverse edges
+            const inverseRoleLabelMap: Record<string, { relating: string; related: string }> = {
+              IFCRELAGGREGATES: { relating: 'IsDecomposedBy', related: 'Decomposes' },
+              IFCRELDECOMPOSES: { relating: 'IsDecomposedBy', related: 'Decomposes' },
+              IFCRELCONTAINEDINSPATIALSTRUCTURE: { relating: 'ContainsElements', related: 'ContainedInStructure' },
+              IFCRELVOIDSELEMENT: { relating: 'HasOpenings', related: 'VoidsElement' },
+              IFCRELFILLSELEMENT: { relating: 'HasFillings', related: 'FillsVoid' },
+              IFCRELDEFINESBYPROPERTIES: { relating: 'Defines', related: 'HasProperties' },
+              IFCRELDEFINESBYTYPE: { relating: 'Defines', related: 'HasType' },
+              IFCRELASSOCIATESMATERIAL: { relating: 'AssociatedTo', related: 'HasAssociations' },
+              IFCRELASSOCIATESCLASSIFICATION: { relating: 'ClassifiedAs', related: 'HasAssociations' },
+            };
+
+            const relKey = Object.keys(ifcPropertyNameMap).find(key => relType.includes(key));
+            const ifcPropertyNames = relKey ? ifcPropertyNameMap[relKey] : null;
+            const inverseLabels = relKey ? inverseRoleLabelMap[relKey] : null;
+
+            if (!isInverse) {
+              // Forward edges: show actual IFC property names
+              if (ifcPropertyNames) {
+                if (edgeRole === 'relating') labelText = ifcPropertyNames.relating;
+                if (edgeRole === 'related') labelText = ifcPropertyNames.related;
+              } else {
+                if (edgeRole === 'relating') labelText = 'RelatingObject';
+                if (edgeRole === 'related') labelText = 'RelatedObjects';
+              }
+            } else if (inverseLabels) {
+              // Inverse edges: show human-readable labels
+              if (edgeRole === 'relating') labelText = inverseLabels.relating;
+              if (edgeRole === 'related') labelText = inverseLabels.related;
+            }
+          }
           
           // Remove IFCREL prefix for IFCREL* types
           if (labelText.startsWith('IFCREL')) {
@@ -622,10 +922,62 @@ export function GraphVisualization({
     },
     [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot]
   );
-
+  // Auto-zoom to selected node when selection changes externally (from other panels)
+  useEffect(() => {
+    if (!selectedNodeId || !graphRef.current) {
+      console.log('[GraphViz] Skip auto-zoom:', { selectedNodeId, hasGraphRef: !!graphRef.current });
+      return;
+    }
+    
+    // Find the selected node in the current data
+    const selectedNode = finalFilteredData.nodes.find(n => n.id === selectedNodeId);
+    console.log('[GraphViz] Auto-zoom attempt:', { 
+      selectedNodeId, 
+      found: !!selectedNode,
+      hasCoords: selectedNode?.x !== undefined && selectedNode?.y !== undefined 
+    });
+    
+    if (!selectedNode || !selectedNode.x || !selectedNode.y) {
+      console.warn('[GraphViz] Cannot zoom: node not found or no coordinates');
+      return;
+    }
+    
+    // Only auto-zoom if coordinates are set (after layout)
+    try {
+      graphRef.current.pauseAnimation();
+      graphRef.current.centerAt(selectedNode.x, selectedNode.y, 300);
+      graphRef.current.zoom(2, 300);
+      setTimeout(() => {
+        if (graphRef.current) {
+          graphRef.current.resumeAnimation();
+        }
+      }, 300);
+    } catch (e) {
+      // Ignore zoom errors during animation
+    }
+  }, [selectedNodeId, finalFilteredData.nodes]);
   const handleNodeClick = useCallback(
     (node: any) => {
+      console.log('[GraphViz] ===== NODE CLICK EVENT =====');
+      console.log('[GraphViz] Node ID:', node?.id);
+      console.log('[GraphViz] Node Type:', node?.type);
+      console.log('[GraphViz] IFC Type:', node?.ifcType);
+      console.log('[GraphViz] Position:', node?.x, node?.y);
+      console.log('[GraphViz] Event details:', node?.__event);
+      lastNodeClickAt.current = performance.now();
+
+      // CRITICAL: Select the node that was actually clicked
+      // Do NOT auto-select related nodes - that causes selection mismatch
       onNodeClick(node as GraphNode);
+      setDebugClickInfo({
+        kind: 'node',
+        clientX: (node?.__event?.clientX ?? 0),
+        clientY: (node?.__event?.clientY ?? 0),
+        graphX: node?.x,
+        graphY: node?.y,
+        nodeId: node?.id,
+        nodeType: node?.ifcType || node?.type,
+      });
       
       // Clear path-to-root mode when clicking a different node
       if (showPathToRoot) {
@@ -634,14 +986,24 @@ export function GraphVisualization({
       }
       
       // Track focused node and its connections
+      const getEdgeEndpointId = (value: any): string => {
+        if (!value) return '';
+        if (typeof value === 'string') return value;
+        if (typeof value === 'object' && 'id' in value) return String((value as any).id);
+        return String(value);
+      };
+
       if (node) {
         setFocusedNodeId(node.id);
         const connected = new Set<string>();
         finalFilteredData.edges.forEach(edge => {
-          if (edge.source === node.id) connected.add(edge.target);
-          if (edge.target === node.id) connected.add(edge.source);
+          const sourceId = getEdgeEndpointId(edge.source);
+          const targetId = getEdgeEndpointId(edge.target);
+          if (sourceId === node.id) connected.add(targetId);
+          if (targetId === node.id) connected.add(sourceId);
         });
         setConnectedNodeIds(connected);
+        console.log('[GraphViz] Connected nodes:', connected.size);
       } else {
         setFocusedNodeId(null);
         setConnectedNodeIds(new Set());
@@ -667,30 +1029,171 @@ export function GraphVisualization({
   );
 
   const handleBackgroundClick = useCallback(() => {
+    const elapsed = performance.now() - lastNodeClickAt.current;
+    if (elapsed < 200) {
+      return; // Ignore background click immediately after node click
+    }
     onNodeClick(null);
     setFocusedNodeId(null);
     setConnectedNodeIds(new Set());
     setShowPathToRoot(false);
     setPathToRootIds(new Set());
+    setDebugClickInfo(null);
   }, [onNodeClick]);
 
+  // CRITICAL: Setup manual canvas click detection for nodes force-graph's onNodeClick misses
+  // This is necessary because force-graph-2d has unreliable hit detection for dense graphs
+  useEffect(() => {
+    const handleCanvasPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return; // Only left click
+      
+      const canvas = containerRef.current?.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas || !graphRef.current) return;
+      
+      // Get click in canvas coordinates
+      const rect = canvas.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      const coords = (graphRef.current as any).screen2GraphCoords?.(screenX, screenY);
+      
+      if (!coords) return;
+      
+      // Find closest node within hit radius
+      let closestNode: GraphNode | null = null;
+      let closestDist = Infinity;
+      const HIT_RADIUS = 40; // Generous hit detection
+      
+      for (const node of finalFilteredData.nodes) {
+        if (node.x === undefined || node.y === undefined) continue;
+        const dx = node.x - coords.x;
+        const dy = node.y - coords.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist <= HIT_RADIUS && dist < closestDist) {
+          closestDist = dist;
+          closestNode = node;
+        }
+      }
+      
+      // Only fire our handler if force-graph's onNodeClick didn't already handle it
+      // We do this by checking if a node would have been selected
+      // If closestNode is found and very close (< 20 units), it was probably already handled
+      if (closestNode && closestDist > 20) {
+        console.log('[CanvasPointerDown] Caught missed click on:', closestNode.id, closestNode.ifcType, 'dist:', closestDist.toFixed(1));
+        handleNodeClick(closestNode);
+      }
+    };
+    
+    const canvas = containerRef.current?.querySelector('canvas');
+    if (canvas) {
+      // Use pointerdown to catch it before force-graph's handlers
+      // Note: we don't prevent default or stop propagation to let force-graph handle pan/zoom
+      canvas.addEventListener('pointerdown', handleCanvasPointerDown, true);
+      return () => canvas.removeEventListener('pointerdown', handleCanvasPointerDown, true);
+    }
+  }, [finalFilteredData.nodes, handleNodeClick]);
+
   // Hover disabled to prevent animation instability
+
+  // Manually handle clicks via transparent overlay div
+  // This bypasses force-graph's event system entirely
+  const handleOverlayClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!graphRef.current || !containerRef.current) return;
+      
+      const canvas = containerRef.current.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas) {
+        console.log('[OverlayClick] No canvas found');
+        return;
+      }
+      
+      // Get click position relative to canvas
+      const rect = canvas.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      
+      // Convert to graph coordinates
+      const coords = (graphRef.current as any).screen2GraphCoords?.(screenX, screenY);
+      if (!coords) {
+        console.log('[OverlayClick] Could not convert screen to graph coords');
+        return;
+      }
+      
+      console.log('[OverlayClick] Click at graph coords:', coords.x.toFixed(1), coords.y.toFixed(1));
+      
+      // Find closest node
+      let closestNode: GraphNode | null = null;
+      let closestDist = Infinity;
+      const HIT_RADIUS = 30; // Fixed generous hit radius
+      
+      for (const node of finalFilteredData.nodes) {
+        if (node.x === undefined || node.y === undefined) continue;
+        
+        const dx = node.x - coords.x;
+        const dy = node.y - coords.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist <= HIT_RADIUS && dist < closestDist) {
+          closestDist = dist;
+          closestNode = node;
+        }
+      }
+      
+      if (closestNode) {
+        console.log('[OverlayClick] Selected:', closestNode.id, closestNode.ifcType, 'dist:', closestDist.toFixed(1));
+        handleNodeClick(closestNode);
+      } else {
+        console.log('[OverlayClick] No node in hit radius');
+        onNodeClick(null);
+        setFocusedNodeId(null);
+        setConnectedNodeIds(new Set());
+        setShowPathToRoot(false);
+        setPathToRootIds(new Set());
+      }
+    },
+    [finalFilteredData.nodes, handleNodeClick, onNodeClick]
+  );
 
   return (
     <div ref={containerRef} className="w-full h-full grid-pattern gradient-radial">
       <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+      {/* Debug Click Info */}
+      {debugClickInfo && (
+        <div className="absolute bottom-4 left-4 z-30 rounded-lg bg-black/70 text-white text-[11px] px-3 py-2 font-mono shadow-lg">
+          <div><strong>Click:</strong> {debugClickInfo.kind}</div>
+          <div>screen: {debugClickInfo.clientX}, {debugClickInfo.clientY}</div>
+          {debugClickInfo.graphX !== undefined && debugClickInfo.graphY !== undefined && (
+            <div>graph: {debugClickInfo.graphX.toFixed(1)}, {debugClickInfo.graphY.toFixed(1)}</div>
+          )}
+          {debugClickInfo.nodeId && (
+            <div>node: {debugClickInfo.nodeId} ({debugClickInfo.nodeType})</div>
+          )}
+        </div>
+      )}
       
-      {/* Path to Root Button */}
-      {selectedNodeId && !showPathToRoot && (
-        <div className="absolute top-4 right-4 z-20">
+      
+      {/* Control Buttons */}
+      <div className="absolute top-4 right-4 z-20 flex gap-2">
+        {/* Reset Graph Button */}
+        <button
+          onClick={handleResetGraph}
+          className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+          title="Reset graph view and clear selections"
+        >
+          Reset Graph
+        </button>
+        
+        {/* Path to Root Button */}
+        {selectedNodeId && !showPathToRoot && (
           <button
             onClick={handleShowPathToRoot}
             className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
           >
             Show Path to Root
           </button>
-        </div>
-      )}
+        )}
+      </div>
       
       {/* Clear Path Button */}
       {showPathToRoot && (
@@ -712,16 +1215,68 @@ export function GraphVisualization({
         graphData={graphData}
         nodeCanvasObject={nodeCanvasObject}
         linkCanvasObject={linkCanvasObject}
-        onNodeClick={handleNodeClick}
-        onBackgroundClick={handleBackgroundClick}
+        onNodeClick={(node) => {
+          // Use manual click logic to ensure we select the right node
+          if (node) {
+            handleNodeClick(node);
+          }
+        }}
+        onBackgroundClick={(event) => {
+          // Manual node detection for background clicks
+          const canvas = containerRef.current?.querySelector('canvas');
+          if (canvas && graphRef.current) {
+            const rect = canvas.getBoundingClientRect();
+            const screenX = (event?.clientX ?? 0) - rect.left;
+            const screenY = (event?.clientY ?? 0) - rect.top;
+            const coords = (graphRef.current as any).screen2GraphCoords?.(screenX, screenY);
+            
+            if (coords) {
+              let closestNode: GraphNode | null = null;
+              let closestDist = Infinity;
+              const HIT_RADIUS = 30;
+              
+              for (const node of finalFilteredData.nodes) {
+                if (node.x === undefined || node.y === undefined) continue;
+                const dx = node.x - coords.x;
+                const dy = node.y - coords.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist <= HIT_RADIUS && dist < closestDist) {
+                  closestDist = dist;
+                  closestNode = node;
+                }
+              }
+              
+              if (closestNode) {
+                handleNodeClick(closestNode);
+                return;
+              }
+            }
+          }
+          
+          // No node found, clear selection
+          onNodeClick(null);
+          setFocusedNodeId(null);
+          setConnectedNodeIds(new Set());
+          setShowPathToRoot(false);
+          setPathToRootIds(new Set());
+        }}
+        cooldownTicks={100}
         nodePointerAreaPaint={(node, color, ctx) => {
-          const size = NODE_SIZES[(node as GraphNode).type] || 8;
+          // CRITICAL: Extremely generous hit areas for force-graph's unreliable picking
+          // In dense graphs, many nodes never trigger onNodeClick without this
+          const graphNode = node as GraphNode;
+          const baseSize = NODE_SIZES[graphNode.type] || 8;
+          
+          // Make hit areas very large - 50 units minimum (much larger than visual node)
+          // This compensates for force-graph's poor hit detection in relationship node patterns
+          const hitAreaRadius = Math.max(baseSize * 4, 50);
+          
           ctx.beginPath();
-          ctx.arc(node.x || 0, node.y || 0, size + 4, 0, 2 * Math.PI);
+          ctx.arc(node.x || 0, node.y || 0, hitAreaRadius, 0, 2 * Math.PI);
           ctx.fillStyle = color;
           ctx.fill();
         }}
-        cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         backgroundColor="transparent"

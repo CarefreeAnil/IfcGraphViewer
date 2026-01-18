@@ -27,16 +27,30 @@
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+@keyframes node-pulse {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 10px rgba(255, 215, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 20px rgba(255, 215, 0, 0);
   }
 }
 
-.card {
-  padding: 2em;
+@keyframes external-selection-highlight {
+  0% {
+    filter: brightness(1.2) drop-shadow(0 0 8px #FFD700);
+  }
+  50% {
+    filter: brightness(1.4) drop-shadow(0 0 16px #FFD700);
+  }
+  100% {
+    filter: brightness(1.2) drop-shadow(0 0 8px #FFD700);
+  }
 }
 
-.read-the-docs {
-  color: #888;
-}
