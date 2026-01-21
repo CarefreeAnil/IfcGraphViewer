@@ -1,14 +1,18 @@
-import { AlertCircle, CheckCircle, Info, AlertTriangle, FileText, Layout, Database, BookOpen } from 'lucide-react';
+import { AlertCircle, CheckCircle, Info, AlertTriangle, FileText, Layout, Database, BookOpen, ExternalLink } from 'lucide-react';
 import { ValidationResult, ValidationError } from '@/lib/ifcValidatorEnhanced';
+import { GraphNode } from '@/types/graph';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Button } from '@/components/ui/button';
 
 interface ValidationReportProps {
   result: ValidationResult;
+  nodes?: GraphNode[];
+  onEntityClick?: (entityId: string) => void;
 }
 
 const EDUCATIONAL_CONTEXT: Record<string, string> = {
@@ -29,7 +33,27 @@ const EDUCATIONAL_CONTEXT: Record<string, string> = {
   'SYN005': 'This entity failed to parse completely. This usually happens when you use text without quotes (like UK instead of \'UK\') or skip commas. The parser simply skipped this line.',
 };
 
-export function ValidationReport({ result }: ValidationReportProps) {
+export function ValidationReport({ result, nodes, onEntityClick }: ValidationReportProps) {
+  // Helper to format entity display
+  const formatEntityDisplay = (entityId: string): string => {
+    if (!nodes) return entityId;
+    
+    const node = nodes.find(n => n.id === entityId);
+    if (!node) return entityId;
+    
+    const globalId = node.properties?.GlobalId || node.properties?.globalId;
+    const name = node.label || node.properties?.Name || node.properties?.name;
+    
+    // Format: IfcWall: GlobalId (or Name if no GlobalId)
+    if (globalId && globalId !== '') {
+      return `${node.ifcType}: ${globalId}`;
+    } else if (name) {
+      return `${node.ifcType}: ${name}`;
+    } else {
+      return `${node.ifcType}: #${node.properties?._expressID || entityId}`;
+    }
+  };
+  
   // Calculate a "Health Score" for the student
   const calculateScore = () => {
     let score = 100;
@@ -252,9 +276,31 @@ export function ValidationReport({ result }: ValidationReportProps) {
                             </div>
                             <ScrollArea className="h-40">
                                 {group.items.map((item, idx) => (
-                                    <div key={idx} className="p-2 border-b last:border-0 text-sm flex justify-between">
-                                        <span>ID: {item.entityId || 'N/A'}</span>
-                                        <span className="text-muted-foreground">{item.suggestion}</span>
+                                    <div key={idx} className="p-2 border-b last:border-0 text-sm hover:bg-muted/50 transition-colors">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="flex-1">
+                                                <div className="font-mono text-xs text-muted-foreground mb-1">
+                                                    {formatEntityDisplay(item.entityId || 'N/A')}
+                                                </div>
+                                                {item.suggestion && (
+                                                    <div className="text-xs text-muted-foreground italic">
+                                                        {item.suggestion}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {onEntityClick && item.entityId && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 px-2 gap-1 flex-shrink-0"
+                                                    onClick={() => onEntityClick(item.entityId!)}
+                                                    title="Navigate to entity"
+                                                >
+                                                    <ExternalLink className="w-3 h-3" />
+                                                    <span className="text-xs">View</span>
+                                                </Button>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </ScrollArea>

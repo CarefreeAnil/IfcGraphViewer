@@ -178,6 +178,7 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCCIRCULARARCPOINTANDRADIUS',
     'IFCELLIPSE',                          // Ellipse definitions
     'IFCPOLYLINE',                         // Polyline definitions
+    'IFCPOLYLOOP',                         // Polygon loop
     'IFCCOMPOSITECURVE',
     'IFCPOLYCURVE',
     'IFCBOUNDEDCURVE',
@@ -207,6 +208,7 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCPOLYLINEPROFILEDEF',
     'IFCCENTRELINEPROFILEDEF',
     'IFCPARAMETERIZEDPROFILEDEF',
+    'IFCARBITRARYCLOSEDPROFILEDEF',     // Arbitrary profile definition
     
     // Solid/representation primitives
     'IFCBLOCK',
@@ -219,11 +221,25 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCEXTRUDEDAREASOLID',                // (676 instances)
     'IFCREVOLVEDAREASOLID',
     'IFCSWEPTSURFACESOLID',
-    'IFCEXTRUDEDAREASSIMPLIFIED', // Simplified geometry
+    'IFCEXTRUDEDAREASSIMPLIFIED',          // Simplified geometry
     'IFCMAPPEDITEM',                       // Mapped geometry instances
+    'IFCFACEOUTERBOUND',                  // Face boundary
+    'IFCFACE',                             // Face geometry
+    'IFCFACETEDBREP',                      // Faceted B-rep representation
+    'IFCBOOLEANCLIPPINGRESULT',            // Boolean clipping result
+    'IFCCLOSEDSHELL',                     // Shell geometry
+    
+    // Representation and placement - structural metadata NOT visual elements
+    'IFCPRODUCTDEFINITIONSHAPE',          // Shape representation container (largest floating node source!)
+    'IFCSHAPEREPRESENTATION',              // Shape representation metadata
+    'IFCGEOMETRICREPRESENTATIONCONTEXT',   // Geometric representation context
+    'IFCLOCALPLACEMENT',                  // Coordinate system placement
+    'IFCAXIS2PLACEMENT2D',                // 2D coordinate system
+    'IFCAXIS2PLACEMENT3D',                // 3D coordinate system
     
     // Style and appearance definitions
     'IFCSURFACESTYLE',                     // Surface styling
+    'IFCSURFACESTYLERENDERING',            // Surface rendering properties
     'IFCCURVESTYLE',                       // Curve styling
     'IFCTEXTUREMAP',                       // Texture mapping
     'IFCFILLAREASTYLE',
@@ -231,6 +247,30 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCFILLAREASTYLETILES',
     'IFCHATCHLINESTYLE',
     'IFCSTYLEMODEL',
+    'IFCSTYLEDITEM',                       // Styled item (visual properties)
+    'IFCPRESENTATIONSTYLEASSIGNMENT',     // Presentation style assignment
+    'IFCPRESENTATIONLAYERASSIGNMENT',      // Presentation layer assignment
+    'IFCCOLOURRGB',                        // Color definition
+    'IFCCOLOURRGBANDCOMPONENTS',
+    'IFCCOLOURPROXY',
+    
+    // Type definitions - schema templates, not instances
+    'IFCWALLTYPE',                         // Type templates
+    'IFCDOORTYPE',
+    'IFCWINDOWTYPE',
+    'IFCSLABTYPE',
+    'IFCCOLUMNTYPE',
+    'IFCBEAMTYPE',
+    'IFCDUCTTYPE',
+    'IFCPIPESEGMENTTYPE',
+    'IFCPUMPTYPE',
+    'IFCFANTYPE',
+    'IFCCHILLERTYPE',
+    'IFCCOILTYPE',
+    'IFCBOILERTYPE',
+    'IFCCOVERINGTYPE',
+    'IFCTYPEDEFINITION',                  // Generic type definition
+    'IFCRELDEFINESBYTYPE',                // Type definition relationship
     
     // Window/Door property details
     'IFCWINDOWLININGPROPERTIES',           // (468 instances)
@@ -243,11 +283,39 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCSHAPEASPECT',                      // Shape metadata
     'IFCSHELLBASEDSURFACEMODEL',           // Complex geometry representation
     'IFCTESSELLATEDFACESET',               // Tessellated geometry
-    'IFCSHELLBASEDSURFACEMODEL',
     'IFCSHAPEMODEL',
     
     // Material-related metadata
     'IFCMATERIALLAYER',                    // (17 instances)
+    'IFCMATERIAL',
+    'IFCMATERIALLAYERSET',
+    'IFCMATERIALLAYERSETUSAGE',            // Material layer set usage
+    'IFCMATERIALLAYERUSAGEPUTATIVE',
+    'IFCMATERIALLAYERWITHOFFFSETS',
+    'IFCMATERIALCOMPONENT',
+    'IFCMATERIALDEFINITIONREPRESENTATION',
+    'IFCMATERIALPROPERTIES',
+    'IFCMECHANICALCONCRETEMATERIALPROPERTIES',
+    'IFCMECHANICALMATERIALPROPERTIES',
+    'IFCTHERMALMAATERIALPROPERTIES',
+    'IFCWOODFINISHINGPROPERTIES',
+    
+    // Classification and reference metadata
+    'IFCCLASSIFICATION',
+    'IFCCLASSIFICATIONREFERENCE',           // Classification reference
+    
+    // Unit and measure definitions
+    'IFCSIUNIT',
+    'IFCUNITASSIGNMENT',
+    'IFCCONVERSIONBASEDUNIT',
+    'IFCDERIVEDUNIT',
+    'IFCDERIVEDUNITELEMENT',
+    'IFCDIMENSIONALEXPONENTS',
+    'IFCNAMEDUNIT',
+    'IFCUNIT',
+    'IFCMEASUREWITHUNIT',
+    'IFCMONETARYMEASURE',
+    'IFCDIMENSIONCOUNT',
     'IFCMATERIAL',
     'IFCMATERIALLAYERSET',
     'IFCMATERIALLAYERUSAGEPUTATIVE',
@@ -471,6 +539,9 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
             // MEP/utility
             'IFCDISTRIBUTIONPORT', 'IFCFLOWSEGMENT', 'IFCFLOWFITTING',
             'IFCTERMINALDEVICE',
+            // Property/definition relationships (LoD3+ only)
+            'IFCRELDEFINESBYPROPERTIES',
+            'IFCRELDEFINESBYTEMPLATE',
           ]);
           return !excludeTypes.has(type);
         },
@@ -532,7 +603,6 @@ export function applyLoD(
           target: edge.source,
           label: inverseLabel,
           type: edge.type,
-          __isInverse: true,
         });
         seen.add(inverseId);
       }

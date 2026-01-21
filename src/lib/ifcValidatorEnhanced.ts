@@ -69,19 +69,44 @@ function detectSchemaVersion(nodes: GraphNode[]): string {
  */
 function validateEntity(node: GraphNode): ValidationError[] {
   const errors: ValidationError[] = [];
+  
+  // Debug logging for IFCSITE
+  if (node.ifcType.toUpperCase() === 'IFCSITE') {
+    console.log('[Validator] IFCSITE entity found:', {
+      id: node.id,
+      ifcType: node.ifcType,
+      properties: node.properties,
+      globalIdValue: node.properties?.GlobalId || node.properties?.globalId,
+    });
+  }
+  
   const entityDef = getEntityDef(node.ifcType);
   
   if (!entityDef) {
     // Instead of warning about unknown entity, skip validation
     // Unknown entities are often custom or from newer schema versions
+    console.log('[Validator] No entity definition found for:', node.ifcType);
     return errors;
   }
   
   // Check required properties
   const requiredProps = entityDef.properties.filter(p => p.required);
   for (const propDef of requiredProps) {
-    const hasProperty = node.properties[propDef.name] !== undefined && 
-                       node.properties[propDef.name] !== null;
+    const value = node.properties[propDef.name];
+    const hasProperty = value !== undefined && value !== null;
+    
+    // Debug logging for GlobalId specifically
+    if (propDef.name === 'GlobalId' && node.ifcType.toUpperCase() === 'IFCSITE') {
+      console.log('[Validator Debug] IFCSITE GlobalId check:', {
+        entityId: node.id,
+        value: value,
+        valueType: typeof value,
+        valueLength: typeof value === 'string' ? value.length : 'N/A',
+        hasProperty,
+        isEmpty: typeof value === 'string' && value.trim() === '',
+        allProperties: Object.keys(node.properties)
+      });
+    }
     
     if (!hasProperty) {
       errors.push({
@@ -93,6 +118,18 @@ function validateEntity(node: GraphNode): ValidationError[] {
         entityType: node.ifcType,
         propertyName: propDef.name,
         suggestion: `Add the required property "${propDef.name}" to this ${node.ifcType} entity.`,
+      });
+    } else if (typeof value === 'string' && value.trim() === '') {
+      // Check for empty strings in required properties
+      errors.push({
+        severity: 'error',
+        type: 'EMPTY_REQUIRED_PROPERTY',
+        code: 'VAL002B',
+        message: `Required property "${propDef.name}" cannot be empty`,
+        entityId: node.id,
+        entityType: node.ifcType,
+        propertyName: propDef.name,
+        suggestion: `Provide a valid value for the required property "${propDef.name}".`,
       });
     }
   }
@@ -135,6 +172,16 @@ function validateEntity(node: GraphNode): ValidationError[] {
  */
 function validatePropertyType(value: any, expectedType: string): boolean {
   const type = expectedType.toUpperCase();
+  
+  // Handle GUID type - strict validation
+  if (type === 'IFCGLOBALLYUNIQUEID') {
+    if (typeof value !== 'string') return false;
+    // Must be exactly 22 characters
+    if (value.length !== 22) return false;
+    // Must match Base64 character set used in IFC GUIDs: [0-9A-Za-z_$]
+    const guidPattern = /^[0-9A-Za-z_$]{22}$/;
+    return guidPattern.test(value);
+  }
   
   // Handle reference types
   if (type.startsWith('IFC') && !type.includes('MEASURE') && !type.includes('VALUE')) {

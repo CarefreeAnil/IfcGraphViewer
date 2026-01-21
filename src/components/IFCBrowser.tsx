@@ -617,16 +617,6 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     const targetScrollTop = nodeIndex * ITEM_HEIGHT;
     const scrollPosition = Math.max(0, targetScrollTop - OFFSET_FROM_TOP);
     
-    console.log('[IFCBrowser] Auto-scroll:', {
-      selectedNodeId,
-      nodeIndex,
-      itemHeight: ITEM_HEIGHT,
-      targetScrollTop,
-      scrollPosition,
-      currentScroll: entityListRef.current.scrollTop,
-      currentStateScroll: scrollTop
-    });
-    
     // Only scroll if the item is not already visible in a good position
     const currentScroll = entityListRef.current.scrollTop;
     const containerHeight = entityListRef.current.clientHeight;
@@ -634,7 +624,6 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     const isInGoodPosition = itemTopInViewport >= 100 && itemTopInViewport <= (containerHeight - 200);
     
     if (isInGoodPosition) {
-      console.log('[IFCBrowser] Item already in good position, skipping scroll');
       return;
     }
     
@@ -653,7 +642,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     setTimeout(() => {
       isProgrammaticScroll.current = false;
     }, 200);
-  }, [selectedNodeId, filteredNodes, ITEM_HEIGHT, scrollTop]);
+  }, [selectedNodeId, filteredNodes, ITEM_HEIGHT]);
 
   return (
     <div className="h-full flex flex-col bg-background">

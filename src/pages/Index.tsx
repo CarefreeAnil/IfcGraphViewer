@@ -5,7 +5,6 @@ import { Header } from '@/components/Header';
 import { FileUpload } from '@/components/FileUpload';
 import { NodeDetailsPanel } from '@/components/NodeDetailsPanel';
 import { GraphControls } from '@/components/GraphControls';
-import { StatsPanel } from '@/components/StatsPanel';
 import { Legend } from '@/components/Legend';
 import { IFCBrowser } from '@/components/IFCBrowser';
 import { ValidationDialog } from '@/components/ValidationDialog';
@@ -26,6 +25,7 @@ import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
 // Lazy load heavy components
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
 const Viewer3D = lazy(() => import('@/components/Viewer3D'));
+const IFC5GraphVisualization = lazy(() => import('@/components/IFC5GraphVisualization').then(m => ({ default: m.IFC5GraphVisualization })));
 
 const Index = () => {
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
@@ -37,12 +37,16 @@ const Index = () => {
   const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
   const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
   const [viewer3DLoaded, setViewer3DLoaded] = useState(false); // 3D viewer unloaded by default
+  const [ifc5GraphLoaded, setIfc5GraphLoaded] = useState(false); // IFC5 graph unloaded by default
   const [isValidating, setIsValidating] = useState(false); // Validation in progress
   const [relationshipFilters, setRelationshipFilters] = useState({
-    showContainment: true,
-    showAggregation: true,
-    showProperties: true,
+    showContainment: false,
+    showAggregation: false,
+    showProperties: false,
     showAuxiliary: false,
+    showConnects: false,
+    showAssociates: false,
+    showSpaceBoundary: false,
   });
   const [graphStats, setGraphStats] = useState({
     totalNodes: 0,
@@ -60,8 +64,23 @@ const Index = () => {
   // Check if current file is IFC5
   const isIFC5 = parsedData?.metadata?.isIFC5 === true;
 
+  // Ref to hold the selectObject function from useIFC5Viewer
+  const selectObjectRef = useRef<((path: string) => void) | null>(null);
+
+  // Handle IFC5 node selection (defined early to avoid circular dependency)
+  const handleIFC5NodeSelect = useCallback((path: string, node: ComposedObject) => {
+    console.log('[Index] handleIFC5NodeSelect called:', { path, nodeName: node.name });
+    setSelectedIFC5Node(node);
+    // Also highlight in 3D viewer if loaded
+    if (viewer3DLoaded && isIFC5 && selectObjectRef.current) {
+      console.log('[Index] Syncing selection to 3D viewer');
+      selectObjectRef.current(path);
+    }
+  }, [viewer3DLoaded, isIFC5]);
+
   // Handle 3D object click
   const handleIFC5ObjectClick = useCallback((path: string) => {
+    console.log('[Index] 3D object clicked:', path);
     // Find the node with this path in the composed object
     if (parsedData?.rawData?.composedObject) {
       const findNodeByPath = (node: ComposedObject, targetPath: string): ComposedObject | null => {
@@ -75,11 +94,13 @@ const Index = () => {
         return null;
       };
       const node = findNodeByPath(parsedData.rawData.composedObject, path);
+      console.log('[Index] Found node for path:', node?.name);
       if (node) {
+        console.log('[Index] Calling handleIFC5NodeSelect from 3D click');
         handleIFC5NodeSelect(path, node);
       }
     }
-  }, [parsedData]);
+  }, [parsedData, handleIFC5NodeSelect]);
 
   // IFC5 3D Viewer hook
   const { 
@@ -87,6 +108,11 @@ const Index = () => {
     selectObject,
     isInitialized: viewer3DInitialized
   } = useIFC5Viewer(ifc5ViewerContainerRef, viewer3DLoaded, handleIFC5ObjectClick);
+
+  // Store selectObject in ref for use in handleIFC5NodeSelect
+  useEffect(() => {
+    selectObjectRef.current = selectObject;
+  }, [selectObject]);
 
   // Use Web Worker for parsing
   const { parseFile, isLoading, progress, error: workerError } = useIFCWorker();
@@ -196,7 +222,15 @@ const Index = () => {
     setGraphLoaded(false);
     setViewer3DLoaded(false);
     setIsValidating(false);
-    setRelationshipFilters({ showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false });
+    setRelationshipFilters({
+      showContainment: false,
+      showAggregation: false,
+      showProperties: false,
+      showAuxiliary: false,
+      showConnects: false,
+      showAssociates: false,
+      showSpaceBoundary: false,
+    });
     ifcFileBufferRef.current = undefined;
     lastLoadedIFC5Ref.current = null;
     
@@ -212,21 +246,13 @@ const Index = () => {
   const handleNodeClick = useCallback((node: GraphNode | null) => {
     setSelectedNode(node);
   }, []);
-  
-  const handleIFC5NodeSelect = useCallback((path: string, node: ComposedObject) => {
-    setSelectedIFC5Node(node);
-    // Also highlight in 3D viewer if loaded
-    if (viewer3DLoaded && isIFC5) {
-      selectObject(path);
-    }
-  }, [viewer3DLoaded, isIFC5, selectObject]);
 
   // Keep 3D selection in sync when selection changes in panels
   useEffect(() => {
-    if (viewer3DLoaded && isIFC5 && selectedIFC5Node?.name) {
-      selectObject(selectedIFC5Node.name);
+    if (viewer3DLoaded && isIFC5 && selectedIFC5Node?.name && selectObjectRef.current) {
+      selectObjectRef.current(selectedIFC5Node.name);
     }
-  }, [viewer3DLoaded, isIFC5, selectedIFC5Node?.name, selectObject]);
+  }, [viewer3DLoaded, isIFC5, selectedIFC5Node?.name]);
 
   const handleTypeToggle = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -290,9 +316,28 @@ const Index = () => {
     }
   }, []);
 
-  const handleRelationshipFilterChange = useCallback((filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary', value: boolean) => {
+  const handleRelationshipFilterChange = useCallback((filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary' | 'connects' | 'associates' | 'spaceBoundary', value: boolean) => {
     setRelationshipFilters(prev => ({ ...prev, [`show${filter.charAt(0).toUpperCase() + filter.slice(1)}`]: value }));
   }, []);
+
+  // Handle navigation from validation report to entity
+  const handleEntityNavigation = useCallback((entityId: string) => {
+    if (!parsedData) return;
+    
+    // Find the node
+    const node = parsedData.graphData.nodes.find(n => n.id === entityId);
+    if (!node) return;
+    
+    // Set as selected node (this will sync across all views)
+    setSelectedNode(node);
+    
+    // Switch to IFC Browser tab if not already there
+    // You might need to add state management for active tab if needed
+    
+    // Optionally scroll to the element in tree view
+    // This would require adding a scroll handler in IFCTreeBrowser
+    
+  }, [parsedData]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -304,6 +349,10 @@ const Index = () => {
         hasErrors={parsedData?.validation?.stats.totalErrors ? parsedData.validation.stats.totalErrors > 0 : false}
         onValidate={handleValidate}
         isValidating={isValidating}
+        metadata={parsedData?.metadata}
+        nodes={parsedData?.graphData?.nodes}
+        onEntityClick={handleEntityNavigation}
+        isIFC5={isIFC5}
       />
 
       <main className="pt-20 h-screen">
@@ -384,16 +433,37 @@ const Index = () => {
                 {/* Graph Panel - 35% (Middle-Left) */}
                 <ResizablePanel defaultSize={35} minSize={25} maxSize={60}>
                   {isIFC5 ? (
-                    <div className="h-full w-full bg-background/50 flex items-center justify-center p-8">
-                      <div className="text-center space-y-3 max-w-md">
-                        <div className="text-4xl mb-2">🌳</div>
-                        <p className="text-lg font-medium">IFC5 Tree-Based Navigation</p>
-                        <p className="text-muted-foreground text-sm">
-                          IFC5 files use a hierarchical tree structure instead of a traditional graph. 
-                          Use the Tree Browser panel to explore the building structure.
-                        </p>
+                    !ifc5GraphLoaded ? (
+                      <div className="h-full w-full bg-background/50 flex items-center justify-center">
+                        <div className="text-center space-y-4">
+                          <div className="text-4xl mb-2">🕸️</div>
+                          <p className="text-lg font-medium">IFC5 Graph View</p>
+                          <p className="text-muted-foreground text-sm max-w-md">
+                            Visualize IFC5 JSON structure as an interactive graph with
+                            data nodes, attributes, geometry, and inheritance relationships.
+                          </p>
+                          <button
+                            onClick={() => setIfc5GraphLoaded(true)}
+                            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                          >
+                            Load IFC5 Graph
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <Suspense fallback={
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                          Loading IFC5 graph visualization...
+                        </div>
+                      }>
+                        <IFC5GraphVisualization
+                          composedObject={parsedData.rawData?.composedObject!}
+                          ifc5File={parsedData.rawData?.ifc5File}
+                          onNodeSelect={handleIFC5NodeSelect}
+                          selectedNodePath={selectedIFC5Node?.name || null}
+                        />
+                      </Suspense>
+                    )
                   ) : !graphLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center">
                       <div className="text-center space-y-4">
@@ -463,16 +533,28 @@ const Index = () => {
                         }}
                       />
 
-                      <StatsPanel metadata={parsedData.metadata} />
+                      {/* Compact entity/relations counter */}
+                      <div className="absolute bottom-4 left-4 flex gap-4 p-2 rounded-lg bg-card/90 backdrop-blur-md border border-border">
+                        <div className="flex flex-col">
+                          <span className="text-[7px] uppercase tracking-wider text-muted-foreground">Entities/Nodes</span>
+                          <span className="text-[10px] font-mono text-foreground">{graphStats.filteredNodes.toLocaleString()}</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[7px] uppercase tracking-wider text-muted-foreground">Relations/Edges</span>
+                          <span className="text-[10px] font-mono text-foreground">{graphStats.filteredEdges.toLocaleString()}</span>
+                        </div>
+                      </div>
+
                       <Legend />
 
-                      {/* Unload Graph Button */}
-                      <div className="absolute bottom-2 right-2 z-20">
+                      {/* Unload Graph Button - Middle Bottom */}
+                      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20">
                         <button
                           onClick={() => setGraphLoaded(false)}
-                          className="px-3 py-1 bg-destructive/20 text-destructive rounded text-xs hover:bg-destructive/30 transition-colors"
+                          className="px-3 py-1.5 bg-destructive/20 text-destructive text-xs font-medium rounded hover:bg-destructive/30 transition-colors border border-destructive/30"
+                          title="Unload the current graph visualization"
                         >
-                          Unload Graph
+                          Unload
                         </button>
                       </div>
                     </div>

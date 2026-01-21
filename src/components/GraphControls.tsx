@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Search, Filter, Box, Layers, Building, Hash, Link2, Eye, EyeOff, ChevronDown, Database, Download, Gauge } from 'lucide-react';
+import { Search, Filter, Box, Layers, Building, Hash, Link2, ChevronDown, Download, Gauge, X } from 'lucide-react';
 import { NodeType, GraphNode } from '@/types/graph';
 import { useState } from 'react';
 import {
@@ -31,8 +31,11 @@ interface GraphControlsProps {
     showAggregation: boolean;
     showProperties: boolean;
     showAuxiliary: boolean;
+    showConnects: boolean;
+    showAssociates: boolean;
+    showSpaceBoundary: boolean;
   };
-  onRelationshipFilterChange?: (filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary', value: boolean) => void;
+  onRelationshipFilterChange?: (filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary' | 'connects' | 'associates' | 'spaceBoundary', value: boolean) => void;
 }
 
 const TYPE_FILTERS: { type: NodeType; label: string; icon: React.ReactNode; color: string }[] = [
@@ -55,11 +58,20 @@ export function GraphControls({
   onIncludeAuxiliaryToggle,
   onExport,
   searchInputRef,
-  relationshipFilters = { showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false },
+  relationshipFilters = {
+    showContainment: false,
+    showAggregation: false,
+    showProperties: false,
+    showAuxiliary: false,
+    showConnects: false,
+    showAssociates: false,
+    showSpaceBoundary: false,
+  },
   onRelationshipFilterChange,
 }: GraphControlsProps) {
-  // Always minimized by default
-  const [showFilters, setShowFilters] = useState(false);
+  // Drawer state
+  const [showFilterDrawer, setShowFilterDrawer] = useState(false);
+  const [showNodeTypes, setShowNodeTypes] = useState(false);
 
   const getLoDLabel = (lod: 1 | 2 | 3 | 4 | 5): string => {
     const labels = {
@@ -78,21 +90,21 @@ export function GraphControls({
       animate={{ opacity: 1, y: 0 }}
       className="absolute top-4 left-4 flex flex-col gap-3"
     >
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          ref={searchInputRef}
-          type="text"
-          placeholder="Search nodes... (Ctrl+F)"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="w-64 pl-10 pr-4 py-2.5 rounded-lg bg-card/95 backdrop-blur-md border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
-        />
-      </div>
+      {/* Top Bar: Search, LoD, Export, Filter Button */}
+      <div className="flex items-center gap-2">
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search nodes... (Ctrl+F)"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="w-56 pl-10 pr-4 py-2.5 rounded-lg bg-card/95 backdrop-blur-md border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+          />
+        </div>
 
-      {/* Action Buttons Row */}
-      <div className="flex gap-2">
         {/* LoD Control */}
         {onLoDChange && (
           <DropdownMenu>
@@ -162,6 +174,23 @@ export function GraphControls({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+
+        {/* Filter Drawer Button */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowFilterDrawer(!showFilterDrawer)}
+                className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+              >
+                <Filter className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open filter panel</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       {/* Auxiliary Layer Toggle - Only for LoD5 */}
@@ -169,7 +198,7 @@ export function GraphControls({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card/95 backdrop-blur-md border border-border cursor-help">
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card/95 backdrop-blur-md border border-border cursor-help w-fit">
                 <div className="w-9 h-9 rounded-md border border-dashed border-border bg-muted/60 flex items-center justify-center">
                   <Layers className="w-4 h-4 text-muted-foreground" />
                 </div>
@@ -195,107 +224,145 @@ export function GraphControls({
         </TooltipProvider>
       )}
 
-      {/* Relationship Type Filters */}
-      {onRelationshipFilterChange && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg bg-card/95 backdrop-blur-md border border-border">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            <Link2 className="w-3.5 h-3.5" />
-            Relationship Filters
+      {/* Filter Drawer Panel */}
+      {showFilterDrawer && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="absolute top-16 left-0 w-96 bg-card/98 backdrop-blur-md border border-border rounded-lg p-4 space-y-4 shadow-xl z-50"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">Filters</h3>
+            <button
+              onClick={() => setShowFilterDrawer(false)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={relationshipFilters.showContainment}
-                onChange={(e) => onRelationshipFilterChange('containment', e.target.checked)}
-                className="rounded border-border"
+
+          {/* Relationship Filters Section */}
+          {onRelationshipFilterChange && (
+            <div className="space-y-3 pb-3 border-b border-border">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Relationship Filters</h4>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showContainment}
+                    onChange={(e) => onRelationshipFilterChange('containment', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Containment</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelContainedInSpatialStructure)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showAggregation}
+                    onChange={(e) => onRelationshipFilterChange('aggregation', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Aggregation</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelAggregates / Decomposes)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showConnects}
+                    onChange={(e) => onRelationshipFilterChange('connects', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Connects</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelConnects*, ConnectionGeometry)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showProperties}
+                    onChange={(e) => onRelationshipFilterChange('properties', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Properties</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelDefinesByProperties/Type)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showAssociates}
+                    onChange={(e) => onRelationshipFilterChange('associates', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Associates</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelAssociates*, Materials/Classification)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={relationshipFilters.showSpaceBoundary}
+                    onChange={(e) => onRelationshipFilterChange('spaceBoundary', e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  <span className="text-foreground">Space Boundary</span>
+                  <span className="text-muted-foreground text-[10px]">(IfcRelSpaceBoundary*)</span>
+                </label>
+                {graphLoD === 5 && (
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={relationshipFilters.showAuxiliary}
+                      onChange={(e) => onRelationshipFilterChange('auxiliary', e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    <span className="text-foreground">Auxiliary (LoD5)</span>
+                    <span className="text-muted-foreground text-[10px]">(Geometry, Materials)</span>
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Node Type Filters Section */}
+          <div className="space-y-3">
+            <button
+              onClick={() => setShowNodeTypes(!showNodeTypes)}
+              className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors w-full"
+            >
+              <Filter className="w-3.5 h-3.5" />
+              Node Types
+              <ChevronDown 
+                className="w-3.5 h-3.5 ml-auto transition-transform" 
+                style={{ transform: showNodeTypes ? 'rotate(0deg)' : 'rotate(-90deg)' }}
               />
-              <span className="text-foreground">Containment</span>
-              <span className="text-muted-foreground text-[10px]">(IfcRelContainedInSpatialStructure)</span>
-            </label>
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={relationshipFilters.showAggregation}
-                onChange={(e) => onRelationshipFilterChange('aggregation', e.target.checked)}
-                className="rounded border-border"
-              />
-              <span className="text-foreground">Aggregation</span>
-              <span className="text-muted-foreground text-[10px]">(IfcRelAggregates / Decomposes)</span>
-            </label>
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={relationshipFilters.showProperties}
-                onChange={(e) => onRelationshipFilterChange('properties', e.target.checked)}
-                className="rounded border-border"
-              />
-              <span className="text-foreground">Properties</span>
-              <span className="text-muted-foreground text-[10px]">(IfcRelDefinesByProperties/Type)</span>
-            </label>
-            {graphLoD === 5 && (
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={relationshipFilters.showAuxiliary}
-                  onChange={(e) => onRelationshipFilterChange('auxiliary', e.target.checked)}
-                  className="rounded border-border"
-                />
-                <span className="text-foreground">Auxiliary (LoD5)</span>
-                <span className="text-muted-foreground text-[10px]">(Geometry, Materials)</span>
-              </label>
+            </button>
+            
+            {showNodeTypes && (
+              <div className="flex flex-wrap gap-2">
+                {TYPE_FILTERS.map(({ type, label, icon, color }) => {
+                  const isActive = highlightedTypes.length === 0 || highlightedTypes.includes(type);
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => onTypeToggle(type)}
+                      className={`
+                        flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
+                        ${isActive 
+                          ? `${color} text-background` 
+                          : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                        }
+                      `}
+                    >
+                      {icon}
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Type Filters - Collapsible */}
-      <motion.div 
-        className="flex flex-col gap-2 p-3 rounded-lg bg-card/95 backdrop-blur-md border-glow"
-        animate={{ height: showFilters ? 'auto' : 50 }}
-        transition={{ duration: 0.2 }}
-      >
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
-        >
-          <Filter className="w-3.5 h-3.5" />
-          Filter by Type
-          <ChevronDown 
-            className="w-3.5 h-3.5 ml-auto transition-transform" 
-            style={{ transform: showFilters ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-          />
-        </button>
-        
-        <motion.div
-          initial={false}
-          animate={{ opacity: showFilters ? 1 : 0, height: showFilters ? 'auto' : 0 }}
-          transition={{ duration: 0.2 }}
-          className="overflow-hidden"
-        >
-          <div className="flex flex-wrap gap-2">
-            {TYPE_FILTERS.map(({ type, label, icon, color }) => {
-              const isActive = highlightedTypes.length === 0 || highlightedTypes.includes(type);
-              return (
-                <button
-                  key={type}
-                  onClick={() => onTypeToggle(type)}
-                  className={`
-                    flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
-                    ${isActive 
-                      ? `${color} text-background` 
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                    }
-                  `}
-                >
-                  {icon}
-                  {label}
-                </button>
-              );
-            })}
-          </div>
         </motion.div>
-      </motion.div>
+      )}
     </motion.div>
   );
 }

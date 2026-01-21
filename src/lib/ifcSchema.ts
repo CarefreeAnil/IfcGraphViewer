@@ -50,7 +50,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'building2',
     color: '#1e40af',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership and versioning information' },
       { name: 'Name', type: 'string', required: true, description: 'Project name' },
       { name: 'Description', type: 'string', required: false, description: 'Project description' },
@@ -89,7 +89,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'map',
     color: '#2563eb',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Site name' },
       { name: 'Description', type: 'string', required: false, description: 'Site description' },
@@ -125,7 +125,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'building',
     color: '#3b82f6',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Building name' },
       { name: 'Description', type: 'string', required: false, description: 'Building description' },
@@ -166,7 +166,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'layers',
     color: '#60a5fa',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Storey name/number' },
       { name: 'Description', type: 'string', required: false, description: 'Storey description' },
@@ -205,7 +205,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'square',
     color: '#93c5fd',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Space name/number' },
       { name: 'Description', type: 'string', required: false, description: 'Space description' },
@@ -239,7 +239,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'square-full',
     color: '#fbbf24',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Wall name' },
       { name: 'Description', type: 'string', required: false, description: 'Wall description' },
@@ -271,7 +271,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'square-full',
     color: '#fbbf24',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Wall name' },
       { name: 'Description', type: 'string', required: false, description: 'Wall description' },
@@ -292,7 +292,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'rectangle-horizontal',
     color: '#a78bfa',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Door name' },
       { name: 'Description', type: 'string', required: false, description: 'Door description' },
@@ -317,7 +317,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'rectangle-horizontal',
     color: '#c7d2fe',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Window name' },
       { name: 'Description', type: 'string', required: false, description: 'Window description' },
@@ -342,7 +342,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'square-checkmark',
     color: '#f87171',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Slab name' },
       { name: 'Description', type: 'string', required: false, description: 'Slab description' },
@@ -365,7 +365,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'rectangle',
     color: '#ef4444',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Column name' },
       { name: 'Description', type: 'string', required: false, description: 'Column description' },
@@ -387,7 +387,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'minus',
     color: '#dc2626',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Beam name' },
       { name: 'Description', type: 'string', required: false, description: 'Beam description' },
@@ -409,7 +409,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'triangle',
     color: '#991b1b',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Roof name' },
       { name: 'Description', type: 'string', required: false, description: 'Roof description' },
@@ -431,7 +431,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'arrow-up-left',
     color: '#f59e0b',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Stair name' },
       { name: 'Description', type: 'string', required: false, description: 'Stair description' },
@@ -457,7 +457,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'minus-circle',
     color: '#fbbf24',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Railing name' },
       { name: 'Description', type: 'string', required: false, description: 'Railing description' },
@@ -479,7 +479,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'square-dashed',
     color: '#fcd34d',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Opening name' },
       { name: 'Description', type: 'string', required: false, description: 'Opening description' },
@@ -501,7 +501,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'list',
     color: '#06b6d4',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Property set name' },
       { name: 'Description', type: 'string', required: false, description: 'Property set description' },
@@ -552,7 +552,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link',
     color: '#8b5cf6',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -571,7 +571,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link-2',
     color: '#a855f7',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -590,7 +590,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link-slash',
     color: '#d946ef',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -609,7 +609,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link-2',
     color: '#ec4899',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -628,7 +628,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link-3',
     color: '#f97316',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -647,7 +647,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'link-4',
     color: '#fbbf24',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -666,7 +666,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'tags',
     color: '#06b6d4',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Relationship name' },
       { name: 'Description', type: 'string', required: false, description: 'Relationship description' },
@@ -686,7 +686,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'chair',
     color: '#8b5cf6',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: false, description: 'Furnishing name' },
       { name: 'Description', type: 'string', required: false, description: 'Furnishing description' },
@@ -767,7 +767,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
     icon: 'grid',
     color: '#9333ea',
     properties: [
-      { name: 'GlobalId', type: 'string', required: true, description: 'Unique global identifier' },
+      { name: 'GlobalId', type: 'IfcGloballyUniqueId', required: true, description: '22-character globally unique identifier (GUID)' },
       { name: 'OwnerHistory', type: 'reference', required: true, description: 'Ownership information' },
       { name: 'Name', type: 'string', required: true, description: 'Quantity set name' },
       { name: 'Description', type: 'string', required: false, description: 'Quantity set description' },
@@ -810,7 +810,13 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
  * Get entity definition by type name
  */
 export function getEntityDef(ifcType: string): IfcEntityDef | undefined {
-  return IFC_SCHEMA[ifcType];
+  if (!ifcType) return undefined;
+  const key = ifcType.toUpperCase();
+  const def = IFC_SCHEMA[key];
+  if (!def) {
+    console.debug('[ifcSchema] getEntityDef miss', { raw: ifcType, key, knownTypes: Object.keys(IFC_SCHEMA).length });
+  }
+  return def;
 }
 
 /**
@@ -1076,4 +1082,5 @@ export function validatePropertyMapping(
   
   return mapping;
 }
+
 

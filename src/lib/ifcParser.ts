@@ -707,6 +707,35 @@ export async function parseIFCFile(
     'IFCMATERIALCONSTITUENTSET',
     'IFCCLASSIFICATION',
     'IFCCLASSIFICATIONREFERENCE',
+    // Representation and placement - geometric/structural metadata
+    'IFCPRODUCTDEFINITIONSHAPE',        // Shape representation container
+    'IFCLOCALPLACEMENT',                // Coordinate system placement
+    'IFCAXIS2PLACEMENT2D',              // 2D coordinate system
+    'IFCAXIS2PLACEMENT3D',              // 3D coordinate system
+    // Profile and boundary definitions - geometric templates
+    'IFCARBITRARYCLOSEDPROFILEDEF',     // Profile definition
+    'IFCFACEOUTERBOUND',                // Face boundary
+    'IFCCLOSEDSHELL',                   // Shell geometry primitive
+    'IFCCLOSINGCONTEXT',                // Closing definition
+    // Type definitions - schema templates, not instances
+    'IFCWALLTYPE',                      // Wall type template
+    'IFCDOORTYPE',                      // Door type template
+    'IFCWINDOWTYPE',                    // Window type template
+    'IFCSLABTYPE',                      // Slab type template
+    'IFCCOLUMNTYPE',                    // Column type template
+    'IFCBEAMTYPE',                      // Beam type template
+    'IFCDUCTTYPE',                      // Duct type template
+    'IFCPIPESEGMENTTYPE',               // Pipe type template
+    'IFCPUMPTYPE',                      // Pump type template
+    'IFCFANTYPE',                       // Fan type template
+    'IFCCHILLERTYPE',                   // Chiller type template
+    'IFCCOILTYPE',                      // Coil type template
+    'IFCBOILERTYPE',                    // Boiler type template
+    'IFCCOVERING TYPE',                 // Covering type template
+    'IFCRELDEFINESBYTYPE',              // Type definition relationship
+    // Color and styling - appearance metadata
+    'IFCCOLOURRGB',                     // Color definition
+    'IFCSURFACESTYLE',                  // Surface styling
   ]);
 
   // Process each type - PARSE EVERYTHING, filter at display time
@@ -871,11 +900,14 @@ export async function parseIFCFile(
               label: properties.Name || properties.name || properties.label || getEntityDisplayName(typeName),
               type: finalNodeType,
               ifcType: typeName,
-              // Only show structural/spatial elements in the force-directed graph to prevent explosion
+              // Mark visibility for force-directed graph
+              // These will be shown when they have relationships, hidden by default otherwise
+              // LoD filtering will determine final visibility
               isGraphVisible: nodeClassification !== 'geometry' && nodeClassification !== 'property',
               properties: {
                 _ifcStep: ifcStepRepresentation,  // Full IFC STEP representation from file (or reconstructed)
                 _fileFormat: fileFormat,           // Store file format (STEP or JSON)
+                _nodeClassification: nodeClassification, // Track classification for LoD filtering
                 ...properties,
                 _schemaColor: entityColor,
                 _schemaIcon: entityIcon,
@@ -916,6 +948,24 @@ export async function parseIFCFile(
     WebIFC.IFCRELASSOCIATESMATERIAL,
     WebIFC.IFCRELASSOCIATESCLASSIFICATION,
   ];
+
+  // Helper to add direct edge between two nodes (not through relationship node)
+  const addDirectEdge = (sourceId: number | string, targetId: number | string, label: string, relType: string) => {
+    const sourceNodeId = typeof sourceId === 'string' ? sourceId : `node_${sourceId}`;
+    const targetNodeId = typeof targetId === 'string' ? targetId : `node_${targetId}`;
+    
+    if (nodeMap.has(typeof sourceId === 'number' ? sourceId : parseInt(sourceId.replace('node_', ''), 10)) &&
+        nodeMap.has(typeof targetId === 'number' ? targetId : parseInt(targetId.replace('node_', ''), 10))) {
+      edges.push({
+        id: `edge_${sourceNodeId}_${label}_${targetNodeId}`,
+        source: sourceNodeId,
+        target: targetNodeId,
+        label,
+        type: label,
+        relationshipType: relType,
+      });
+    }
+  };
 
   const ensureRelationshipNode = (relId: number, typeName: string, rel: any) => {
     if (!nodeMap.has(relId)) {
@@ -1046,6 +1096,27 @@ export async function parseIFCFile(
                   addRelEdge(relId, typeName, 'related', targetId);
                 }
               }
+
+              // Connect property single values to their parent PropertySet
+              // This anchors floating property nodes to their PropertySet
+              try {
+                const propDefEntity = ifcApi.GetLine(modelId, propDefId);
+                if (propDefEntity && propDefEntity.HasProperties) {
+                  const hasProperties = propDefEntity.HasProperties;
+                  const propArray = Array.isArray(hasProperties) ? hasProperties : [hasProperties];
+                  
+                  for (const prop of propArray) {
+                    const propId = typeof prop === 'object' ? prop.value : prop;
+                    
+                    // Create edge from PropertySet to Property
+                    if (nodeMap.has(propId) && nodeMap.has(propDefId)) {
+                      addDirectEdge(propDefId, propId, 'contains', 'PROPERTY_DEFINITION');
+                    }
+                  }
+                }
+              } catch (err) {
+                // Silently skip if property retrieval fails
+              }
             }
 
             // Handle IFCRELASSOCIATESMATERIAL
@@ -1078,6 +1149,21 @@ export async function parseIFCFile(
                 const targetId = relatedObjects[j].value;
                 if (nodeMap.has(targetId)) {
                   addRelEdge(relId, typeName, 'related', targetId);
+                }
+              }
+            }
+
+            // Handle IFCRELDEFINESBYTYPE - link type definitions to instances
+            // Creates DIRECT edges (not through relationship node) from instance to type
+            if (rel.RelatedObjects && rel.RelatingType) {
+              const typeId = rel.RelatingType.value;
+              const relatedObjects = rel.RelatedObjects;
+
+              // Create direct edges from each instance to its type
+              for (let j = 0; j < relatedObjects.length; j++) {
+                const instanceId = relatedObjects[j].value;
+                if (nodeMap.has(instanceId) && nodeMap.has(typeId)) {
+                  addDirectEdge(instanceId, typeId, 'isDefinedBy', 'IFCRELDEFINESBYTYPE');
                 }
               }
             }

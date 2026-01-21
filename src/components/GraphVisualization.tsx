@@ -25,6 +25,9 @@ interface GraphVisualizationProps {
     showAggregation: boolean;
     showProperties: boolean;
     showAuxiliary: boolean;
+    showConnects: boolean;
+    showAssociates: boolean;
+    showSpaceBoundary: boolean;
   };
   onStatsUpdate?: (stats: {
     totalNodes: number;
@@ -124,7 +127,15 @@ export function GraphVisualization({
   searchQuery,
   graphLoD = 4,
   includeAuxiliaryLayer = false,
-  relationshipFilters = { showContainment: true, showAggregation: true, showProperties: true, showAuxiliary: false },
+  relationshipFilters = {
+    showContainment: false,
+    showAggregation: false,
+    showProperties: false,
+    showAuxiliary: false,
+    showConnects: false,
+    showAssociates: false,
+    showSpaceBoundary: false,
+  },
   onStatsUpdate,
   onShowPathToRoot,
   onClearPathToRoot,
@@ -138,15 +149,6 @@ export function GraphVisualization({
   const [connectedNodeIds, setConnectedNodeIds] = useState<Set<string>>(new Set());
   const [showPathToRoot, setShowPathToRoot] = useState(false);
   const [pathToRootIds, setPathToRootIds] = useState<Set<string>>(new Set());
-  const [debugClickInfo, setDebugClickInfo] = useState<{
-    kind: 'node' | 'background';
-    clientX: number;
-    clientY: number;
-    graphX?: number;
-    graphY?: number;
-    nodeId?: string;
-    nodeType?: string;
-  } | null>(null);
   const lastNodeClickAt = useRef<number>(0);
   
   // Track selection state for animations
@@ -169,18 +171,29 @@ export function GraphVisualization({
     const isRelationshipAllowed = (ifcType: string) => {
       const type = ifcType.toUpperCase();
 
-      if (!relationshipFilters.showContainment && type.includes('CONTAINEDINSPATIALSTRUCTURE')) return false;
-      if (!relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES'))) return false;
-      if (!relationshipFilters.showProperties && (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET') || type.includes('DEFINESBYTYPE'))) return false;
-      if (!relationshipFilters.showAuxiliary && (
-        type.includes('ASSOCIATESMATERIAL') ||
-        type.includes('ASSOCIATESCLASSIFICATION') ||
-        type.includes('REPRESENTATION') ||
-        type.includes('GEOMETRY') ||
-        type.includes('MATERIAL')
-      )) return false;
+      // Check if any filter is active (inclusion/whitelist model)
+      const anyFilterActive = 
+        relationshipFilters.showContainment ||
+        relationshipFilters.showAggregation ||
+        relationshipFilters.showConnects ||
+        relationshipFilters.showSpaceBoundary ||
+        relationshipFilters.showProperties ||
+        relationshipFilters.showAssociates ||
+        relationshipFilters.showAuxiliary;
 
-      return true;
+      // If no filters active, show everything
+      if (!anyFilterActive) return true;
+
+      // Otherwise, show only checked types (inclusion model)
+      if (relationshipFilters.showContainment && type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
+      if (relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES'))) return true;
+      if (relationshipFilters.showConnects && (type.includes('CONNECTS') || type.includes('CONNECTEDTO') || type.includes('CONNECTION'))) return true;
+      if (relationshipFilters.showSpaceBoundary && type.includes('SPACEBOUNDARY')) return true;
+      if (relationshipFilters.showProperties && (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET') || type.includes('DEFINESBYTYPE'))) return true;
+      if (relationshipFilters.showAssociates && (type.includes('ASSOCIATES') || type.includes('CLASSIFICATION') || type.includes('MATERIAL'))) return true;
+      if (relationshipFilters.showAuxiliary && (type.includes('GEOMETRY') || type.includes('REPRESENTATION'))) return true;
+
+      return false;
     };
 
     const filteredNodes = lodResult.filteredData.nodes.filter(node => {
@@ -197,9 +210,48 @@ export function GraphVisualization({
   }, [data, graphLoD, includeAuxiliaryLayer, relationshipFilters]);
 
   // Keep all filtered nodes (don't drop orphans) to preserve selection and LoD coverage
+  // When showing path to root, include all path nodes even if filtered by LoD
   const finalFilteredData = useMemo(() => {
-    return { nodes: filteredData.nodes, edges: filteredData.edges };
-  }, [filteredData]);
+    let nodes = filteredData.nodes;
+    let edges = filteredData.edges;
+
+    // If showing path to root, ensure all path nodes are included
+    if (showPathToRoot && pathToRootIds.size > 1) {
+      const nodeMap = new Map(nodes.map(n => [n.id, n]));
+      
+      // Add missing path nodes from full dataset
+      for (const pathNodeId of pathToRootIds) {
+        if (!nodeMap.has(pathNodeId)) {
+          const fullNode = data.nodes.find(n => n.id === pathNodeId);
+          if (fullNode) {
+            nodes = [...nodes, fullNode];
+            nodeMap.set(pathNodeId, fullNode);
+          }
+        }
+      }
+
+      // Only add HIERARCHY edges connecting path nodes
+      // Do NOT add property, material, or other non-hierarchy edges
+      const hierarchyRelTypes = ['AGGREGATES', 'CONTAINEDINSPATIALSTRUCTURE', 'VOIDSELEMENT', 'FILLSELEMENT'];
+      const edgeSet = new Set(edges.map(e => e.id));
+      
+      data.edges.forEach(edge => {
+        if (!edgeSet.has(edge.id) && pathToRootIds.has(edge.source) && pathToRootIds.has(edge.target)) {
+          // Strictly check if it's a hierarchy relationship type
+          const relType = (edge.relationshipType || edge.type || '').toUpperCase();
+          const isHierarchy = hierarchyRelTypes.some(ht => relType.includes(ht));
+          
+          // Only add hierarchy edges - skip ALL other relationship types
+          if (isHierarchy) {
+            edges = [...edges, edge];
+            edgeSet.add(edge.id);
+          }
+        }
+      });
+    }
+
+    return { nodes, edges };
+  }, [filteredData, showPathToRoot, pathToRootIds, data.nodes, data.edges]);
 
   // Update stats when data changes
   useEffect(() => {
@@ -214,117 +266,103 @@ export function GraphVisualization({
   }, [data.nodes.length, data.edges.length, finalFilteredData.nodes.length, finalFilteredData.edges.length, onStatsUpdate]);
 
   // Compute path to root (Site/Project) from selected node
+  // NOTE: Uses FULL DATA, not filtered data, because spatial hierarchy should be traversable
+  // regardless of LoD level. The path connects to nodes that may not be visible in current LoD.
   const computePathToRoot = useCallback((nodeId: string): Set<string> => {
-    console.log('[GraphViz] computePathToRoot starting from:', nodeId);
     const pathIds = new Set<string>();
     const visited = new Set<string>();
     const queue: string[] = [nodeId];
     
-    // BFS to find path upward through spatial hierarchy, stop only at Project
+    // Build parent map from all edges
+    const parentMap = new Map<string, Set<string>>();
+    
+    data.edges.forEach((edge) => {
+      if (edge.label === 'related') {
+        const relNodeId = edge.source;
+        // Look for relating edges: they can be OUTGOING (source=relNode) or INCOMING (target=relNode)
+        const relatingEdges = data.edges.filter(e => 
+          (e.source === relNodeId || e.target === relNodeId) && 
+          e.label === 'relating'
+        );
+        relatingEdges.forEach(relEdge => {
+          if (!parentMap.has(edge.target)) {
+            parentMap.set(edge.target, new Set());
+          }
+          // If relating edge is outgoing (source=relNode), parent is target
+          // If relating edge is incoming (target=relNode), parent is source
+          const parentId = relEdge.source === relNodeId ? relEdge.target : relEdge.source;
+          parentMap.get(edge.target)!.add(parentId);
+        });
+      } else {
+        if (!parentMap.has(edge.target)) {
+          parentMap.set(edge.target, new Set());
+        }
+        parentMap.get(edge.target)!.add(edge.source);
+      }
+    });
+    
+    // BFS to find path to Project
     while (queue.length > 0) {
       const currentId = queue.shift()!;
       if (visited.has(currentId)) continue;
       visited.add(currentId);
       pathIds.add(currentId);
       
-      const currentNode = finalFilteredData.nodes.find(n => n.id === currentId);
+      const currentNode = data.nodes.find(n => n.id === currentId);
       if (!currentNode) {
-        console.warn('[GraphViz] Node not found:', currentId);
         continue;
       }
       
-      // Keep climbing until IFCProject; continue past Site/Building
       const type = (currentNode.ifcType || '').toUpperCase();
-      console.log('[GraphViz] Visiting node:', currentId, type);
-      
       if (type === 'IFCPROJECT') {
-        console.log('[GraphViz] Reached IFCPROJECT');
         break;
       }
       
-      let parentFound = false;
+      const parents = parentMap.get(currentId) || new Set();
       
-      // For property/quantity entities (like IfcElementQuantity, IfcPropertySet),
-      // we need to first traverse to the element they're attached to (reverse direction)
-      const isPropertyEntity = type.includes('PROPERTYSET') || 
-                              type.includes('ELEMENTQUANTITY') ||
-                              type.includes('PROPERTY');
-      const isRelationshipNode = type.startsWith('IFCREL') || currentNode.type === 'relationship';
-
-      const edgesToCurrent = finalFilteredData.edges.filter(e => e.target === currentId);
-
-      if (isRelationshipNode) {
-        // If a relationship node is selected, walk to its relating object
-        const relatingEdge = finalFilteredData.edges.find(e => e.source === currentId && e.label === 'relating');
-        if (relatingEdge) {
-          parentFound = true;
-          queue.push(relatingEdge.target);
-          console.log('[GraphViz] Relationship node -> relating:', relatingEdge.target);
-        }
-      } else if (isPropertyEntity) {
-        // For property entities, follow DefinesByProperties via relationship node
-        edgesToCurrent.forEach(edge => {
-          const relType = (edge.relationshipType || edge.type || '').toUpperCase();
-          if (edge.label === 'relating' && relType.includes('DEFINESBYPROPERTIES')) {
-            const relNodeId = edge.source;
-            // From relationship node, go to related objects
-            finalFilteredData.edges.forEach(relEdge => {
-              if (relEdge.source === relNodeId && relEdge.label === 'related') {
-                parentFound = true;
-                queue.push(relEdge.target);
-                console.log('[GraphViz] Property -> related object via rel:', relEdge.target);
-              }
-            });
+      if (parents.size > 0) {
+        // Add relationship nodes connecting to parents
+        data.edges.forEach(edge => {
+          if (edge.target === currentId && edge.label === 'related') {
+            pathIds.add(edge.source);
           }
         });
-      } else {
-        // For regular entities, follow spatial hierarchy upwards via relationship node
-        edgesToCurrent.forEach(edge => {
-          const relType = (edge.relationshipType || edge.type || '').toUpperCase();
-          const isHierarchyRel = relType.includes('AGGREGATES') || 
-                                 relType.includes('CONTAINEDINSPATIALSTRUCTURE') ||
-                                 relType.includes('VOIDSELEMENT') ||
-                                 relType.includes('FILLSELEMENT') ||
-                                 relType === 'CHILD';
-          if (edge.label === 'related' && isHierarchyRel) {
-            const relNodeId = edge.source;
-            const parentEdge = finalFilteredData.edges.find(e => e.source === relNodeId && e.label === 'relating');
-            if (parentEdge) {
-              parentFound = true;
-              queue.push(parentEdge.target);
-              console.log('[GraphViz] Following hierarchy via rel', relType, 'to:', parentEdge.target);
-            }
+        
+        parents.forEach(parentId => {
+          if (!visited.has(parentId)) {
+            queue.push(parentId);
           }
         });
-      }
-
-      // Break if no parent to avoid infinite loop
-      if (!parentFound) {
-        console.log('[GraphViz] No parent found for:', currentId, type);
-        break;
       }
     }
     
-    console.log('[GraphViz] Path computation complete. Path size:', pathIds.size);
     return pathIds;
-  }, [finalFilteredData.nodes, finalFilteredData.edges]);
+  }, [data.nodes, data.edges]);
 
   const handleShowPathToRoot = useCallback(() => {
     if (selectedNodeId) {
-      console.log('[GraphViz] Computing path to root for:', selectedNodeId);
-      const pathIds = computePathToRoot(selectedNodeId);
-      console.log('[GraphViz] Path to root found:', pathIds.size, 'nodes', Array.from(pathIds));
+      // Clear any previous path before computing new one
+      setShowPathToRoot(false);
+      setPathToRootIds(new Set());
+      setFocusedNodeId(null);
+      setConnectedNodeIds(new Set());
       
-      if (pathIds.size === 0 || pathIds.size === 1) {
-        toast.error('Could not find path to root. This node may not be connected to the spatial hierarchy.');
-        return;
-      }
-      
-      setPathToRootIds(pathIds);
-      setShowPathToRoot(true);
-      setFocusedNodeId(selectedNodeId);
-      setConnectedNodeIds(pathIds);
-      toast.success(`Found path with ${pathIds.size} nodes`);
+      // Use setTimeout to ensure state clears before computing new path
+      setTimeout(() => {
+        const pathIds = computePathToRoot(selectedNodeId);
+        
+        if (pathIds.size <= 1) {
+          toast.error('Could not find path to root. This node may not be connected to the spatial hierarchy.');
+          // Don't set showPathToRoot - just show error
+          return;
+        }
+        
+        setPathToRootIds(pathIds);
+        setShowPathToRoot(true);
+        setFocusedNodeId(selectedNodeId);
+        setConnectedNodeIds(pathIds);
+        toast.success(`Found path with ${pathIds.size} nodes`);
+      }, 0);
     }
   }, [selectedNodeId, computePathToRoot]);
 
@@ -515,16 +553,19 @@ export function GraphVisualization({
       const isMetadataNode = graphNode.isMetadata || false;
       const isAuxiliary = isAuxiliaryType(graphNode.ifcType);
       
+      // Path to root highlight
+      const isInPath = pathToRootIds.has(node.id);
+      
       // Focus mode: dim nodes that aren't focused or connected
-      const isFocusMode = focusedNodeId !== null;
+      const isFocusMode = focusedNodeId !== null || showPathToRoot;
       const isFocused = node.id === focusedNodeId;
       const isConnected = connectedNodeIds.has(node.id);
-      const isDimmed = isFocusMode && !isFocused && !isConnected;
+      const isDimmed = isFocusMode && !isFocused && !isConnected && !isInPath;
       
       // IMPORTANT: Don't skip rendering - just adjust opacity
       // This prevents the graph disappearance when filtering
-      if (!isVisible) {
-        return; // Don't draw invisible nodes
+      if (!isVisible && !isInPath) {
+        return; // Don't draw invisible nodes (unless they're in the path)
       }
       
       let size = NODE_SIZES[graphNode.type] || 8;
@@ -534,6 +575,10 @@ export function GraphVisualization({
       }
       if (isAuxiliary) {
         size = size * 0.7; // auxiliary nodes smaller to reduce clutter
+      }
+      // Path nodes are slightly larger
+      if (isInPath && !isSelected) {
+        size = size * 1.3;
       }
       
       // Use schema-based color if available, otherwise fallback to type color
@@ -591,6 +636,15 @@ export function GraphVisualization({
         ctx.arc(x, y, currentPulseRadius, 0, 2 * Math.PI);
         ctx.strokeStyle = `rgba(255, 215, 0, ${pulseOpacity * 0.8})`; // Gold pulse
         ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      // Draw path highlight ring (orange/amber)
+      if (isInPath && showPathToRoot && !isSelected) {
+        ctx.beginPath();
+        ctx.arc(x, y, size + 3, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#fb923c'; // Orange for path nodes
+        ctx.lineWidth = 2;
         ctx.stroke();
       }
 
@@ -689,15 +743,19 @@ export function GraphVisualization({
       
       const sourceVisible = isNodeVisible(sourceNode);
       const targetVisible = isNodeVisible(targetNode);
-      const isVisible = sourceVisible && targetVisible;
+      
+      // Also check if nodes are in path (path nodes should be visible even if filtered)
+      const sourceInPath = pathToRootIds.has((link.source as any).id);
+      const targetInPath = pathToRootIds.has((link.target as any).id);
+      const isVisible = (sourceVisible || sourceInPath) && (targetVisible || targetInPath);
       
       // Focus mode: highlight only edges connected to focused node OR edges in the path to root
-      const isFocusMode = focusedNodeId !== null;
+      const isFocusMode = focusedNodeId !== null || showPathToRoot;
       const sourceId = (link.source as any).id;
       const targetId = (link.target as any).id;
       
       // For path-to-root mode, highlight edges where BOTH nodes are in the path
-      const isPathEdge = showPathToRoot && connectedNodeIds.has(sourceId) && connectedNodeIds.has(targetId);
+      const isPathEdge = showPathToRoot && pathToRootIds.has(sourceId) && pathToRootIds.has(targetId);
       
       const isConnectedEdge = isFocusMode && (
         sourceId === focusedNodeId ||
@@ -754,21 +812,29 @@ export function GraphVisualization({
         ctx.lineTo(tx, ty);
       }
       // Metadata, auxiliary, or inverse edges are dashed for clarity
-      if ((isMetadataEdge || isAuxEdge || isInverseEdge) && isVisible) {
+      if ((isMetadataEdge || isAuxEdge || isInverseEdge) && isVisible && !isPathEdge) {
         ctx.strokeStyle = isAuxEdge ? 'rgba(148,163,184,0.7)' : '#888888';
         if (isInverseEdge) {
           ctx.strokeStyle = edgeColor + '88';
         }
         ctx.setLineDash(isInverseEdge ? [3, 4] : [5, 5]);
+      } else if (isPathEdge) {
+        // Highlight path edges with thick orange/amber line
+        ctx.strokeStyle = '#fb923c'; // Orange for path edges
+        ctx.lineWidth = 3;
       } else if (isDimmedEdge) {
         ctx.strokeStyle = edgeColor + '10'; // Heavy dimming
       } else {
         ctx.strokeStyle = isVisible ? edgeColor : edgeColor + '33';
       }
-      ctx.lineWidth = isAuxEdge ? 1.2 : isVisible ? 2 : 0.5;
-      if (isDimmedEdge) {
-        ctx.lineWidth = 0.5;
+      
+      if (!isPathEdge) {
+        ctx.lineWidth = isAuxEdge ? 1.2 : isVisible ? 2 : 0.5;
+        if (isDimmedEdge) {
+          ctx.lineWidth = 0.5;
+        }
       }
+      
       ctx.stroke();
       ctx.setLineDash([]); // Reset line dash
 
@@ -793,7 +859,7 @@ export function GraphVisualization({
           arrowY - arrowLength * Math.sin(arrowAngle + Math.PI / 6)
         );
         ctx.closePath();
-         ctx.fillStyle = isMetadataEdge || isAuxEdge ? '#a3a3a3' : edgeColor;
+         ctx.fillStyle = isPathEdge ? '#fb923c' : (isMetadataEdge || isAuxEdge ? '#a3a3a3' : edgeColor);
         ctx.fill();
         
         // Draw relationship label on edge
@@ -920,7 +986,7 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot]
+    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot, pathToRootIds, selectionState.source, selectionState.timestamp]
   );
   // Auto-zoom to selected node when selection changes externally (from other panels)
   useEffect(() => {
@@ -969,15 +1035,6 @@ export function GraphVisualization({
       // CRITICAL: Select the node that was actually clicked
       // Do NOT auto-select related nodes - that causes selection mismatch
       onNodeClick(node as GraphNode);
-      setDebugClickInfo({
-        kind: 'node',
-        clientX: (node?.__event?.clientX ?? 0),
-        clientY: (node?.__event?.clientY ?? 0),
-        graphX: node?.x,
-        graphY: node?.y,
-        nodeId: node?.id,
-        nodeType: node?.ifcType || node?.type,
-      });
       
       // Clear path-to-root mode when clicking a different node
       if (showPathToRoot) {
@@ -1038,7 +1095,6 @@ export function GraphVisualization({
     setConnectedNodeIds(new Set());
     setShowPathToRoot(false);
     setPathToRootIds(new Set());
-    setDebugClickInfo(null);
   }, [onNodeClick]);
 
   // CRITICAL: Setup manual canvas click detection for nodes force-graph's onNodeClick misses
@@ -1158,21 +1214,6 @@ export function GraphVisualization({
     <div ref={containerRef} className="w-full h-full grid-pattern gradient-radial">
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      {/* Debug Click Info */}
-      {debugClickInfo && (
-        <div className="absolute bottom-4 left-4 z-30 rounded-lg bg-black/70 text-white text-[11px] px-3 py-2 font-mono shadow-lg">
-          <div><strong>Click:</strong> {debugClickInfo.kind}</div>
-          <div>screen: {debugClickInfo.clientX}, {debugClickInfo.clientY}</div>
-          {debugClickInfo.graphX !== undefined && debugClickInfo.graphY !== undefined && (
-            <div>graph: {debugClickInfo.graphX.toFixed(1)}, {debugClickInfo.graphY.toFixed(1)}</div>
-          )}
-          {debugClickInfo.nodeId && (
-            <div>node: {debugClickInfo.nodeId} ({debugClickInfo.nodeType})</div>
-          )}
-        </div>
-      )}
-      
-      
       {/* Control Buttons */}
       <div className="absolute top-4 right-4 z-20 flex gap-2">
         {/* Reset Graph Button */}

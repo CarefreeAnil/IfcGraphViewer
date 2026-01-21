@@ -30,6 +30,7 @@ export interface GraphEdge {
   label: string;
   type: string;
   relationshipType?: string; // IFC relationship type (e.g., IFCRELAGGREGATES)
+  category?: 'spatial' | 'material' | 'geometry' | 'property' | 'general'; // For filtering
 }
 
 export interface GraphData {
