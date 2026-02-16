@@ -1,9 +1,8 @@
 /**
  * IFC Graph Level of Detail (LoD) Framework
  * Based on research: "IfcGraphLoD: A framework for graph-based IFC data visualization"
- * 
- * Implements 5 levels of detail:
- * LoD5 (Full Graph): Resource layer + full semantics + geometry
+ *
+ * Implements 4 levels of detail:
  * LoD4 (Core Graph): Full semantics, no geometry
  * LoD3 (Essential Graph): Objects + bidirectional relationship-node links
  * LoD2 (Least Graph): Unidirectional relationship-node → object links
@@ -20,7 +19,6 @@ export enum GraphLoD {
   LoD2_Least = 2,       // One-way edges only
   LoD3_Essential = 3,   // Two-way relationships
   LoD4_Core = 4,        // Full semantics, no geometry
-  LoD5_Full = 5,        // Everything including geometry
 }
 
 // Auxiliary/support types that are not meaningful for primary visualization
@@ -159,307 +157,134 @@ export function classifyEntity(node: GraphNode): EntityClass {
 
 /**
  * Get LoD configuration
+ *
+ * Based on research paper: "Revealing the internal structure of IFC-Graph"
+ *
+ * Core principle: Relationships are the BACKBONE of IFC structure.
+ * They must be included at ALL LoD levels (LoD1+) to maintain graph coherence.
+ *
+ * What varies by LoD level:
+ * - LoD1: Only spatial relationships (simplest navigation)
+ * - LoD2: ALL relationships + basic objects (core structure)
+ * - LoD3: ALL relationships + property sets + objects
+ * - LoD4: ALL relationships + inverse attributes + everything except geometry
  */
 export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): LoDConfig {
-  // Admin types that should NEVER appear in any visualization
+  // Admin types that should NEVER appear (administrative metadata)
   const ADMIN_EXCLUDE_TYPES = new Set([
     'IFCOWNERHISTORY', 'IFCPERSON', 'IFCORGANIZATION', 'IFCPERSONANDORGANIZATION', 'IFCAPPLICATION',
   ]);
 
-  // Auxiliary/support types that are not meaningful entities for visualization
-  // These are geometric primitives, style definitions, and schema metadata
+  // Auxiliary types: geometric primitives, style definitions, schema metadata
+  // These are excluded from visualization but can be included for special use cases
   const AUXILIARY_EXCLUDE_TYPES = new Set([
-    // Geometric primitives - mathematical helpers, not real entities
-    'IFCDIRECTION',                        // Vector definitions (1052 instances)
-    'IFCPLANE',                            // Plane definitions (2188 instances)
-    'IFCCARTESIANPOINT',                   // Point definitions
-    'IFCLINE',                             // Line definitions
-    'IFCCIRCLE',                           // Circle definitions
-    'IFCCIRCULARARCPOINTANDRADIUS',
-    'IFCELLIPSE',                          // Ellipse definitions
-    'IFCPOLYLINE',                         // Polyline definitions
-    'IFCPOLYLOOP',                         // Polygon loop
-    'IFCCOMPOSITECURVE',
-    'IFCPOLYCURVE',
-    'IFCBOUNDEDCURVE',
-    'IFCBSPLINECURVE',
-    'IFCBSPLINESURFACE',
-    'IFCCURVEBOUNDEDPLANE',
-    'IFCRECTANGULARTRIMMEDSURFACE',
-    'IFCSURFACEOFLINEAREXTRUSION',
-    'IFCSURFACEOFREVOLUTION',
-    'IFCSWEPTSURFACE',
-    
+    // Geometric primitives - mathematical helpers
+    'IFCDIRECTION', 'IFCPLANE', 'IFCCARTESIANPOINT', 'IFCLINE', 'IFCCIRCLE',
+    'IFCCIRCULARARCPOINTANDRADIUS', 'IFCELLIPSE', 'IFCPOLYLINE', 'IFCPOLYLOOP',
+    'IFCCOMPOSITECURVE', 'IFCPOLYCURVE', 'IFCBOUNDEDCURVE', 'IFCBSPLINECURVE',
+    'IFCBSPLINESURFACE', 'IFCCURVEBOUNDEDPLANE', 'IFCRECTANGULARTRIMMEDSURFACE',
+    'IFCSURFACEOFLINEAREXTRUSION', 'IFCSURFACEOFREVOLUTION', 'IFCSWEPTSURFACE',
+
     // Profile definitions - geometric templates
-    'IFCRECTANGLEPROFILEDEF',
-    'IFCRECTANGLEHOLLOWPROFILEDEF',
-    'IFCCIRCLEPROFILEDEF',
-    'IFCCIRCLEHOWTOPROFILEDEF',
-    'IFCIBEAMPROFILEDEF',
-    'IFCLSHAPEPROFILEDEF',
-    'IFCTSHAPEPROFILEDEF',
-    'IFCUPROFILEDEF',
-    'IFCCPROFILEDEF',
-    'IFCZPROFILEDEF',
-    'IFCTRAPEZOIDAL PROFILEDEF',
-    'IFCASYMETRICISHAPEPROFILEDEF',
-    'IFCCOMPLEXPROFILEDEF',
-    'IFCARBITRARYCLOSEDPROFILESEGMENT',
-    'IFCPOLYLINEPROFILEDEF',
-    'IFCCENTRELINEPROFILEDEF',
-    'IFCPARAMETERIZEDPROFILEDEF',
-    'IFCARBITRARYCLOSEDPROFILEDEF',     // Arbitrary profile definition
-    
+    'IFCRECTANGLEPROFILEDEF', 'IFCRECTANGLEHOLLOWPROFILEDEF', 'IFCCIRCLEPROFILEDEF',
+    'IFCIBEAMPROFILEDEF', 'IFCLSHAPEPROFILEDEF', 'IFCTSHAPEPROFILEDEF',
+    'IFCUPROFILEDEF', 'IFCCPROFILEDEF', 'IFCZPROFILEDEF', 'IFCCOMPLEXPROFILEDEF',
+    'IFCPOLYLINEPROFILEDEF', 'IFCCENTRELINEPROFILEDEF', 'IFCPARAMETERIZEDPROFILEDEF',
+
     // Solid/representation primitives
-    'IFCBLOCK',
-    'IFCRECTANGULARBOX',
-    'IFCWEDGE',
-    'IFCHALFSPACESOLID',
-    'IFCPOLYGONALBOUNDEDHALFSPACE',
-    'IFCBOXEDHALFSPACE',
-    'IFCPRIMITIVESHAPE3D',
-    'IFCEXTRUDEDAREASOLID',                // (676 instances)
-    'IFCREVOLVEDAREASOLID',
-    'IFCSWEPTSURFACESOLID',
-    'IFCEXTRUDEDAREASSIMPLIFIED',          // Simplified geometry
-    'IFCMAPPEDITEM',                       // Mapped geometry instances
-    'IFCFACEOUTERBOUND',                  // Face boundary
-    'IFCFACE',                             // Face geometry
-    'IFCFACETEDBREP',                      // Faceted B-rep representation
-    'IFCBOOLEANCLIPPINGRESULT',            // Boolean clipping result
-    'IFCCLOSEDSHELL',                     // Shell geometry
-    
-    // Representation and placement - structural metadata NOT visual elements
-    'IFCPRODUCTDEFINITIONSHAPE',          // Shape representation container (largest floating node source!)
-    'IFCSHAPEREPRESENTATION',              // Shape representation metadata
-    'IFCGEOMETRICREPRESENTATIONCONTEXT',   // Geometric representation context
-    'IFCLOCALPLACEMENT',                  // Coordinate system placement
-    'IFCAXIS2PLACEMENT2D',                // 2D coordinate system
-    'IFCAXIS2PLACEMENT3D',                // 3D coordinate system
-    
+    'IFCBLOCK', 'IFCRECTANGULARBOX', 'IFCWEDGE', 'IFCHALFSPACESOLID',
+    'IFCPOLYGONALBOUNDEDHALFSPACE', 'IFCBOXEDHALFSPACE', 'IFCPRIMITIVESHAPE3D',
+    'IFCEXTRUDEDAREASOLID', 'IFCREVOLVEDAREASOLID', 'IFCSWEPTSURFACESOLID',
+    'IFCMAPPEDITEM', 'IFCFACEOUTERBOUND', 'IFCFACE', 'IFCFACETEDBREP',
+    'IFCBOOLEANCLIPPINGRESULT', 'IFCCLOSEDSHELL',
+
+    // Representation and placement - structural metadata only
+    'IFCPRODUCTDEFINITIONSHAPE', 'IFCSHAPEREPRESENTATION', 'IFCGEOMETRICREPRESENTATIONCONTEXT',
+    'IFCLOCALPLACEMENT', 'IFCAXIS2PLACEMENT2D', 'IFCAXIS2PLACEMENT3D',
+
     // Style and appearance definitions
-    'IFCSURFACESTYLE',                     // Surface styling
-    'IFCSURFACESTYLERENDERING',            // Surface rendering properties
-    'IFCCURVESTYLE',                       // Curve styling
-    'IFCTEXTUREMAP',                       // Texture mapping
-    'IFCFILLAREASTYLE',
-    'IFCFILLAREASTYLEHATCHING',            // (14 instances)
-    'IFCFILLAREASTYLETILES',
-    'IFCHATCHLINESTYLE',
-    'IFCSTYLEMODEL',
-    'IFCSTYLEDITEM',                       // Styled item (visual properties)
-    'IFCPRESENTATIONSTYLEASSIGNMENT',     // Presentation style assignment
-    'IFCPRESENTATIONLAYERASSIGNMENT',      // Presentation layer assignment
-    'IFCCOLOURRGB',                        // Color definition
-    'IFCCOLOURRGBANDCOMPONENTS',
-    'IFCCOLOURPROXY',
-    
-    // Type definitions - schema templates, not instances
-    'IFCWALLTYPE',                         // Type templates
-    'IFCDOORTYPE',
-    'IFCWINDOWTYPE',
-    'IFCSLABTYPE',
-    'IFCCOLUMNTYPE',
-    'IFCBEAMTYPE',
-    'IFCDUCTTYPE',
-    'IFCPIPESEGMENTTYPE',
-    'IFCPUMPTYPE',
-    'IFCFANTYPE',
-    'IFCCHILLERTYPE',
-    'IFCCOILTYPE',
-    'IFCBOILERTYPE',
-    'IFCCOVERINGTYPE',
-    'IFCTYPEDEFINITION',                  // Generic type definition
-    'IFCRELDEFINESBYTYPE',                // Type definition relationship
-    
+    'IFCSURFACESTYLE', 'IFCSURFACESTYLERENDERING', 'IFCCURVESTYLE', 'IFCTEXTUREMAP',
+    'IFCFILLAREASTYLE', 'IFCFILLAREASTYLEHATCHING', 'IFCFILLAREASTYLETILES',
+    'IFCHATCHLINESTYLE', 'IFCSTYLEMODEL', 'IFCSTYLEDITEM',
+    'IFCPRESENTATIONSTYLEASSIGNMENT', 'IFCPRESENTATIONLAYERASSIGNMENT',
+    'IFCCOLOURRGB', 'IFCCOLOURRGBANDCOMPONENTS', 'IFCCOLOURPROXY',
+
+    // Text and font styling (not showing in graph visualization)
+    'IFCTEXTSTYLE', 'IFCTEXTSTYLEFONTMODEL', 'IFCTEXTSTYLEFORDEFINEDFONT',
+    'IFCFONTSELECTION', 'IFCFONTSPECIFICATION', 'IFCFONTDESIGNALLPROPERTIESFONTSPECIFICATION',
+
     // Window/Door property details
-    'IFCWINDOWLININGPROPERTIES',           // (468 instances)
-    'IFCWINDOWPANELPROPERTIES',            // (295 instances)
-    'IFCDOORCLOSINGPROPERTIES',
-    'IFCDOORSTYLEPANELPROPERTIES',
-    'IFCDOORSTYLEARRANGEMENT',
-    'IFCDOORPANELPROPERTIES',
-    'IFCDOORSTYLELININGPROPERTIES',
-    'IFCSHAPEASPECT',                      // Shape metadata
-    'IFCSHELLBASEDSURFACEMODEL',           // Complex geometry representation
-    'IFCTESSELLATEDFACESET',               // Tessellated geometry
-    'IFCSHAPEMODEL',
-    
-    // Material-related metadata
-    'IFCMATERIALLAYER',                    // (17 instances)
-    'IFCMATERIAL',
-    'IFCMATERIALLAYERSET',
-    'IFCMATERIALLAYERSETUSAGE',            // Material layer set usage
-    'IFCMATERIALLAYERUSAGEPUTATIVE',
-    'IFCMATERIALLAYERWITHOFFFSETS',
-    'IFCMATERIALCOMPONENT',
-    'IFCMATERIALDEFINITIONREPRESENTATION',
-    'IFCMATERIALPROPERTIES',
-    'IFCMECHANICALCONCRETEMATERIALPROPERTIES',
-    'IFCMECHANICALMATERIALPROPERTIES',
-    'IFCTHERMALMAATERIALPROPERTIES',
-    'IFCWOODFINISHINGPROPERTIES',
-    
-    // Classification and reference metadata
-    'IFCCLASSIFICATION',
-    'IFCCLASSIFICATIONREFERENCE',           // Classification reference
-    
-    // Unit and measure definitions
-    'IFCSIUNIT',
-    'IFCUNITASSIGNMENT',
-    'IFCCONVERSIONBASEDUNIT',
-    'IFCDERIVEDUNIT',
-    'IFCDERIVEDUNITELEMENT',
-    'IFCDIMENSIONALEXPONENTS',
-    'IFCNAMEDUNIT',
-    'IFCUNIT',
-    'IFCMEASUREWITHUNIT',
-    'IFCMONETARYMEASURE',
-    'IFCDIMENSIONCOUNT',
-    'IFCMATERIAL',
-    'IFCMATERIALLAYERSET',
-    'IFCMATERIALLAYERUSAGEPUTATIVE',
-    'IFCMATERIALLAYERWITHOFFFSETS',
-    'IFCMATERIALCOMPONENT',
-    'IFCMATERIALDEFINITIONREPRESENTATION',
-    'IFCMATERIALPROPERTIES',
-    'IFCMECHANICALCONCRETEMATERIALPROPERTIES',
-    'IFCMECHANICALMATERIALPROPERTIES',
-    'IFCTHERMALMAATERIALPROPERTIES',
-    'IFCWOODFINISHINGPROPERTIES',
-    
-    // Unit and measure definitions
-    'IFCSIUNIT',                           // (9 instances)
-    'IFCUNITASSIGNMENT',                   // (1 instance)
-    'IFCCONVERSIONBASEDUNIT',
-    'IFCDERIVEDUNIT',
-    'IFCDERIVEDUNITELEMENT',
-    'IFCDIMENSIONALEXPONENTS',
-    'IFCNAMEDUNIT',
-    'IFCUNIT',
-    'IFCMEASUREWITHUNIT',
-    'IFCMONETARYMEASURE',
-    'IFCDIMENSIONCOUNT',
-    
-    // Measurement and quantity primitives
-    'IFCQUANTITY',
-    'IFCQUANTITYAREA',
-    'IFCQUANTITYCOUNT',
-    'IFCQUANTITYLENGTH',
-    'IFCQUANTITYTIME',
-    'IFCQUANTITYVOLUME',
-    'IFCQUANTITYWEIGHT',
-    'IFCABSORBEDDOSEEQUIVALENTMEASURE',
-    'IFCACCELERATIONMEASURE',
-    'IFCANGULARVELOCITYMEASURE',
-    'IFCAREATEMEASURE',
-    'IFCAREAMEASURE',
-    'IFCHEATINGVALUEMEASURE',
-    'IFCHEATTRANSFERCOEFFICIENTMEASURE',
-    'IFCILLUMINANCEMEASURE',
-    'IFCINDUCTANCEMEASURE',
-    'IFCINTENSITYDISTRIBUTIONMEASURE',
-    'IFCKINEMATICVISCOSITYMEASURE',
-    'IFCLENGTHKMEASURE',
-    'IFCLENGTHME ASURE',
-    'IFCLINEARFORCEMEASURE',
-    'IFCLINEARMOMENTMEASURE',
-    'IFCLINEARSTIFFNESSMEASURE',
-    'IFCLINEARVELOCITYMEASURE',
-    'IFCLOSSMEASURE',
-    'IFCLUMINOUSINTENSITYDISTRIBUTIONMEASURE',
-    'IFCLUMINOUSMEASURE',
-    'IFCMAGENTOMOVENTUMEASURE',
-    'IFCMASSDENSITYMEASURE',
-    'IFCMASSMEASURE',
-    'IFCMASSPERLENGTHMEASURE',
-    'IFCMASSFLOWMEASURE',
-    'IFCMODULOFSLIPPAGE',
-    'IFCMOISTUREDIFFUSIVITYMEASURE',
-    'IFCMOLECULARWEIGHTMEASURE',
-    'IFCMOLENTALVOLUMEMEASURE',
-    'IFCMOMENTOFINERTIAMEASURE',
-    'IFCMONITORINGDEVICEEPRESENTATIONSELECT',
-    'IFCNORMALISEDRATIOMEASURE',
-    'IFCNUMERICMEASURE',
-    'IFCPARAMETERVALUE',
-    'IFCPHASEANGLMEASURE',
-    'IFCPLANARMEASURE',
-    'IFCPLANARSTIFFNESSMEASURE',
-    'IFCPLANARFORCEMEASURE',
-    'IFCPLANARMOMENTMEASURE',
-    'IFCPOWERMEEASURE',
-    'IFCPRESSUREMSURE',
-    'IFCRADIOACTIVITYMEASURE',
-    'IFCROTATIONALFREQUENCYMEASURE',
-    'IFCROTATIONALSTIFFNESSMEASURE',
-    'IFCROTATIONALMASSM EASURE',
-    'IFCROTATIONALVELOCITYMEASURE',
-    'IFCROTATIONALMASS MEASURE',
-    'IFCSECTIONALAREAINTEGRALMEASURE',
-    'IFCSECTIONMODULUSMEASURE',
-    'IFCSEISMICBASEISOLATEDDISPLACEMENTMEASURE',
-    'IFCSHEARMEASURE',
-    'IFCSILUNIT',
-    'IFCSIMPLYLIFTEDSPACEKEYRELATIONSHIPTOSPATIALELEMENT',
-    'IFCSIZESELECT',
-    'IFCSOUNDPOWERMEASURE',
-    'IFCSOUNDPRESSUREMEASURE',
-    'IFCSPCDEFINE',
-    'IFCSPECIFICHEATCAPACITYMEASURE',
-    'IFCTAXIWAYTYPEENUM',
-    'IFCTEMPERATUREGRADIENTMEASURE',
-    'IFCTHERMALCONDUCTIVITYMEASURE',
-    'IFCTHERMALEXPANSIONCOEFFICIENTMEASURE',
-    'IFCTHERMALRE SISTANCEMEASURE',
-    'IFCTHERMALRESIST ANCEMEASURE',
-    'IFCTHERMALTRASMITTANCEMEASURE',
-    'IFCTHERMALTRANSMITTANCEMEASURE',
-    'IFCTIME MEASURE',
-    'IFCTIMESERIOS',
-    'IFCTIMESERIES',
-    'IFCTIMESTEP',
-    'IFCTORQUEMEASURE',
-    'IFCTORSIONALST IFFNESSMEASURE',
-    'IFCTORSIONALSTRAININMEASURE',
-    'IFCTORSIONALSTRAIN MEASURE',
-    'IFCTOXICITYMEASURE',
-    'IFCTRANSMITTANCEMEASURE',
-    'IFCVAPOURPERMEABILITYMEASURE',
-    'IFCVOLUMETR ICFLOWRATE',
-    'IFCVOLUMETRICFLOWRATE',
-    'IFCVOLUMEMEASURE',
-    'IFCWARPINGCONSTANTMEASURE',
-    'IFCWARPINGTORSIONALCONSTANTMEASURE',
-    'IFCWASTEATERVOLUME',
-    'IFCWASTERSVOLUME',
-    'IFCWASTVOLUMETEMPERATURE',
-    'IFCWARPINGCONSTANTMEASURE',
+    'IFCWINDOWLININGPROPERTIES', 'IFCWINDOWPANELPROPERTIES',
+    'IFCDOORCLOSINGPROPERTIES', 'IFCDOORSTYLEPANELPROPERTIES',
+    'IFCDOORSTYLEARRANGEMENT', 'IFCDOORPANELPROPERTIES',
+    'IFCDOORSTYLELININGPROPERTIES', 'IFCSHAPEASPECT',
+    'IFCSHELLBASEDSURFACEMODEL', 'IFCTESSELLATEDFACESET', 'IFCSHAPEMODEL',
+
+    // Material layer details
+    'IFCMATERIALLAYER', 'IFCMATERIALLAYERSET', 'IFCMATERIALLAYERSETUSAGE',
+    'IFCMATERIALLAYERWITHOFFFSETS', 'IFCMATERIALCOMPONENT',
+    'IFCMATERIALDEFINITIONREPRESENTATION', 'IFCMATERIALPROPERTIES',
+
+    // Unit and measure definitions - schema metadata
+    'IFCSIUNIT', 'IFCUNITASSIGNMENT', 'IFCCONVERSIONBASEDUNIT', 'IFCDERIVEDUNIT',
+    'IFCDERIVEDUNITELEMENT', 'IFCDIMENSIONALEXPONENTS', 'IFCNAMEDUNIT', 'IFCUNIT',
+    'IFCMEASUREWITHUNIT', 'IFCMONETARYMEASURE', 'IFCDIMENSIONCOUNT',
+
+    // Quantity nodes - container metadata
+    'IFCQUANTITY', 'IFCQUANTITYAREA', 'IFCQUANTITYCOUNT', 'IFCQUANTITYLENGTH',
+    'IFCQUANTITYTIME', 'IFCQUANTITYVOLUME', 'IFCQUANTITYWEIGHT',
+
+    // Classification reference metadata
+    'IFCCLASSIFICATION', 'IFCCLASSIFICATIONREFERENCE',
+
+    // Geometry extent/bounds metadata (not semantic entities)
+    'IFCPLANAREXTENT', 'IFCBOUNDINGBOX', 'IFCGEOMETRICSET',
+    'IFCBOUNDINBOX2D', 'IFCBOUNDINBOX3D',
+
+    // Topology representation items (geometric structure only)
+    'IFCTOPOLOGYREPRESENTATIONITEM', 'IFCVERTEX', 'IFCVERTEXPOINT',
+    'IFCEDGE', 'IFCEDGECURVE', 'IFCORIENTEDEDGE', 'IFCPATH',
+    'IFCLOOP', 'IFCPOLYLINELOOPS', 'IFCFACE', 'IFCCFACESURFACE',
+    'IFCFACEBOUND', 'IFCFACEOUTERBOUNDS', 'IFCSHELL', 'IFCOPENSHELL', 'IFCCLOSEDSHELL',
+
+    // Additional geometry representation metadata
+    'IFCGEOMETRICREPRESENTATIONSUBCONTEXT', 'IFCTESSELLATEDITEM',
+    'IFCGEOMETRICALLYREPRESENTEDOBJECT',
+
+    // Property representations (not individual properties - these are value containers)
+    'IFCPROPERTYDEFINITION', 'IFCPROPERTYENUMERATION',
+    'IFCPROPERTYREFERENCEVALUE', 'IFCPROPERTYBOUNDEDVALUE',
+    'IFCPROPERTYSINGLEVALUE', 'IFCPROPERTYENUMERATEDVALUE',
+    'IFCPROPERTYTABLEVALUE', 'IFCPROPERTYLISTVALUE',
   ]);
-  
-  // For LoD5, allow optional inclusion of auxiliary layer when explicitly requested
-  const shouldExcludeAux = !(includeAuxiliary && lod === GraphLoD.LoD5_Full);
+
+  const shouldExcludeAux = !includeAuxiliary;
 
   switch (lod) {
-    case GraphLoD.LoD5_Full:
-      // Complete graph: all geometry, shapes, representations, definitions, and relationships
+    case GraphLoD.LoD4_Core:
+      // EVERYTHING except pure geometry
+      // Includes: All relationships + all objects + property sets + everything
       return {
-        includeGeometry: true,
+        includeGeometry: false,
         includePropertySets: true,
-        includeResourceLayer: true,
+        includeResourceLayer: false,
         bidirectionalOnly: false,
         unidirectionalOnly: false,
         customFilter: (node) => {
           const type = node.ifcType.toUpperCase();
-          // Exclude admin and (optionally) auxiliary types
+
+          // Exclude admin types only
           if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
           if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
+
+          // Include everything else - ALL relationships, ALL objects, ALL property sets
           return true;
         },
       };
-      
-    case GraphLoD.LoD4_Core:
-      // All entities, properties, and relationships (except geometry/representations)
+
+    case GraphLoD.LoD3_Essential:
+      // ALL relationships + ALL objects + property sets
+      // Excludes: Types (schema templates), auxiliary types
       return {
         includeGeometry: false,
         includePropertySets: true,
@@ -468,52 +293,33 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
         unidirectionalOnly: false,
         customFilter: (node) => {
           const type = node.ifcType.toUpperCase();
-          
-          // Exclude admin and (optionally) auxiliary types
+
+          // Exclude admin types
           if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
           if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
-          
-          // Exclude pure geometric representations
-          const geometryExcludes = new Set([
-            'IFCSHAPEREPRESENTATION', // Shape representation
-            'IFCTOPOLOGYREPRESENTATIONITEM',
-            'IFCFACE',
-            'IFCFACESET',
-          ]);
-          return !geometryExcludes.has(type);
-        },
-      };
-      
-    case GraphLoD.LoD3_Essential:
-      // Essential graph: objects + relationships (exclude property sets and geometry)
-      return {
-        includeGeometry: false,
-        includePropertySets: false,
-        includeResourceLayer: false,
-        bidirectionalOnly: false,
-        unidirectionalOnly: false,
-        customFilter: (node) => {
-          const type = node.ifcType.toUpperCase();
-          
-          // Exclude admin, optional auxiliary types, and type definitions
-          if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
-          if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
-          
+
+          // Type definitions are not meaningful without their instances
           const typeDefinitions = new Set([
             'IFCWALLTYPE', 'IFCDOORTYPE', 'IFCWINDOWTYPE', 'IFCCOLUMNTYPE',
             'IFCSLABTYPE', 'IFCBEAMTYPE', 'IFCRAMPTYPE', 'IFCSTAIRTYPE',
             'IFCRAILINGTYPE', 'IFCMEMBERTYPE', 'IFCSPACETYPE',
             'IFCBUILDINGELEMENTPROXYTYPE', 'IFCCOVERINGTYPE', 'IFCDISTRIBUTIONELEMENTTYPE',
             'IFCDUCTFITTINGTYPE', 'IFCDUCTSEGMENTTYPE', 'IFCAIRTERMINALTYPE',
-            'IFCPIPEFITTINGTYPE', 'IFCPIPESEGMENTTYPE',
+            'IFCPIPEFITTINGTYPE', 'IFCPIPESEGMENTTYPE', 'IFCPUMPTYPE', 'IFCFANTYPE',
             'IFCDOORSTYLE', 'IFCWINDOWSTYLE',
           ]);
+
+          // ✅ CRITICAL: Keep ALL IFCREL* types (relationships are the backbone!)
+          if (type.startsWith('IFCREL')) return true;
+
+          // Exclude type definitions
           return !typeDefinitions.has(type);
         },
       };
-      
+
     case GraphLoD.LoD2_Least:
-      // Least graph: objects + relationships (one-way only, exclude property/material relationships)
+      // ALL relationships + basic objects (with direct attributes only)
+      // Excludes: type definitions, organization/grouping, MEP utility ports, property set CONTAINERS
       return {
         includeGeometry: false,
         includePropertySets: false,
@@ -522,33 +328,39 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
         unidirectionalOnly: false,
         customFilter: (node) => {
           const type = node.ifcType.toUpperCase();
-          
-          // Exclude admin and optional auxiliary types
+
+          // Exclude admin types
           if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
           if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
-          
-          const excludeTypes = new Set([
-            // Type definitions
+
+          // ✅ CRITICAL: Keep ALL IFCREL* types (relationships are the backbone!)
+          if (type.startsWith('IFCREL')) return true;
+
+          // For LoD2, exclude these non-relationship entity types
+          const excludeObjectTypes = new Set([
+            // Type definitions (schema templates, not instances)
             'IFCWALLTYPE', 'IFCDOORTYPE', 'IFCWINDOWTYPE', 'IFCCOLUMNTYPE',
             'IFCSLABTYPE', 'IFCBEAMTYPE', 'IFCRAMPTYPE', 'IFCSTAIRTYPE',
             'IFCRAILINGTYPE', 'IFCMEMBERTYPE', 'IFCSPACETYPE',
             'IFCBUILDINGELEMENTPROXYTYPE', 'IFCCOVERINGTYPE', 'IFCDISTRIBUTIONELEMENTTYPE',
+            'IFCDUCTFITTINGTYPE', 'IFCDUCTSEGMENTTYPE', 'IFCPUMPTYPE', 'IFCFANTYPE',
             'IFCDOORSTYLE', 'IFCWINDOWSTYLE',
-            // Organization/grouping
+            // Organization and grouping (not essential for core structure)
             'IFCZONE', 'IFCSYSTEM', 'IFCGROUP',
-            // MEP/utility
+            // MEP utility ports (not essential for basic structure)
             'IFCDISTRIBUTIONPORT', 'IFCFLOWSEGMENT', 'IFCFLOWFITTING',
             'IFCTERMINALDEVICE',
-            // Property/definition relationships (LoD3+ only)
-            'IFCRELDEFINESBYPROPERTIES',
-            'IFCRELDEFINESBYTEMPLATE',
+            // NOTE: IFCPROPERTYSET and IFCELEMENTQUANTITY are filtered separately in applyLoD
+            // NOTE: IFCMATERIAL is KEPT (needed for IfcRelAssociatesMaterial relationships)
           ]);
-          return !excludeTypes.has(type);
+
+          return !excludeObjectTypes.has(type);
         },
       };
-      
+
     case GraphLoD.LoD1_Utility:
-      // Ultra-minimal: spatial hierarchy only (for pathfinding/navigation)
+      // Bare minimum: spatial hierarchy only + spatial relationships
+      // For navigation/pathfinding use cases
       return {
         includeGeometry: false,
         includePropertySets: false,
@@ -557,17 +369,25 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
         unidirectionalOnly: false,
         customFilter: (node) => {
           const type = node.ifcType.toUpperCase();
-          
-          // Exclude admin and optional auxiliary types
+
+          // Exclude admin types
           if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
           if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
-          
-          // Only spatial structure for pathfinding
-          const spatialTypes = new Set(['IFCPROJECT', 'IFCSITE', 'IFCBUILDING', 'IFCBUILDINGSTOREY', 'IFCSPACE']);
-          return spatialTypes.has(node.ifcType.toUpperCase());
+
+          // Only spatial structure entities
+          const spatialTypes = new Set([
+            'IFCPROJECT', 'IFCSITE', 'IFCBUILDING', 'IFCBUILDINGSTOREY', 'IFCSPACE'
+          ]);
+          if (spatialTypes.has(type)) return true;
+
+          // ✅ Only spatial relationships in LoD1
+          if (type === 'IFCRELAGGREGATES') return true;
+          if (type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE') return true;
+
+          return false;
         },
       };
-      
+
     default:
       return getLoDConfig(GraphLoD.LoD4_Core);
   }
@@ -614,26 +434,34 @@ export function applyLoD(
   
   // Filter nodes based on LoD
   const filteredNodes = nodes.filter(node => {
-    // Apply custom filter if provided (LoD1)
+    // Apply custom filter if provided
     if (config.customFilter && !config.customFilter(node)) {
       return false;
     }
-    
+
     // Filter geometry
     if (!config.includeGeometry && node.type === 'geometry') {
       return false;
     }
-    
-    // Filter property sets
-    if (!config.includePropertySets && node.type === 'property') {
-      return false;
+
+    // CRITICAL FIX: Don't filter ALL property nodes - only filter PROPERTY CONTAINERS
+    // Property values (IfcPropertySingleValue, etc.) should stay to maintain relationships
+    // Only filter the containers (IFCPROPERTYSET, IFCELEMENTQUANTITY)
+    const ifcType = (node.ifcType || '').toUpperCase();
+    const propertyContainerTypes = new Set([
+      'IFCPROPERTYSET',
+      'IFCELEMENTQUANTITY',
+    ]);
+
+    if (!config.includePropertySets && propertyContainerTypes.has(ifcType)) {
+      return false;  // Only filter property containers, not individual property values
     }
-    
+
     // Filter resource layer
     if (!config.includeResourceLayer && classifyEntity(node) === EntityClass.Resource) {
       return false;
     }
-    
+
     return true;
   });
   
@@ -684,32 +512,40 @@ export function applyLoD(
     if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
       return false;
     }
-    
+
     const type = getEdgeType(edge);
 
+    if (lod === GraphLoD.LoD4_Core) {
+      // Full core: ALL relationships + all attributes
+      // Exclude only pure geometry/representation metadata
+      if (type.includes('GEOMETRY') || type.includes('REPRESENTATION')) return false;
+      return true;
+    }
+
     if (lod === GraphLoD.LoD3_Essential) {
-      // Keep core semantic relationships, drop property/material/geometry links
-      if (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET')) return false;
-      if (type.includes('ASSOCIATESMATERIAL') || type.includes('ASSOCIATESCLASSIFICATION')) return false;
-      if (type.includes('GEOMETRY') || type.includes('REPRESENTATION') || type.includes('MATERIAL')) return false;
+      // Essential: ALL relationships + all objects + property sets
+      // Exclude: pure metadata (geometry, appearance, placement)
+      if (type.includes('GEOMETRY') || type.includes('REPRESENTATION') || type.includes('PLACEMENT')) return false;
+      if (type.includes('SURFACESTYLE') || type.includes('CURVESTYLE') || type.includes('TEXTURE')) return false;
       return true;
     }
 
     if (lod === GraphLoD.LoD2_Least) {
-      // Keep only primary spatial/decomposition/connectivity relationships (one-way)
-      // Unidirectional in relationship-node model: relationship -> object only
-      if (!isRelationshipNodeId(edge.source)) return false;
+      // Least: ALL relationships + basic objects (direct attributes only)
+      // Relationships are the backbone - include ALL connectivity
+      // In LPG model: Entity -(relating)-> RelNode -(related)-> Entity
       if (edge.label !== 'relating' && edge.label !== 'related') return false;
-      if (type.includes('AGGREGATES')) return true;
-      if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
-      if (type.includes('VOIDSELEMENT') || type.includes('FILLSELEMENT')) return true;
-      if (type.includes('CONNECTS') || type.includes('CONNECTEDTO')) return true;
-      if (type.includes('RELATES')) return true;
-      return false;
+
+      // Include relationship edges of all types (they're all part of the backbone)
+      // Exclude only edges to nodes we've already filtered out (handled above by nodeIds check)
+      return true;
     }
 
     if (lod === GraphLoD.LoD1_Utility) {
-      // Spatial hierarchy only
+      // Utility: Spatial hierarchy only
+      if (edge.label !== 'relating' && edge.label !== 'related') return false;
+
+      // Only spatial and containment relationships
       if (type.includes('AGGREGATES')) return true;
       if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
       return false;
@@ -780,5 +616,5 @@ export function getRecommendedLoD(nodeCount: number, useCase: 'visualization' | 
   if (nodeCount > 20000) return GraphLoD.LoD2_Least;
   if (nodeCount > 10000) return GraphLoD.LoD3_Essential;
   if (nodeCount > 5000) return GraphLoD.LoD4_Core;
-  return GraphLoD.LoD5_Full;
+  return GraphLoD.LoD4_Core;
 }

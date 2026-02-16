@@ -1,7 +1,16 @@
-import { useState, useCallback, useRef, lazy, Suspense, useEffect } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
+import {
+  LearningLayer,
+  LearningProgress,
+  generateDynamicLearningPath,
+  getInitialProgress,
+  calculateProgress,
+  getProgressiveGraphData,
+} from '@/lib/dynamicLearning';
 import { FileUpload } from '@/components/FileUpload';
 import { NodeDetailsPanel } from '@/components/NodeDetailsPanel';
 import { GraphControls } from '@/components/GraphControls';
@@ -10,9 +19,11 @@ import { IFCBrowser } from '@/components/IFCBrowser';
 import { ValidationDialog } from '@/components/ValidationDialog';
 import { IFC5TreeBrowser } from '@/components/IFC5TreeBrowser';
 import { IFC5PropertyViewer } from '@/components/IFC5PropertyViewer';
-import { generateSampleData } from '@/lib/ifcParser';
-import { ParsedIFCData, GraphNode, GraphEdge, NodeType } from '@/types/graph';
+import { ConsolidatedLearningPanel } from '@/features/educational/components/ConsolidatedLearningPanel';
+import { createGraphDataFromEntities } from '@/lib/graphBuilder';
+import { ParsedIFCData, GraphNode, NodeType } from '@/types/graph';
 import { ComposedObject } from '@/types/ifc5';
+import { EducationalSample } from '@/features/educational/data/educationalSamples';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
@@ -21,6 +32,7 @@ import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
 import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
 import { logger } from '@/utils/logger';
 import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
+import { useUIState } from '@/contexts/UIStateContext';
 
 // Lazy load heavy components
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
@@ -28,25 +40,28 @@ const Viewer3D = lazy(() => import('@/components/Viewer3D'));
 const IFC5GraphVisualization = lazy(() => import('@/components/IFC5GraphVisualization').then(m => ({ default: m.IFC5GraphVisualization })));
 
 const Index = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { setSchemaVersion } = useUIState();
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedIFC5Node, setSelectedIFC5Node] = useState<ComposedObject | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4 | 5>(2); // Default to LoD2 (Minimal)
+  const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4>(2); // Default to LoD2 (Minimal)
   const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
   const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
   const [viewer3DLoaded, setViewer3DLoaded] = useState(false); // 3D viewer unloaded by default
   const [ifc5GraphLoaded, setIfc5GraphLoaded] = useState(false); // IFC5 graph unloaded by default
   const [isValidating, setIsValidating] = useState(false); // Validation in progress
   const [relationshipFilters, setRelationshipFilters] = useState({
-    showContainment: false,
-    showAggregation: false,
-    showProperties: false,
-    showAuxiliary: false,
-    showConnects: false,
-    showAssociates: false,
-    showSpaceBoundary: false,
+    showContainment: true,       // Spatial structure
+    showAggregation: true,       // Building aggregation
+    showProperties: true,        // Property relationships
+    showAuxiliary: false,        // Geometric/metadata - only this hidden (too verbose)
+    showConnects: true,          // Technical connections
+    showAssociates: true,        // Material/classification
+    showSpaceBoundary: true,     // Space boundaries
   });
   const [graphStats, setGraphStats] = useState({
     totalNodes: 0,
@@ -60,7 +75,12 @@ const Index = () => {
   const ifc5ViewerContainerRef = useRef<HTMLDivElement>(null);
   const lastLoadedIFC5Ref = useRef<ComposedObject | null>(null);
   const sampleLoadedRef = useRef(false);
-  
+
+  // Learning Mode state
+  const [learningMode, setLearningMode] = useState(false);
+  const [learningSample, setLearningSample] = useState<EducationalSample | null>(null);
+  const [currentLearningLayer, setCurrentLearningLayer] = useState<'project' | 'spatial' | 'element' | 'relationship' | 'property'>('project');
+
   // Check if current file is IFC5
   const isIFC5 = parsedData?.metadata?.isIFC5 === true;
 
@@ -69,18 +89,18 @@ const Index = () => {
 
   // Handle IFC5 node selection (defined early to avoid circular dependency)
   const handleIFC5NodeSelect = useCallback((path: string, node: ComposedObject) => {
-    console.log('[Index] handleIFC5NodeSelect called:', { path, nodeName: node.name });
+    logger.debug('IFC5 node selected', { path, nodeName: node.name });
     setSelectedIFC5Node(node);
     // Also highlight in 3D viewer if loaded
     if (viewer3DLoaded && isIFC5 && selectObjectRef.current) {
-      console.log('[Index] Syncing selection to 3D viewer');
+      logger.debug('Syncing selection to 3D viewer');
       selectObjectRef.current(path);
     }
   }, [viewer3DLoaded, isIFC5]);
 
   // Handle 3D object click
   const handleIFC5ObjectClick = useCallback((path: string) => {
-    console.log('[Index] 3D object clicked:', path);
+    logger.debug('3D object clicked', { path });
     // Find the node with this path in the composed object
     if (parsedData?.rawData?.composedObject) {
       const findNodeByPath = (node: ComposedObject, targetPath: string): ComposedObject | null => {
@@ -94,9 +114,8 @@ const Index = () => {
         return null;
       };
       const node = findNodeByPath(parsedData.rawData.composedObject, path);
-      console.log('[Index] Found node for path:', node?.name);
       if (node) {
-        console.log('[Index] Calling handleIFC5NodeSelect from 3D click');
+        logger.debug('Found node for path', { nodeName: node.name });
         handleIFC5NodeSelect(path, node);
       }
     }
@@ -117,6 +136,58 @@ const Index = () => {
   // Use Web Worker for parsing
   const { parseFile, isLoading, progress, error: workerError } = useIFCWorker();
 
+  // Check for learning mode state from Learn page navigation
+  useEffect(() => {
+    const state = location.state as {
+      sampleFile?: File;
+      learningSample?: EducationalSample;
+      learningMode?: boolean;
+    } | null;
+
+    if (state?.learningMode && state?.learningSample && state?.sampleFile) {
+      logger.info('Loading sample in learning mode', { sample: state.learningSample.name });
+
+      // Set learning mode state
+      setLearningMode(true);
+      setLearningSample(state.learningSample);
+      setCurrentLearningLayer('project'); // Reset to project layer
+
+      // Load the sample file
+      handleFileSelect(state.sampleFile);
+
+      // Clear the state to prevent reloading on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  // Auto-enable graph and 3D viewer for guided learning samples
+  useEffect(() => {
+    if (learningMode && learningSample?.hasGuidedLearning && parsedData) {
+      // Auto-enable graph and 3D viewer
+      setGraphLoaded(true);
+
+      // Set LoD to 4 (Core) to show all semantic relationships including properties
+      setGraphLoD(4);
+
+      // Update relationship filters to show all relationships (nothing hidden by default)
+      setRelationshipFilters({
+        showContainment: true,
+        showAggregation: true,
+        showProperties: true,
+        showAuxiliary: false,
+        showConnects: true,
+        showAssociates: true,
+        showSpaceBoundary: true,
+      });
+
+      if (!isIFC5) {
+        // For STEP/IFC4, only auto-enable 3D if it's already initialized
+        // IFC5 auto-enables in handleFileSelect
+      }
+      logger.info('Auto-enabling graph (LoD4) and 3D viewer for guided learning', { sample: learningSample.name });
+    }
+  }, [learningMode, learningSample?.hasGuidedLearning, parsedData, isIFC5]);
+
   // Load composed object once viewer is initialized (avoid repeated re-fit)
   useEffect(() => {
     if (!isIFC5 || !viewer3DInitialized || !parsedData?.rawData?.composedObject) {
@@ -131,19 +202,77 @@ const Index = () => {
 
   const handleFileSelect = useCallback(async (file: File) => {
     try {
+      // File size constants
+      const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
+      const VERY_LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50MB
+
+      // Warn user about large files
+      if (file.size > VERY_LARGE_FILE_THRESHOLD) {
+        toast.warning(`Very large file detected (${(file.size / 1024 / 1024).toFixed(1)} MB)`, {
+          description: 'Parsing may take several minutes. Consider using a smaller file or expect delays.',
+          duration: 7000,
+        });
+      } else if (file.size > LARGE_FILE_THRESHOLD) {
+        toast.info(`Large file detected (${(file.size / 1024 / 1024).toFixed(1)} MB)`, {
+          description: 'Parsing may take some time.',
+          duration: 5000,
+        });
+      }
+
       logger.parsing.start(file.name);
-      
+
       // Store the file buffer in a Ref for the 3D viewer (doesn't need state)
       const buffer = await file.arrayBuffer();
       ifcFileBufferRef.current = buffer;
       
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
+
+      // OPTIMIZATION: Create graph data with STEP lines in single pass
+      // (adds both _schemaColor AND _ifcStep, eliminates separate enrichEntitiesForTree call)
+      const graphData = createGraphDataFromEntities(
+        data.allEntities,
+        data.graphData.edges,
+        data.rawData?.rawStepLines  // Pass STEP lines for tree browser display
+      );
+
+      // Update parsedData with enriched graph
+      data.graphData = graphData;
       
       // Parser returns parsed data only - no validation.
       // Validation is on-demand via handleValidate().
       
+      // Clear unload flag when new file is loaded
+      sessionStorage.removeItem('ifcFileUnloaded');
+      
+      // Extract schema version from header
+      const schemaIdentifiers = data.metadata?.ifcHeader?.fileSchema?.schemaIdentifiers || [];
+      console.log('[Index] Metadata:', data.metadata);
+      console.log('[Index] ifcHeader:', data.metadata?.ifcHeader);
+      console.log('[Index] fileSchema:', data.metadata?.ifcHeader?.fileSchema);
+      console.log('[Index] schemaIdentifiers:', schemaIdentifiers);
+      
+      let detectedVersion = 'IFC4'; // Default
+      
+      if (schemaIdentifiers.length > 0) {
+        const schemaStr = schemaIdentifiers[0].toUpperCase();
+        console.log('[Index] Raw schema string:', schemaIdentifiers[0], '-> normalized:', schemaStr);
+        
+        if (schemaStr.includes('IFC4X3') || schemaStr.includes('IFC4_3') || schemaStr.includes('IFC43')) {
+          detectedVersion = 'IFC4X3';
+        } else if (schemaStr.includes('IFC4')) {
+          detectedVersion = 'IFC4';
+        } else if (schemaStr.includes('IFC2X3')) {
+          detectedVersion = 'IFC2x3';
+        } else if (schemaStr.includes('IFC5')) {
+          detectedVersion = 'IFC5';
+        }
+      }
+      
+      console.log('[Index] Detected schema version:', detectedVersion);
+      setSchemaVersion(detectedVersion);
       setParsedData(data);
+      
       // Auto-load 3D viewer for IFC5 files
       if (data.metadata?.isIFC5) {
         setViewer3DLoaded(true);
@@ -151,7 +280,6 @@ const Index = () => {
       toast.success(`Parsed ${data.metadata.entityCount} entities and ${data.metadata.relationshipCount} relationships`);
     } catch (error) {
       logger.error('Error parsing IFC file:', error);
-      console.error('Error parsing IFC file:', error);
       toast.error('Failed to parse IFC file. Please try a valid IFC file.');
     }
   }, [parseFile]);
@@ -171,34 +299,112 @@ const Index = () => {
         const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
         await handleFileSelect(file);
       } catch (error) {
-        console.error('Failed to load sample file:', error);
+        logger.error('Failed to load sample file:', error);
         toast.error('Failed to load sample file.');
       }
     })();
   }, [handleFileSelect]);
 
-  const handleValidate = useCallback(async () => {
-    if (!parsedData) return;
+  // Handle navigation from validation page with highlighted entity
+  useEffect(() => {
+    const state = location.state as { 
+      parsedData?: ParsedIFCData; 
+      highlightedEntityId?: string; 
+      ifcFileBuffer?: ArrayBuffer; 
+      fileName?: string;
+      validationResults?: any;
+      selectedValidator?: string;
+    } | null;
     
+    if (state) {
+      // Restore parsed data if coming from validation page
+      if (state.parsedData && !parsedData) {
+        logger.debug('Restoring parsed data from navigation state');
+        setParsedData(state.parsedData);
+
+        // Restore IFC file buffer if available
+        if (state.ifcFileBuffer) {
+          ifcFileBufferRef.current = state.ifcFileBuffer;
+        }
+      }
+
+      // Highlight the entity if specified
+      if (state.highlightedEntityId && (parsedData || state.parsedData)) {
+        const data = parsedData || state.parsedData;
+        logger.debug('Looking for entity to highlight', { entityId: state.highlightedEntityId });
+        
+        if (data) {
+          // Search in allEntities first (complete dataset)
+          const entityToHighlight = data.allEntities?.find(e => 
+            e.id === state.highlightedEntityId ||
+            `#${e.expressId}` === state.highlightedEntityId ||
+            String(e.expressId) === state.highlightedEntityId.replace('#', '')
+          ) || data.graphData.nodes.find(n => 
+            n.id === state.highlightedEntityId ||
+            `#${n.expressId}` === state.highlightedEntityId ||
+            String(n.expressId) === state.highlightedEntityId.replace('#', '')
+          );
+
+          if (entityToHighlight) {
+            logger.debug('Found entity to highlight', { ifcType: entityToHighlight.ifcType, id: entityToHighlight.id });
+            setSelectedNode(entityToHighlight);
+            toast.success(`Navigated to ${entityToHighlight.ifcType}`, {
+              description: `Entity #${entityToHighlight.expressId}`,
+            });
+          } else {
+            logger.warn('Entity not found', { entityId: state.highlightedEntityId });
+            toast.warning('Entity not found in current view', {
+              description: 'The entity may be filtered out or not loaded.',
+            });
+          }
+        }
+      }
+      
+      // Clear navigation state to prevent re-triggering
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.state, parsedData, navigate, location.pathname]);
+
+  // ============================================================================
+  // DISABLED - Local Validation (Work in Progress)
+  // ============================================================================
+  // Local validation is currently disabled and needs refactoring.
+  // Use the buildingSMART API validation instead (via /validation page).
+  // This function is preserved for future development.
+  // ============================================================================
+  const handleValidate = useCallback(async () => {
+    if (!parsedData || isIFC5) return;
+
+    console.warn('[Index] Local validation is currently disabled (WIP)');
+    toast.error('Local Validation Disabled', {
+      description: 'Local validation needs work. Please use buildingSMART API validation.',
+      duration: 5000,
+    });
+    return;
+
+    /* DISABLED CODE - Preserved for future work
     try {
       setIsValidating(true);
-      logger.validation.start(parsedData.graphData.nodes.length);
-      
-      // Run validation (can be expensive for large files)
-      const validationResult = validateIFCData(
-        parsedData.graphData.nodes, 
-        parsedData.graphData.edges, 
+      // Use allEntities (1:1 with file) instead of graphData.nodes (filtered for visualization)
+      const entitiesToValidate = parsedData.allEntities || parsedData.graphData.nodes;
+      logger.validation.start(entitiesToValidate.length);
+
+      // Run validation against COMPLETE dataset (raw parsed data)
+      // NOT against filtered graph visualization data
+      const validationResult = await validateIFCData(
+        entitiesToValidate,  // Use allEntities: 1:1 with IFC file
+        parsedData.graphData.edges,
         parsedData.metadata.ifcHeader,
         [],
         parsedData.rawData?.rawStepLines
       );
       logger.validation.complete(validationResult.stats.totalErrors, validationResult.stats.totalWarnings);
-      
+
       // Update parsed data with validation results
       setParsedData(prev => prev ? { ...prev, validation: validationResult } : null);
-      
+
       toast.success(`Validation complete: ${validationResult.stats.totalErrors} errors, ${validationResult.stats.totalWarnings} warnings`);
-      
+
       if (validationResult.stats.totalErrors > 0) {
         toast.warning(`Found ${validationResult.stats.totalErrors} validation errors`);
       }
@@ -208,9 +414,13 @@ const Index = () => {
     } finally {
       setIsValidating(false);
     }
-  }, [parsedData]);
+    */
+  }, [parsedData, isIFC5]);
 
   const handleReset = useCallback(() => {
+    // Set flag to prevent stale validation pages from working
+    sessionStorage.setItem('ifcFileUnloaded', 'true');
+    
     // Clear all state explicitly
     setParsedData(null);
     setSelectedNode(null);
@@ -223,16 +433,27 @@ const Index = () => {
     setViewer3DLoaded(false);
     setIsValidating(false);
     setRelationshipFilters({
-      showContainment: false,
-      showAggregation: false,
-      showProperties: false,
+      showContainment: true,
+      showAggregation: true,
+      showProperties: true,
       showAuxiliary: false,
-      showConnects: false,
-      showAssociates: false,
-      showSpaceBoundary: false,
+      showConnects: true,
+      showAssociates: true,
+      showSpaceBoundary: true,
     });
     ifcFileBufferRef.current = undefined;
     lastLoadedIFC5Ref.current = null;
+
+    // Clear learning mode state
+    setLearningMode(false);
+    setLearningSample(null);
+
+    // Clear navigation state completely
+    navigate('/', { replace: true, state: null });
+    
+    toast.success('File unloaded', {
+      description: 'All file data has been removed from memory'
+    });
     
     // Force a micro-task to allow cleanup
     setTimeout(() => {
@@ -241,7 +462,7 @@ const Index = () => {
         window.gc();
       }
     }, 0);
-  }, []);
+  }, [navigate]);
 
   const handleNodeClick = useCallback((node: GraphNode | null) => {
     setSelectedNode(node);
@@ -288,32 +509,42 @@ const Index = () => {
     },
     {
       ...DEFAULT_SHORTCUTS.VALIDATE,
-      action: () => {
-        if (parsedData) {
-          const validation = validateIFCData(
-            parsedData.graphData.nodes, 
-            parsedData.graphData.edges, 
+      action: async () => {
+        // DISABLED: Local validation is WIP
+        console.warn('[Index] Local validation keyboard shortcut disabled (WIP)');
+        toast.error('Local Validation Disabled', {
+          description: 'Use buildingSMART API validation instead.',
+          duration: 3000,
+        });
+
+        /* DISABLED CODE - Preserved for future work
+        if (parsedData && !isIFC5) {
+          // Use allEntities (1:1 with file) instead of graphData.nodes (filtered for visualization)
+          const entitiesToValidate = parsedData.allEntities || parsedData.graphData.nodes;
+          const validation = await validateIFCData(
+            entitiesToValidate,  // Use allEntities: 1:1 with IFC file
+            parsedData.graphData.edges,
             parsedData.metadata.ifcHeader,
             parsedData.validation?.syntaxErrors
           );
           setParsedData({ ...parsedData, validation });
           toast.success('Validation complete');
         }
+        */
       },
     },
   ]);
 
-  const handleLoadSample = useCallback(() => {
-    const sampleData = generateSampleData();
-    setParsedData(sampleData);
-    toast.success('Sample building data loaded');
+  const handleLearningLayerChange = useCallback((layerId: string) => {
+    setCurrentLearningLayer(layerId as 'project' | 'spatial' | 'element' | 'relationship' | 'property');
+    logger.debug('Learning layer changed to:', layerId);
   }, []);
 
-  const handleLoDChange = useCallback((lod: 1 | 2 | 3 | 4 | 5) => {
+  const handleLoDChange = useCallback((lod: 1 | 2 | 3 | 4) => {
     setGraphLoD(lod);
-    if (lod !== 5) {
-      setIncludeAuxiliaryLayer(false);
-    }
+    // NOTE: Do NOT auto-adjust relationship filters based on LoD level
+    // Filters should remain independent of LoD - user can manually control them
+    setIncludeAuxiliaryLayer(false);
   }, []);
 
   const handleRelationshipFilterChange = useCallback((filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary' | 'connects' | 'associates' | 'spaceBoundary', value: boolean) => {
@@ -322,7 +553,7 @@ const Index = () => {
 
   // Handle navigation from validation report to entity
   const handleEntityNavigation = useCallback((entityId: string) => {
-    if (!parsedData) return;
+    if (!parsedData || !parsedData.graphData?.nodes) return;
     
     // Find the node
     const node = parsedData.graphData.nodes.find(n => n.id === entityId);
@@ -333,18 +564,69 @@ const Index = () => {
     
     // Switch to IFC Browser tab if not already there
     // You might need to add state management for active tab if needed
-    
+
     // Optionally scroll to the element in tree view
-    // This would require adding a scroll handler in IFCTreeBrowser
+    // This would require adding a scroll handler in IFCBrowser
     
   }, [parsedData]);
 
+  // OPTIMIZATION: Create minimal enrichment for IFC Browser (just add _ifcStep, no _schemaColor)
+  // IFC Browser shows ALL entities (including geometry), graph shows filtered only
+  const enrichedEntities = useMemo(() => {
+    if (!parsedData?.allEntities) return [];
+    if (import.meta.env.DEV) {
+      logger.debug('Creating enrichedEntities for IFCBrowser');
+    }
+
+    // CRITICAL: Enrich BOTH semantic and geometry entities with _ifcStep
+    // IFC Browser must show 1:1 representation - no missing entities
+    const enrichedSemantic = (parsedData.allEntities || []).map(entity => ({
+      ...entity,
+      properties: {
+        ...entity.properties,
+        _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
+                  `#${entity.expressId}= ${entity.ifcType}(...);`
+      }
+    }));
+
+    // CRITICAL: Enrich geometry entities with STEP lines (don't return as-is)
+    // This was missing geometry STEP content in the display
+    const enrichedGeometry = (parsedData.geometryEntities || []).map(entity => ({
+      ...entity,
+      properties: {
+        ...entity.properties,
+        _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
+                  `#${entity.expressId}= ${entity.ifcType}(...);`
+      }
+    }));
+
+    // Combine and sort by expressId for 1:1 IFC file representation (no gaps)
+    const combined = [...enrichedSemantic, ...enrichedGeometry];
+    combined.sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
+
+    return combined;
+  }, [parsedData?.allEntities, parsedData?.geometryEntities, parsedData?.rawData?.rawStepLines]);
+
+  // Memoize filtered graph data for progressive learning
+  const filteredGraphDataForLearning = useMemo(() => {
+    if (!parsedData?.graphData || !learningMode) {
+      return parsedData?.graphData || { nodes: [], edges: [] };
+    }
+    return getProgressiveGraphData(
+      parsedData.graphData.nodes,
+      parsedData.graphData.edges,
+      currentLearningLayer
+    );
+  }, [parsedData?.graphData, learningMode, currentLearningLayer]);
+
+  // Use filtered graph data in learning mode, full graph otherwise
+  const displayGraphData = learningMode ? filteredGraphDataForLearning : (parsedData?.graphData || { nodes: [], edges: [] });
+
   return (
     <div className="min-h-screen bg-background">
-      <Header 
-        hasData={!!parsedData} 
+      <Header
+        hasData={!!parsedData}
         onReset={handleReset}
-        onLoadSample={handleLoadSample}
         validation={parsedData?.validation}
         hasErrors={parsedData?.validation?.stats.totalErrors ? parsedData.validation.stats.totalErrors > 0 : false}
         onValidate={handleValidate}
@@ -353,6 +635,11 @@ const Index = () => {
         nodes={parsedData?.graphData?.nodes}
         onEntityClick={handleEntityNavigation}
         isIFC5={isIFC5}
+        parsedData={parsedData}
+        ifcFileBuffer={ifcFileBufferRef.current}
+        fileName={parsedData?.metadata?.fileName || 'model.ifc'}
+        learningMode={learningMode}
+        learningSample={learningSample}
       />
 
       <main className="pt-20 h-screen">
@@ -375,22 +662,12 @@ const Index = () => {
                 </p>
               </div>
 
-              <FileUpload 
-                onFileSelect={handleFileSelect} 
+              <FileUpload
+                onFileSelect={handleFileSelect}
                 isLoading={isLoading}
                 progress={progress.percentage}
                 progressMessage={progress.message}
               />
-
-              <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                <span>or</span>
-                <button
-                  onClick={handleLoadSample}
-                  className="text-primary hover:underline underline-offset-4"
-                >
-                  Load sample building data
-                </button>
-              </div>
             </motion.div>
           ) : (
             <motion.div
@@ -480,7 +757,7 @@ const Index = () => {
                     <div className="h-full relative flex flex-col">
                       <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading graph visualization...</div>}>
                         <GraphVisualization
-                          data={parsedData.graphData}
+                          data={displayGraphData}
                           onNodeClick={handleNodeClick}
                           selectedNodeId={selectedNode?.id || null}
                           highlightedTypes={highlightedTypes}
@@ -574,7 +851,7 @@ const Index = () => {
                       />
                     ) : (
                       <IFCBrowser
-                        nodes={parsedData.allEntities || parsedData.graphData.nodes}
+                        nodes={enrichedEntities}
                         edges={parsedData.graphData.edges}
                         selectedNodeId={selectedNode?.id || null}
                         onNodeSelect={handleNodeClick}
@@ -609,7 +886,7 @@ const Index = () => {
                           <Viewer3D 
                             selectedNodeId={selectedNode?.id}
                             onSelectNode={(nodeId) => {
-                              const node = parsedData?.graphData.nodes.find(n => n.id === nodeId);
+                              const node = parsedData?.graphData?.nodes?.find(n => n.id === nodeId);
                               if (node) {
                                 handleNodeClick(node);
                               }
@@ -636,6 +913,22 @@ const Index = () => {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Consolidated Learning Panel - ONLY for samples with hasGuidedLearning flag */}
+      <AnimatePresence>
+        {learningMode && learningSample?.hasGuidedLearning && parsedData?.graphData?.nodes && (
+          <ConsolidatedLearningPanel
+            nodes={parsedData.graphData.nodes}
+            selectedNode={selectedNode}
+            onNodeSelect={handleNodeClick}
+            onLayerChange={handleLearningLayerChange}
+            onClose={() => {
+              setLearningMode(false);
+              setLearningSample(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

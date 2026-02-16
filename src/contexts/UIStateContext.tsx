@@ -20,6 +20,9 @@ interface UIStateContextType {
   // 3D Viewer state
   show3DViewer: boolean;
   setShow3DViewer: (show: boolean) => void;
+  // Schema version for current loaded IFC file
+  schemaVersion: string;
+  setSchemaVersion: (version: string) => void;
   resetFilters: () => void;
 }
 
@@ -32,6 +35,7 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
   const [showRelatedMetadata, setShowRelatedMetadata] = useState(false);
   const [graphLoD, setGraphLoD] = useState(4); // Default to LoD4 (Core Graph)
   const [show3DViewer, setShow3DViewer] = useState(false); // Lazy load 3D viewer
+  const [schemaVersion, setSchemaVersion] = useState('IFC4'); // Default to IFC4
 
   const toggleType = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -65,6 +69,8 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
         setGraphLoD,
         show3DViewer,
         setShow3DViewer,
+        schemaVersion,
+        setSchemaVersion,
         resetFilters,
       }}
     >

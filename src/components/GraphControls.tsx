@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getLoDDescription } from '@/lib/lodDescriptions';
 
 interface GraphControlsProps {
   searchQuery: string;
@@ -79,7 +80,7 @@ export function GraphControls({
       2: 'LoD2: Least (Uni)',
       3: 'LoD3: Essential (Bi)',
       4: 'LoD4: Core',
-      5: 'LoD5: Full',
+      5: 'LoD5: Full Detail',
     };
     return labels[lod];
   };
@@ -107,37 +108,156 @@ export function GraphControls({
 
         {/* LoD Control */}
         {onLoDChange && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 bg-card/95 backdrop-blur-md text-xs"
-              >
-                <Gauge className="w-3.5 h-3.5" />
-                {getLoDLabel(graphLoD)}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuLabel>Graph Level of Detail</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onLoDChange(5)}>
-                <span className={graphLoD === 5 ? 'font-bold' : ''}>LoD5: Full Graph</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onLoDChange(4)}>
-                <span className={graphLoD === 4 ? 'font-bold' : ''}>LoD4: Core Graph (No Geometry)</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onLoDChange(3)}>
-                <span className={graphLoD === 3 ? 'font-bold' : ''}>LoD3: Essential (Bidirectional rel↔obj)</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onLoDChange(2)}>
-                <span className={graphLoD === 2 ? 'font-bold' : ''}>LoD2: Least (Rel→Obj only)</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onLoDChange(1)}>
-                <span className={graphLoD === 1 ? 'font-bold' : ''}>LoD1: Utility (Spatial Only)</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <TooltipProvider>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+                >
+                  <Gauge className="w-3.5 h-3.5" />
+                  {getLoDLabel(graphLoD)}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel className="text-xs">LoD Level</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                
+                {/* LoD4: Core Graph */}
+                <div className="px-1 py-1 mb-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div 
+                        onClick={() => onLoDChange(4)}
+                        className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
+                      >
+                        <span className={graphLoD === 4 ? 'font-bold text-foreground text-xs' : 'text-foreground/90 text-xs'}>
+                          LoD4: Core
+                        </span>
+                        <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="w-48 p-2">
+                      <div className="space-y-1">
+                        <div>
+                          <p className="font-semibold text-xs">{getLoDDescription(4).name}</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(4).description}</p>
+                        </div>
+                        <div className="pt-1 border-t border-muted-foreground/20">
+                          <p className="text-xs font-medium mb-0.5">Use Case:</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(4).useCase}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-0.5">Reduction: <span className="text-primary">{getLoDDescription(4).nodeReductionEstimate}</span></p>
+                          <p className="text-xs text-muted-foreground">of geometry filtered</p>
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
+                {/* LoD3: Essential Graph */}
+                <div className="px-1 py-1 mb-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div 
+                        onClick={() => onLoDChange(3)}
+                        className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
+                      >
+                        <span className={graphLoD === 3 ? 'font-bold text-foreground text-xs' : 'text-foreground/90 text-xs'}>
+                          LoD3: Essential
+                        </span>
+                        <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="w-48 p-2">
+                      <div className="space-y-1">
+                        <div>
+                          <p className="font-semibold text-xs">{getLoDDescription(3).name}</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(3).description}</p>
+                        </div>
+                        <div className="pt-1 border-t border-muted-foreground/20">
+                          <p className="text-xs font-medium mb-0.5">Use Case:</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(3).useCase}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-0.5">Reduction: <span className="text-primary">{getLoDDescription(3).nodeReductionEstimate}</span></p>
+                          <p className="text-xs text-muted-foreground">of non-essential filtered</p>
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
+                {/* LoD2: Least Graph */}
+                <div className="px-1 py-1 mb-0.5">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div 
+                        onClick={() => onLoDChange(2)}
+                        className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
+                      >
+                        <span className={graphLoD === 2 ? 'font-bold text-foreground text-xs' : 'text-foreground/90 text-xs'}>
+                          LoD2: Least
+                        </span>
+                        <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="w-48 p-2">
+                      <div className="space-y-1">
+                        <div>
+                          <p className="font-semibold text-xs">{getLoDDescription(2).name}</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(2).description}</p>
+                        </div>
+                        <div className="pt-1 border-t border-muted-foreground/20">
+                          <p className="text-xs font-medium mb-0.5">Use Case:</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(2).useCase}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-0.5">Reduction: <span className="text-primary">{getLoDDescription(2).nodeReductionEstimate}</span></p>
+                          <p className="text-xs text-muted-foreground">of non-core filtered</p>
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
+                {/* LoD1: Utility */}
+                <div className="px-1 py-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div 
+                        onClick={() => onLoDChange(1)}
+                        className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
+                      >
+                        <span className={graphLoD === 1 ? 'font-bold text-foreground text-xs' : 'text-foreground/90 text-xs'}>
+                          LoD1: Utility
+                        </span>
+                        <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="w-48 p-2">
+                      <div className="space-y-1">
+                        <div>
+                          <p className="font-semibold text-xs">{getLoDDescription(1).name}</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(1).description}</p>
+                        </div>
+                        <div className="pt-1 border-t border-muted-foreground/20">
+                          <p className="text-xs font-medium mb-0.5">Use Case:</p>
+                          <p className="text-xs text-muted-foreground">{getLoDDescription(1).useCase}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-0.5">Reduction: <span className="text-primary">{getLoDDescription(1).nodeReductionEstimate}</span></p>
+                          <p className="text-xs text-muted-foreground">of non-spatial filtered</p>
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </TooltipProvider>
         )}
 
         {/* Export Menu */}
@@ -192,37 +312,6 @@ export function GraphControls({
           </Tooltip>
         </TooltipProvider>
       </div>
-
-      {/* Auxiliary Layer Toggle - Only for LoD5 */}
-      {graphLoD === 5 && onIncludeAuxiliaryToggle && (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card/95 backdrop-blur-md border border-border cursor-help w-fit">
-                <div className="w-9 h-9 rounded-md border border-dashed border-border bg-muted/60 flex items-center justify-center">
-                  <Layers className="w-4 h-4 text-muted-foreground" />
-                </div>
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-semibold text-foreground">Auxiliary layer (LoD5)</span>
-                  <span className="text-[11px] text-muted-foreground">Include metadata and secondary relationships</span>
-                </div>
-                <Switch
-                  checked={includeAuxiliaryLayer}
-                  onCheckedChange={onIncludeAuxiliaryToggle}
-                  className="ml-auto"
-                />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="max-w-xs">
-              <p className="text-xs">
-                <strong>Deep-dive exploration:</strong> Shows auxiliary entities like geometric primitives, 
-                material definitions, and metadata. Increases graph density—intended for advanced users 
-                investigating complete IFC structure at LoD5.
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
 
       {/* Filter Drawer Panel */}
       {showFilterDrawer && (
@@ -307,18 +396,6 @@ export function GraphControls({
                   <span className="text-foreground">Space Boundary</span>
                   <span className="text-muted-foreground text-[10px]">(IfcRelSpaceBoundary*)</span>
                 </label>
-                {graphLoD === 5 && (
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={relationshipFilters.showAuxiliary}
-                      onChange={(e) => onRelationshipFilterChange('auxiliary', e.target.checked)}
-                      className="rounded border-border"
-                    />
-                    <span className="text-foreground">Auxiliary (LoD5)</span>
-                    <span className="text-muted-foreground text-[10px]">(Geometry, Materials)</span>
-                  </label>
-                )}
               </div>
             </div>
           )}

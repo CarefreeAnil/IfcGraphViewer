@@ -39,8 +39,30 @@ export interface GraphData {
 }
 
 export interface ParsedIFCData {
+  /**
+   * ENRICHED GRAPH DATA: Contains visualization metadata
+   * Use for: Graph visualization, tree rendering with colors/styling
+   * Structure: nodes (with _schemaColor), edges (relationships for display)
+   * Note: May be filtered/modified for visualization purposes
+   */
   graphData: GraphData;
-  allEntities?: GraphNode[]; // ALL parsed entities (including geometry, properties) - for IFC4
+
+  /**
+   * SEMANTIC ENTITY DATA: IFC semantic entities (non-geometry)
+   * Use for: Graph visualization, relationships, semantic analysis
+   * Contains: Building structure, properties, types (excludes geometry)
+   * Note: IFC Browser uses this + geometryEntities for complete 1:1 view
+   */
+  allEntities?: GraphNode[];
+
+  /**
+   * GEOMETRY ENTITY DATA: Geometric and representation entities
+   * Use for: Complete IFC file representation in IFC Browser
+   * Contains: Geometry, representations, styling entities
+   * Note: Stored separately because they're typically not rendered as graph nodes
+   */
+  geometryEntities?: GraphNode[];
+
   metadata: {
     fileName?: string;
     fileSize?: number;

@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  X, Box, Hash, Tag, FileCode, BookOpen, ExternalLink, 
+import {
+  X, Box, Hash, Tag, FileCode, BookOpen, ExternalLink,
   Info, GitBranch, List, ChevronDown, ChevronRight,
-  CheckCircle, Lightbulb, AlertCircle, AlertTriangle
+  CheckCircle, Lightbulb, AlertCircle, AlertTriangle, Layers, HelpCircle
 } from 'lucide-react';
 import { GraphNode, NodeType } from '@/types/graph';
 import { IFCEntity } from '@/types/ifc';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { 
-  getEntityDefinition, 
+import {
+  getEntityDefinition,
   getRelatedPropertySets,
+  getDocsUrl,
 } from '@/data/ifc-schema';
+import { getSchemaLayerForEntity } from '@/lib/schema-layer-mapping';
+import { useUIState } from '@/contexts/UIStateContext';
 
 interface NodeDetailsPanelProps {
   node: GraphNode | null;
@@ -52,6 +55,7 @@ const categoryColors: Record<string, string> = {
 
 export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsPanelProps) {
   const [showEducation, setShowEducation] = useState(false);
+  const { schemaVersion } = useUIState();
 
   if (!node) return null;
 
@@ -73,6 +77,7 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
 
   const definition = getEntityDefinition(entity.type);
   const relatedPsets = getRelatedPropertySets(entity.type);
+  const schemaLayer = getSchemaLayerForEntity(node.ifcType);
 
   const excludedKeys = new Set([
     'id', 'nodeId', 'expressId', '_schemaColor', '_schemaIcon', '_ifcStep',
@@ -109,6 +114,20 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
                     <Badge className={`text-[10px] ${categoryColors[definition.category] || 'bg-muted'}`}>
                       {definition.category}
                     </Badge>
+                  )}
+                  {schemaLayer && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge variant="outline" className={`text-[10px] gap-1 ${schemaLayer.bgColor} ${schemaLayer.color} ${schemaLayer.borderColor}`}>
+                          <Layers className="w-3 h-3" />
+                          {schemaLayer.shortName}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">
+                        <p className="text-xs font-medium">{schemaLayer.name}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">{schemaLayer.description}</p>
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
               </div>
@@ -170,7 +189,8 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
                   <EducationContent 
                     entity={entity} 
                     definition={definition} 
-                    relatedPsets={relatedPsets} 
+                    relatedPsets={relatedPsets}
+                    schemaVersion={schemaVersion}
                   />
                 </motion.div>
               )}
@@ -227,11 +247,13 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
 function EducationContent({ 
   entity, 
   definition, 
-  relatedPsets 
+  relatedPsets,
+  schemaVersion = 'IFC4'
 }: { 
   entity: IFCEntity;
   definition: any;
   relatedPsets: any[];
+  schemaVersion?: string;
 }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['overview']));
   const [expandedPsets, setExpandedPsets] = useState<Set<string>>(new Set());
@@ -307,23 +329,32 @@ function EducationContent({
               <Badge variant="outline" className="text-[10px] h-5">
                 Since {definition.introducedIn}
               </Badge>
-              {definition.docsUrl && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-5 text-[10px] gap-1 px-2"
-                  onClick={() => window.open(definition.docsUrl, '_blank')}
-                >
-                  <ExternalLink className="w-2.5 h-2.5" />
-                  Docs
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-5 text-[10px] gap-1 px-2"
+                onClick={() => window.open(getDocsUrl(entity.type, schemaVersion), '_blank')}
+              >
+                <ExternalLink className="w-2.5 h-2.5" />
+                Docs
+              </Button>
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-2 text-muted-foreground">
-            <AlertCircle className="w-3 h-3 mt-0.5" />
-            <p className="text-xs">No schema documentation available</p>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 text-muted-foreground">
+              <AlertCircle className="w-3 h-3 mt-0.5" />
+              <p className="text-xs">No detailed schema documentation available</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-5 text-[10px] gap-1 px-2"
+              onClick={() => window.open(getDocsUrl(entity.type, schemaVersion), '_blank')}
+            >
+              <ExternalLink className="w-2.5 h-2.5" />
+              View Official Schema Docs
+            </Button>
           </div>
         )}
       </EducationSection>
@@ -435,8 +466,8 @@ function EducationContent({
                   <div className="p-2 pt-0 space-y-1 bg-muted/20">
                     <p className="text-[10px] text-muted-foreground mb-2">{pset.description}</p>
                     {pset.properties?.map((prop: any) => (
-                      <div 
-                        key={prop.name} 
+                      <div
+                        key={prop.name}
                         className="flex items-start justify-between py-1 px-2 rounded bg-background/50"
                       >
                         <div className="flex items-start gap-1 flex-1">
@@ -467,6 +498,22 @@ function EducationContent({
               </div>
             ))}
           </div>
+        </EducationSection>
+      )}
+
+      {/* Common Examples */}
+      {definition?.examples && definition.examples.length > 0 && (
+        <EducationSection
+          title="Common Examples"
+          icon={<HelpCircle className="w-3.5 h-3.5" />}
+          isOpen={expandedSections.has('examples')}
+          onToggle={() => toggleSection('examples')}
+        >
+          <ul className="list-disc list-inside space-y-1">
+            {definition.examples.map((example, i) => (
+              <li key={i} className="text-xs text-muted-foreground leading-relaxed">{example}</li>
+            ))}
+          </ul>
         </EducationSection>
       )}
     </div>

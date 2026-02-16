@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef, useDeferredValue } from 'react';
-import { Copy, ChevronDown, ChevronRight, Search, Hash, ArrowUpFromLine } from 'lucide-react';
+import { Copy, ChevronDown, ChevronRight, Search, Hash, ArrowDown, ArrowUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -7,6 +7,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { toast } from 'sonner';
 import { GraphNode, GraphEdge, ParsedIFCData } from '@/types/graph';
 import { getEntityDef, getNormalizedPropertyName, findBestMatchingProperty } from '@/lib/ifcSchema';
+import { isGeometryType } from '@/lib/ifcParser';
 import { cn } from '@/lib/utils';
 
 interface IFCBrowserProps {
@@ -242,31 +243,32 @@ function StepLineViewer({
         </div>
       </div>
 
-      {/* Expanded References */}
+      {/* Expanded References - Recursively render nested StepLineViewer */}
       {isExpanded && references.length > 0 && (
-        <div className="ml-6 border-l-2 border-blue-500/30 bg-blue-500/5">
+        <div className="ml-4 border-l-2 border-blue-500/30 bg-blue-500/5">
           {references.map((ref) => {
             const refNode = nodeByExpressId.get(ref.stepId);
-            const rawRefStepLine = refNode?.properties?._ifcStep as string || '';
-            return (
-              <div
-                key={`${ref.stepId}-expanded`}
-                className="px-2 py-1.5 hover:bg-blue-500/10 cursor-pointer transition-colors text-xs border-b border-blue-500/10"
-                onClick={() => onReferenceClick(ref.stepId)}
-              >
-                {refNode ? (
-                  <div className="font-mono flex items-start gap-2">
-                    <span className="shrink-0">
-                      <span className={SYNTAX_COLORS.stepId}>#{ref.stepId}</span>
-                    </span>
-                    <span className="text-muted-foreground truncate break-words flex-1">
-                      {rawRefStepLine}
-                    </span>
-                  </div>
-                ) : (
+            if (!refNode) {
+              return (
+                <div
+                  key={`${ref.stepId}-expanded`}
+                  className="px-2 py-1.5 text-xs border-b border-blue-500/10"
+                >
                   <span className={SYNTAX_COLORS.stepId}>#{ref.stepId}</span>
-                )}
-              </div>
+                </div>
+              );
+            }
+            // Recursively render StepLineViewer for nested entities
+            return (
+              <StepLineViewer
+                key={`${ref.stepId}-expanded`}
+                node={refNode}
+                nodes={nodes}
+                nodeByExpressId={nodeByExpressId}
+                onReferenceClick={onReferenceClick}
+                isSelected={false}
+                selectedRef={null}
+              />
             );
           })}
         </div>
@@ -382,12 +384,17 @@ function buildReferenceIndexWithContext(nodes: GraphNode[]): Map<string, Map<num
     '_schemacolor', '_entitytype', '_expressid',  // Internal properties added during parsing
   ]);
 
+  // OPTIMIZATION: Only index semantic entities (skip geometry for faster reference index)
+  // Geometry entities don't have meaningful references in the semantic graph
   for (const node of nodes) {
+    // Skip geometry types - no need to index their references
+    if (node.ifcType && isGeometryType(node.ifcType)) continue;
+
     const refs = new Map<number, string[]>();
-    
+
     for (const [propName, propValue] of Object.entries(node.properties)) {
       if (METADATA_PROPERTIES.has(propName.toLowerCase())) continue;
-      
+
       const extracted = extractReferencesFromValue(propValue, 2, propName);
       for (const refId of extracted) {
         if (!refs.has(refId)) {
@@ -399,7 +406,7 @@ function buildReferenceIndexWithContext(nodes: GraphNode[]): Map<string, Map<num
         }
       }
     }
-    
+
     if (refs.size > 0) {
       referenceIndex.set(node.id, refs);
     }
@@ -418,6 +425,11 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
   const selectedRef = useRef<HTMLDivElement>(null);
   const entityListRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
+
+  // Log on initial render
+  useEffect(() => {
+    console.log('[IFCBrowser] Rendered with:', { nodesCount: nodes.length, edgesCount: edges.length });
+  }, []);
 
   // Pre-compute reference index with property context
   const referenceIndexWithContext = useMemo(() => buildReferenceIndexWithContext(nodes), [nodes]);
@@ -522,8 +534,21 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     return map;
   }, [nodes, edges, referenceIndexWithContext, nodeById, nodeByExpressId]);
 
-  // Sort nodes by stepId
+  // Sort nodes by stepId (skip if already sorted for performance)
   const sortedNodes = useMemo(() => {
+    // Optimization: Check if already sorted to avoid unnecessary re-sort
+    let isSorted = true;
+    for (let i = 1; i < nodes.length; i++) {
+      if ((nodes[i].expressId || 0) < (nodes[i - 1].expressId || 0)) {
+        isSorted = false;
+        break;
+      }
+    }
+
+    if (isSorted) {
+      return nodes;  // Already sorted, return as-is
+    }
+
     return [...nodes].sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
   }, [nodes]);
 
@@ -532,12 +557,14 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     if (!deferredQuery.trim()) return sortedNodes;
 
     const query = deferredQuery.toLowerCase();
-    return sortedNodes.filter(
-      (n) =>
-        n.label.toLowerCase().includes(query) ||
-        n.ifcType.toLowerCase().includes(query) ||
-        (n.expressId && n.expressId.toString().includes(query))
-    );
+    return sortedNodes.filter((n) => {
+      // FIX: Add null safety checks to prevent crashes on edge case nodes
+      const label = (n.label || '').toLowerCase();
+      const type = (n.ifcType || '').toLowerCase();
+      const id = n.expressId ? n.expressId.toString() : '';
+
+      return label.includes(query) || type.includes(query) || id.includes(query);
+    });
   }, [sortedNodes, deferredQuery]);
 
   // CRITICAL: Virtual scrolling window - only render visible items
@@ -577,6 +604,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
   useEffect(() => {
     if (entityListRef.current) {
       entityListRef.current.scrollTop = 0;
+      setScrollTop(0);  // FIX: Also reset state to stay in sync
     }
   }, [deferredQuery]);
 
@@ -604,45 +632,45 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
   // Auto-scroll to selected node
   useEffect(() => {
     if (!selectedNodeId || !entityListRef.current) return;
-    
+
     // Find the selected node's index in the filtered list
     const nodeIndex = filteredNodes.findIndex(n => n.id === selectedNodeId);
     if (nodeIndex < 0) {
       console.warn('[IFCBrowser] Selected node not found in filtered list:', selectedNodeId);
       return;
     }
-    
+
     // Calculate scroll position - position item at 150px from top (about 6-7 items)
     const OFFSET_FROM_TOP = 150;
     const targetScrollTop = nodeIndex * ITEM_HEIGHT;
     const scrollPosition = Math.max(0, targetScrollTop - OFFSET_FROM_TOP);
-    
+
     // Only scroll if the item is not already visible in a good position
     const currentScroll = entityListRef.current.scrollTop;
     const containerHeight = entityListRef.current.clientHeight;
     const itemTopInViewport = targetScrollTop - currentScroll;
     const isInGoodPosition = itemTopInViewport >= 100 && itemTopInViewport <= (containerHeight - 200);
-    
+
     if (isInGoodPosition) {
       return;
     }
-    
+
     // Mark as programmatic scroll to prevent onScroll from interfering
     isProgrammaticScroll.current = true;
-    
+
     // Update state immediately (synchronously) for virtual list calculations
     setScrollTop(scrollPosition);
-    
+
     // Set DOM scroll position
     if (entityListRef.current) {
       entityListRef.current.scrollTop = scrollPosition;
     }
-    
+
     // Reset flag after scroll completes
     setTimeout(() => {
       isProgrammaticScroll.current = false;
     }, 200);
-  }, [selectedNodeId, filteredNodes, ITEM_HEIGHT]);
+  }, [selectedNodeId, ITEM_HEIGHT]);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -840,8 +868,11 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
 
                   {/* Referenced By Section - Show STEP lines containing this entity */}
                   <div>
-                    <h4 className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5">
-                      <ArrowUpFromLine className="h-3 w-3" />
+                    <h4
+                      className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5 cursor-help"
+                      title="Entities that reference this one (incoming dependencies)"
+                    >
+                      <ArrowDown className="h-3 w-3" />
                       Referenced By ({predecessors.length})
                     </h4>
                     {predecessors.length > 0 ? (
@@ -872,6 +903,40 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                       </div>
                     )}
                   </div>
+
+                  {/* References Section - Show entities that this one references */}
+                  {successors.length > 0 && (
+                    <div>
+                      <h4
+                        className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1.5 cursor-help"
+                        title="Entities that this one references (outgoing dependencies)"
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                        References ({successors.length})
+                      </h4>
+                      <div className="space-y-1">
+                        {successors.map((ref) => {
+                          const rawStepLine = ref.node.properties._ifcStep as string || '';
+                          return (
+                            <div
+                              key={ref.node.id}
+                              onClick={() => onNodeSelect(ref.node)}
+                              className="p-1.5 rounded bg-blue-500/10 hover:bg-blue-500/20 cursor-pointer transition-colors border border-blue-500/20 hover:border-blue-500/40 font-mono text-xs overflow-x-auto"
+                            >
+                              <div className="flex items-start gap-2">
+                                <span className="shrink-0">
+                                  <span className={SYNTAX_COLORS.stepId}>#{ref.node.expressId}</span>
+                                </span>
+                                <span className="text-[10px] text-muted-foreground truncate break-words flex-1">
+                                  {rawStepLine}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-20 text-muted-foreground">

@@ -1,13 +1,15 @@
 import { motion } from 'framer-motion';
-import { Network, Upload, RotateCcw, BookOpen } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Network, RotateCcw, BookOpen, CheckSquare, GraduationCap } from 'lucide-react';
 import { ValidationDialog } from '@/components/ValidationDialog';
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 import { GraphNode } from '@/types/graph';
+import { EducationalSample } from '@/features/educational/data/educationalSamples';
+import { Button } from '@/components/ui/button';
 
 interface HeaderProps {
   hasData: boolean;
   onReset: () => void;
-  onLoadSample: () => void;
   validation?: ValidationResult;
   hasErrors?: boolean;
   onValidate?: () => void;
@@ -16,6 +18,11 @@ interface HeaderProps {
   nodes?: GraphNode[];
   onEntityClick?: (entityId: string) => void;
   isIFC5?: boolean;
+  parsedData?: any;
+  ifcFileBuffer?: ArrayBuffer;
+  fileName?: string;
+  learningMode?: boolean;
+  learningSample?: EducationalSample | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -29,7 +36,22 @@ function formatTime(ms: number): string {
   return (ms / 1000).toFixed(2) + 's';
 }
 
-export function Header({ hasData, onReset, onLoadSample, validation, hasErrors, onValidate, isValidating, metadata, nodes, onEntityClick, isIFC5 }: HeaderProps) {
+export function Header({ hasData, onReset, validation, hasErrors, onValidate, isValidating, metadata, nodes, onEntityClick, isIFC5, parsedData, ifcFileBuffer, fileName, learningMode, learningSample }: HeaderProps) {
+  const navigate = useNavigate();
+
+  const handleNavigateToValidation = () => {
+    // Navigate to validation page with parsed data, buffer, filename, and any existing validation results
+    navigate('/validation', {
+      state: {
+        parsedData,
+        ifcFileBuffer,
+        fileName,
+        validationResults: parsedData?.validation, // Pass existing validation if available
+        selectedValidator: parsedData?.validation ? 'local' : null
+      }
+    });
+  };
+
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -47,7 +69,19 @@ export function Header({ hasData, onReset, onLoadSample, validation, hasErrors, 
               <p className="text-xs text-muted-foreground">Parse • Transform • Explore</p>
             </div>
           </div>
-          
+
+          {/* Learning Mode Indicator */}
+          {learningMode && learningSample && (
+            <div className="flex items-center gap-2 pl-4">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/20 border border-primary/30">
+                <GraduationCap className="w-4 h-4 text-primary" />
+                <span className="text-xs font-medium text-primary">Learning Mode</span>
+                <span className="text-xs text-primary/70">•</span>
+                <span className="text-xs text-primary/90 max-w-[120px] truncate">{learningSample.name}</span>
+              </div>
+            </div>
+          )}
+
           {/* File metadata */}
           {hasData && metadata && (
             <div className="flex items-center gap-3 pl-4 border-l border-border">
@@ -68,33 +102,35 @@ export function Header({ hasData, onReset, onLoadSample, validation, hasErrors, 
         </div>
 
         <div className="flex items-center gap-3">
-          {!hasData && (
-            <button
-              onClick={onLoadSample}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium text-foreground transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              Load Sample
-            </button>
-          )}
+          {/* Learn Button - Always visible */}
+          <button
+            onClick={() => navigate('/learn')}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors"
+            title="Explore educational IFC samples"
+          >
+            <BookOpen className="w-4 h-4" />
+            Learn
+          </button>
+
           {hasData && (
             <div className="flex items-center gap-2">
               {!isIFC5 && (
-                <ValidationDialog
-                  validation={validation}
-                  hasErrors={hasErrors}
-                  onValidate={onValidate}
-                  isValidating={isValidating}
-                  nodes={nodes}
-                  onEntityClick={onEntityClick}
-                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleNavigateToValidation}
+                  className="gap-2"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  {parsedData?.validation ? 'Validation Results' : 'Validate'}
+                </Button>
               )}
               <button
                 onClick={onReset}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium text-foreground transition-colors"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-sm font-medium text-destructive transition-colors"
               >
                 <RotateCcw className="w-4 h-4" />
-                Reset
+                Unload File
               </button>
             </div>
           )}

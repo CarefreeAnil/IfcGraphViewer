@@ -5,6 +5,7 @@
  */
 
 import { parseIFCFile, ParseProgressCallback } from '../lib/ifcParser';
+import { createGraphDataFromEntities } from '../lib/graphBuilder';
 
 export interface WorkerMessage {
   type: 'parse' | 'cancel';
@@ -36,8 +37,12 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
   if (type === 'parse' && file && fileId) {
     try {
+      const workerStartTime = performance.now();
+      let lastProgress: any = null;
+      
       // Progress callback
       const progressCallback: ParseProgressCallback = (progress) => {
+        lastProgress = progress;  // Store final progress message
         const response: WorkerResponse = {
           type: 'progress',
           fileId,
@@ -51,14 +56,78 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         self.postMessage(response);
       };
 
-      // Parse all files with the unified parser (handles both IFC4 and IFC5)
-      const result = await parseIFCFile(file, progressCallback);
+      // Post initial message
+      self.postMessage({
+        type: 'progress',
+        fileId,
+        progress: {
+          percentage: 0,
+          message: `[Worker] Starting parse: ${file.name} (${file.size} bytes)`,
+        },
+      } as WorkerResponse);
 
-      // Send completion message
+      // Parse all files with the unified parser (handles both IFC4 and IFC5)
+      const parseStartTime = performance.now();
+      const result = await parseIFCFile(file, progressCallback);
+      const parseEndTime = performance.now();
+
+      // [Architectural Change]: Graph construction extracted to graphBuilder
+      // We run it here in the worker to keep the UI responsive
+      const graphBuildStart = performance.now();
+      self.postMessage({
+        type: 'progress',
+        fileId,
+        progress: {
+          percentage: 95,
+          message: `[Worker] Constructing graph relationships...`,
+        },
+      } as WorkerResponse);
+
+      // result.allEntities contains the nodes with necessary properties
+      // IMPORTANT: Pass rawStepLines to graphBuilder so it can add actual STEP content
+      const enrichedGraph = createGraphDataFromEntities(
+        result.allEntities,
+        result.graphData.edges,
+        result.rawData?.rawStepLines  // Pass STEP lines to avoid placeholder format
+      );
+
+      // Update result with enriched graph
+      result.graphData = enrichedGraph;
+      if (result.metadata.relationshipCount === 0) {
+          result.metadata.relationshipCount = enrichedGraph.edges.length;
+      }
+
+      // Convert rawStepLines Map to object for serialization through postMessage
+      // (Maps cannot be serialized through Web Workers)
+      if (result.rawData?.rawStepLines && result.rawData.rawStepLines instanceof Map) {
+        const stepsObject: Record<string, string> = {};
+        result.rawData.rawStepLines.forEach((value, key) => {
+          stepsObject[key.toString()] = value;
+        });
+        result.rawData.rawStepLines = stepsObject as any;
+      }
+
+      const graphBuildEnd = performance.now();
+
+      // Post timing info
+      self.postMessage({
+        type: 'progress',
+        fileId,
+        progress: {
+          percentage: 100,
+          message: `[Worker] Complete: Parse=${(parseEndTime - parseStartTime).toFixed(0)}ms, Graph=${(graphBuildEnd - graphBuildStart).toFixed(0)}ms`,
+        },
+      } as WorkerResponse);
+
+      // Send completion message with timing info from last progress message
       const response: WorkerResponse = {
         type: 'complete',
         fileId,
         data: result,
+        progress: lastProgress ? {
+          percentage: 100,
+          message: lastProgress.message,  // Include final timing message
+        } : undefined,
       };
       self.postMessage(response);
 

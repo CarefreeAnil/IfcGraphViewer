@@ -3,9 +3,10 @@
  * Handles worker lifecycle and message passing
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { ParsedIFCData } from '@/types/graph';
 import type { WorkerMessage, WorkerResponse } from '@/workers/ifcParserWorker';
+import { logger } from '@/utils/logger';
 
 interface ParseProgress {
   percentage: number;
@@ -14,20 +15,46 @@ interface ParseProgress {
   totalEntities?: number;
 }
 
+// Worker timeout: 2 minutes for parsing large files
+const WORKER_TIMEOUT_MS = 120000;
+
 export function useIFCWorker() {
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState<ParseProgress>({ percentage: 0, message: '' });
   const [error, setError] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const currentFileId = useRef<string | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup worker on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        logger.debug('Cleaning up IFC worker on unmount');
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const parseFile = useCallback(
     (file: File): Promise<ParsedIFCData> => {
       return new Promise((resolve, reject) => {
         // Terminate any existing worker
         if (workerRef.current) {
+          logger.debug('Terminating existing worker');
           workerRef.current.terminate();
           workerRef.current = null;
+        }
+
+        // Clear any existing timeout
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
         }
 
         // Create new worker
@@ -46,6 +73,18 @@ export function useIFCWorker() {
         setError(null);
         setProgress({ percentage: 0, message: 'Starting parser...' });
 
+        // Set timeout to prevent hung workers
+        timeoutRef.current = setTimeout(() => {
+          logger.error('Worker timeout: parsing took too long');
+          if (workerRef.current) {
+            workerRef.current.terminate();
+            workerRef.current = null;
+          }
+          setIsLoading(false);
+          setError('Parsing timeout: file took too long to process');
+          reject(new Error('Worker timeout: parsing exceeded 2 minutes'));
+        }, WORKER_TIMEOUT_MS);
+
         // Handle messages from worker
         worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
           const { type, fileId: responseFileId, data, error: workerError, progress: workerProgress } = event.data;
@@ -58,14 +97,38 @@ export function useIFCWorker() {
           if (type === 'progress' && workerProgress) {
             setProgress(workerProgress);
           } else if (type === 'complete') {
+            // Clear timeout on successful completion
+            if (timeoutRef.current) {
+              clearTimeout(timeoutRef.current);
+              timeoutRef.current = null;
+            }
             setIsLoading(false);
-            setProgress({ percentage: 100, message: 'Parsing complete' });
+            // Use timing message from final progress if available
+            const finalMessage = workerProgress?.message || 'Parsing complete';
+            setProgress({ percentage: 100, message: finalMessage });
             worker.terminate();
             workerRef.current = null;
+
+            // Convert rawStepLines object back to Map (was serialized for postMessage)
+            // Keys were converted to strings, need to convert back to numbers
+            if (data?.rawData?.rawStepLines && typeof data.rawData.rawStepLines === 'object' && !(data.rawData.rawStepLines instanceof Map)) {
+              const stepsMap = new Map<number, string>();
+              Object.entries(data.rawData.rawStepLines).forEach(([key, value]) => {
+                stepsMap.set(parseInt(key, 10), value as string);
+              });
+              data.rawData.rawStepLines = stepsMap;
+            }
+
             resolve(data);
           } else if (type === 'error') {
+            // Clear timeout on error
+            if (timeoutRef.current) {
+              clearTimeout(timeoutRef.current);
+              timeoutRef.current = null;
+            }
             setIsLoading(false);
             setError(workerError || 'Unknown error');
+            logger.error('IFC parsing error:', workerError);
             worker.terminate();
             workerRef.current = null;
             reject(new Error(workerError || 'Unknown error'));

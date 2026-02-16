@@ -293,9 +293,9 @@ interface EntitySchema {
 // - Validation rules
 ```
 
-### Validation (`ifcValidator.ts`, `ifcValidatorEnhanced.ts`)
+### Validation (`ifcValidatorEnhanced.ts`)
 
-Validates parsed data against schema rules:
+Validates parsed data against schema rules with enhanced validation capabilities:
 
 ```typescript
 interface ValidationResult {
@@ -310,7 +310,11 @@ interface ValidationResult {
 // - Entity relationship constraints
 // - Required vs optional properties
 // - Type compatibility
+// - GUID format validation (22 chars, Base64)
+// - Schema compliance
 ```
+
+**Note:** The original `ifcValidator.ts` was replaced by the enhanced `ifcValidatorEnhanced.ts` with improved validation logic and dual validator support (buildingSMART API + planned local validator).
 
 ## Performance Optimizations
 
@@ -487,22 +491,172 @@ metadata: {
 }
 ```
 
-## Future Enhancements
+## Validation Pipeline
 
-### Short Term
-- [ ] IFC2x3 full support
-- [ ] Enhanced error recovery
-- [ ] Streaming parser for large files
-- [ ] Custom entity filtering
+### Overview
 
-### Medium Term
-- [ ] IFC6 support
-- [ ] Industry extensions
-- [ ] Custom schema support
-- [ ] Property set extensions
+After parsing, IFC files can be validated through two complementary systems:
 
-### Long Term
-- [ ] Multi-file merging
-- [ ] Incremental updates
-- [ ] Real-time synchronization
-- [ ] Advanced query language
+```
+Parsed IFC Data
+    ↓
+┌─────────────────────────────────────┐
+│   Validation System                 │
+├─────────────────────────────────────┤
+│ 1. Local Validator (WIP)   │ 2. buildingSMART Validator (Active) →
+│    - Client-side validation  │    - Cloud-based validation
+│    - Instant feedback        │    - Official compliance checking
+│    - Offline capable         │    - Detailed diagnostics
+└─────────────────────────────────────┘
+    ↓
+Validation Results
+    ├─ Error Count
+    ├─ Warning Count
+    ├─ Info Messages
+    └─ Entity-Level Issues
+```
+
+### Local Validator (`ifcValidatorEnhanced.ts`)
+
+**Status**: Work in Progress - Currently Disabled
+
+**Validation Checks** (client-side):
+1. **GUID Validation**
+   - 22 character length
+   - Base64 format compliance
+   - Uniqueness within model
+
+2. **Schema Validation**
+   - Entity type checking
+   - Property type validation
+   - Attribute cardinality checks
+
+3. **Relationship Validation**
+   - Valid relationship targets
+   - Bidirectional consistency
+   - Hierarchy validation
+
+**Architecture**:
+```typescript
+interface ValidationRule {
+  name: string;
+  severity: 'error' | 'warning' | 'info';
+  check: (entity: Entity) => boolean;
+}
+
+interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  stats: {
+    totalErrors: number;
+    totalWarnings: number;
+  };
+}
+```
+
+### buildingSMART Validator Integration
+
+**Status**: ✅ Production-Ready
+
+**Architecture**:
+
+```typescript
+// Frontend: src/pages/Validation.tsx
+User Selects buildingSMART Validator
+    ↓
+    submitValidation(buffer, filename)  // Frontend → Backend
+    ↓
+Backend: bSValidate/server.js
+    ↓
+    FormData multipart upload
+    ↓
+    https://dev.validate.buildingsmart.org/api/v1/validate
+    ↓
+    Returns: { jobId, status }
+    ↓
+pollValidationResults(jobId)  // Regular polling
+    ↓
+    Check job status every 3s
+    ↓
+    Results ready: { outcome, results }
+    ↓
+mapBuildingSmartToValidationResult()  // Normalize format
+    ↓
+Display in ValidationReport component
+```
+
+**Backend Flow** (`bSValidate/server.js`):
+```javascript
+POST /api/validate
+    ↓
+    Extract file buffer
+    ↓
+    Create FormData with file
+    ↓
+    Add authentication token
+    ↓
+    Submit to buildingSmart API
+    ↓
+    Return jobId for polling
+    
+GET /api/validate/:jobId
+    ↓
+    Query buildingSmart job status
+    ↓
+    If complete: return full results
+    ↓
+    If pending: return status
+```
+
+**Result Mapping** (`buildingsmartMapper.ts`):
+```typescript
+// Transform buildingSmart format to internal format
+Raw buildingSmart Results
+    ├─ public_id (issue ID)
+    ├─ severity (ERROR, WARNING, INFO)
+    ├─ outcome_code (validation rule ID)
+    ├─ instance_public_id (IFC entity reference)
+    └─ expected vs observed
+    ↓
+Mapped ValidationResult
+    ├─ valid (boolean)
+    ├─ headerErrors[]
+    ├─ syntaxErrors[]
+    ├─ schemaErrors[]
+    └─ stats {}
+```
+
+**Export Functionality** (`exportValidation.ts`):
+- JSON: Full result structure with all metadata
+- CSV: Entity-per-row format for spreadsheet analysis
+- Text: Human-readable report format
+
+### Validation vs Parsing Comparison
+
+| Aspect | Parser Output | Validation Results |
+|--------|---------------|--------------------|
+| Content | Graph structure + entities | Quality assessment |
+| Timing | Immediate (1-5s) | Can be deferred |
+| Location | Client-side (WASM) | Cloud or client |
+| Output | Nodes, edges, relationships | Errors, warnings, metadata |
+| Usage | Visualization | Compliance verification |
+
+### Integration Points
+
+1. **Parsing → Validation**
+   - Send parsed graph to validation
+   - Include metadata for context
+   - Track entity references
+
+2. **Validation Results → Graph**
+   - Highlight invalid entities in graph
+   - Link validation errors to nodes
+   - Filter by error severity
+
+3. **User Interface**
+   - Dedicated `Validation.tsx` page
+   - Integrated `ValidationReport.tsx` component
+   - Entity navigation from report to graph
+
+

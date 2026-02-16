@@ -17,7 +17,9 @@ import { getEntityDef } from '@/lib/ifcSchema';
 import { 
   getEntityDefinition, 
   getRelatedPropertySets,
+  getDocsUrl,
 } from '@/data/ifc-schema';
+import { useUIState } from '@/contexts/UIStateContext';
 
 interface PropertyViewerProps {
   nodes: GraphNode[];
@@ -298,6 +300,7 @@ function EducationContent({ node }: { node: GraphNode }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     new Set(['overview'])
   );
+  const { schemaVersion } = useUIState();
 
   const entity: IFCEntity = {
     id: node.id,
@@ -358,23 +361,32 @@ function EducationContent({ node }: { node: GraphNode }) {
               <Badge variant="outline" className="text-[10px] h-5">
                 Since {definition.introducedIn}
               </Badge>
-              {definition.docsUrl && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-5 text-[10px] gap-1 px-2"
-                  onClick={() => window.open(definition.docsUrl, '_blank')}
-                >
-                  <ExternalLink className="w-2.5 h-2.5" />
-                  Docs
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-5 text-[10px] gap-1 px-2"
+                onClick={() => window.open(getDocsUrl(node.ifcType, schemaVersion), '_blank')}
+              >
+                <ExternalLink className="w-2.5 h-2.5" />
+                Docs
+              </Button>
             </div>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground italic">
-            No schema documentation available
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground italic">
+              No detailed schema documentation available
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-5 text-[10px] gap-1 px-2"
+              onClick={() => window.open(getDocsUrl(node.ifcType, schemaVersion), '_blank')}
+            >
+              <ExternalLink className="w-2.5 h-2.5" />
+              View Official Schema Docs
+            </Button>
+          </div>
         )}
       </EducationSection>
 

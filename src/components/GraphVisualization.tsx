@@ -19,7 +19,7 @@ interface GraphVisualizationProps {
   highlightedTypes: NodeType[];
   searchQuery: string;
   graphLoD?: LoDLevel;
-  includeAuxiliaryLayer?: boolean; // LoD5 only: show auxiliary/metadata layer
+  includeAuxiliaryLayer?: boolean; // Optional: show auxiliary/metadata layer
   relationshipFilters?: {
     showContainment: boolean;
     showAggregation: boolean;
@@ -159,10 +159,9 @@ export function GraphVisualization({
   });
   const prevSelectedNodeIdRef = useRef<string | null>(null);
 
-  // Apply LoD filtering (LoD5 can optionally include auxiliary layer)
+  // Apply LoD filtering
   const filteredData = useMemo(() => {
-    const includeAux = graphLoD === GraphLoD.LoD5_Full && includeAuxiliaryLayer;
-    const lodResult = applyLoD(data.nodes, data.edges, graphLoD as GraphLoD, { includeAuxiliary: includeAux });
+    const lodResult = applyLoD(data.nodes, data.edges, graphLoD as GraphLoD, { includeAuxiliary: includeAuxiliaryLayer });
 
     // Filter relationship NODES (paper-accurate model) and keep edges consistent
     const isRelationshipNode = (node: GraphNode) =>
@@ -172,7 +171,7 @@ export function GraphVisualization({
       const type = ifcType.toUpperCase();
 
       // Check if any filter is active (inclusion/whitelist model)
-      const anyFilterActive = 
+      const anyFilterActive =
         relationshipFilters.showContainment ||
         relationshipFilters.showAggregation ||
         relationshipFilters.showConnects ||
@@ -188,6 +187,7 @@ export function GraphVisualization({
       if (relationshipFilters.showContainment && type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
       if (relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES'))) return true;
       if (relationshipFilters.showConnects && (type.includes('CONNECTS') || type.includes('CONNECTEDTO') || type.includes('CONNECTION'))) return true;
+      if (relationshipFilters.showConnects && (type.includes('VOIDSELEMENT') || type.includes('FILLSELEMENT'))) return true; // ✅ Voids/Fills are structural connections
       if (relationshipFilters.showSpaceBoundary && type.includes('SPACEBOUNDARY')) return true;
       if (relationshipFilters.showProperties && (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET') || type.includes('DEFINESBYTYPE'))) return true;
       if (relationshipFilters.showAssociates && (type.includes('ASSOCIATES') || type.includes('CLASSIFICATION') || type.includes('MATERIAL'))) return true;
@@ -197,14 +197,31 @@ export function GraphVisualization({
     };
 
     const filteredNodes = lodResult.filteredData.nodes.filter(node => {
-      if (!isRelationshipNode(node)) return true;
-      return isRelationshipAllowed(node.ifcType || '');
+      // Always keep relationship nodes visible (they are structural elements in LPG model)
+      // Their edges will be filtered separately
+      if (isRelationshipNode(node)) return true;
+      return true;
     });
 
     const nodeIdSet = new Set(filteredNodes.map(n => n.id));
-    const filteredEdges = lodResult.filteredData.edges.filter(edge =>
-      nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target)
-    );
+    const filteredEdges = lodResult.filteredData.edges.filter(edge => {
+      // Must have both source and target in filtered nodes
+      if (!nodeIdSet.has(edge.source) || !nodeIdSet.has(edge.target)) return false;
+
+      // Apply relationship type filters to edges involving relationship nodes
+      const sourceNode = filteredNodes.find(n => n.id === edge.source);
+      const targetNode = filteredNodes.find(n => n.id === edge.target);
+      const isSourceRel = sourceNode && isRelationshipNode(sourceNode);
+      const isTargetRel = targetNode && isRelationshipNode(targetNode);
+
+      // If edge involves relationship node(s), check if relationship type is allowed
+      if (isSourceRel || isTargetRel) {
+        const relType = (edge.relationshipType || edge.type || '').toUpperCase();
+        return isRelationshipAllowed(relType);
+      }
+
+      return true;
+    });
 
     return { nodes: filteredNodes, edges: filteredEdges };
   }, [data, graphLoD, includeAuxiliaryLayer, relationshipFilters]);
@@ -865,7 +882,8 @@ export function GraphVisualization({
         // Draw relationship label on edge
         const relationshipType = (link as any).relationshipType || (link as any).type || (link as any).label || '';
         const showRelNodeLabels = sourceIsRel || targetIsRel;
-        const shouldRenderLabel = showRelNodeLabels && (isFocusMode || isPathEdge || isInverseEdge) && globalScale > 1.5;
+        // Show labels when zoom is sufficient, or always show for path/focused edges
+        const shouldRenderLabel = relationshipType && (globalScale > 1.2 || isPathEdge || isFocusMode);
         if (shouldRenderLabel && relationshipType) {
           const midX = (sx + tx) / 2;
           const midY = (sy + ty) / 2;
@@ -1209,6 +1227,10 @@ export function GraphVisualization({
     },
     [finalFilteredData.nodes, handleNodeClick, onNodeClick]
   );
+
+
+  // Graph rendering without artificial size limitations
+
 
   return (
     <div ref={containerRef} className="w-full h-full grid-pattern gradient-radial">
