@@ -298,6 +298,7 @@ export function convertToGraph(
         target: nodeId,
         type: 'child',
         label: 'contains',
+        relationshipType: 'CHILD',
       });
     }
 
@@ -323,6 +324,7 @@ export function convertToGraph(
               target: refId,
               type: 'reference',
               label: key,
+              relationshipType: 'REFERENCE',
             });
           }
         }

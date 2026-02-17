@@ -1,6 +1,13 @@
 /**
  * Export utilities for IFC Graph data
  * Supports multiple export formats: JSON, CSV, SVG, PNG
+ * 
+ * IMPORTANT: Data type distinction
+ * - Enriched data (graphData): Contains _schemaColor and visualization metadata
+ * - Pure data (allEntities): 1:1 with IFC file, no modifications
+ * 
+ * Current exports use enriched graph data for visualization purposes.
+ * For pure IFC data export, pass allEntities directly instead of graphData.nodes
  */
 
 import { GraphNode, GraphEdge } from '@/types/graph';
@@ -10,6 +17,8 @@ export type ExportFormat = 'json' | 'csv-nodes' | 'csv-edges' | 'svg' | 'png';
 
 /**
  * Export graph data to JSON
+ * Note: Exports enriched graph data (includes visualization metadata like _schemaColor)
+ * For pure IFC data, pass allEntities instead of graphData.nodes
  */
 export function exportToJSON(
   nodes: GraphNode[],

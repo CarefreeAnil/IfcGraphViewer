@@ -6,6 +6,8 @@
  * inheritance hierarchies, and links to official documentation.
  */
 
+import { generateDocsUrl } from '@/lib/docsLinkGenerator';
+
 export interface IFCPropertyDefinition {
   name: string;
   description: string;
@@ -29,7 +31,6 @@ export interface IFCEntityDefinition {
   inheritance: string[];
   introducedIn: string;
   deprecatedIn?: string;
-  docsUrl: string;
   icon: string;
   properties: IFCPropertyDefinition[];
   relatedPropertySets: string[];
@@ -47,7 +48,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'context',
     inheritance: ['IfcContext', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifckernel/lexical/ifcproject.htm',
     icon: 'FolderKanban',
     properties: [
       { name: 'GlobalId', description: 'Unique 22-character identifier (GUID)', dataType: 'IfcGloballyUniqueId', isRequired: true, example: '0YvctVUKr0kugbFTf53O9L' },
@@ -69,7 +69,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'spatial',
     inheritance: ['IfcSpatialStructureElement', 'IfcSpatialElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcsite.htm',
     icon: 'MapPin',
     properties: [
       { name: 'Name', description: 'Site name or identifier', dataType: 'IfcLabel', isRequired: false },
@@ -80,6 +79,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_SiteCommon', 'Pset_Address'],
     usageNotes: 'The site aggregates buildings and can contain site-specific elements like roads, landscaping, and utilities.',
+    examples: ['Urban construction site', 'Suburban residential lot', 'Industrial campus', 'Infrastructure corridor'],
   },
 
   IFCBUILDING: {
@@ -89,7 +89,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'spatial',
     inheritance: ['IfcSpatialStructureElement', 'IfcSpatialElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcbuilding.htm',
     icon: 'Building2',
     properties: [
       { name: 'Name', description: 'Building name or number', dataType: 'IfcLabel', isRequired: false, example: 'Building A' },
@@ -99,6 +98,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_BuildingCommon', 'Pset_BuildingUse'],
     usageNotes: 'Buildings are decomposed into storeys via IFCRELAGGREGATES. Building services may span multiple storeys.',
+    examples: ['Office building', 'Apartment complex', 'Warehouse', 'Mixed-use development', 'School building'],
   },
 
   IFCBUILDINGSTOREY: {
@@ -108,7 +108,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'spatial',
     inheritance: ['IfcSpatialStructureElement', 'IfcSpatialElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcbuildingstorey.htm',
     icon: 'Layers',
     properties: [
       { name: 'Name', description: 'Storey name or level designation', dataType: 'IfcLabel', isRequired: false, example: 'Level 1', },
@@ -116,6 +115,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_BuildingStoreyCommon'],
     usageNotes: 'Elements are assigned to storeys via IFCRELCONTAINEDINSPATIALSTRUCTURE. Elevation is typically measured from ground level.',
+    examples: ['Ground floor', 'First floor', 'Basement level', 'Mezzanine', 'Roof level'],
   },
 
   IFCSPACE: {
@@ -125,7 +125,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'spatial',
     inheritance: ['IfcSpatialStructureElement', 'IfcSpatialElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcspace.htm',
     icon: 'Square',
     properties: [
       { name: 'Name', description: 'Space name or room number', dataType: 'IfcLabel', isRequired: false, example: 'Room 101' },
@@ -134,6 +133,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_SpaceCommon', 'Pset_SpaceOccupancyRequirements', 'Pset_SpaceThermalRequirements'],
     usageNotes: 'Spaces are used for area calculations, thermal analysis, and facility management. They can contain furniture and equipment.',
+    examples: ['Office room', 'Meeting room', 'Corridor', 'Bathroom', 'Lobby', 'Storage room'],
   },
 
   // ===== BUILDING ELEMENTS =====
@@ -144,7 +144,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcwall.htm',
     icon: 'Square',
     properties: [
       { name: 'Name', description: 'Wall identifier or name', dataType: 'IfcLabel', isRequired: false },
@@ -163,13 +162,13 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     inheritance: ['IfcWall', 'IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
     deprecatedIn: 'IFC4',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC2x3/TC1/HTML/ifcsharedbldgelements/lexical/ifcwallstandardcase.htm',
     icon: 'Square',
     properties: [
       { name: 'Name', description: 'Wall identifier', dataType: 'IfcLabel', isRequired: false },
     ],
     relatedPropertySets: ['Pset_WallCommon'],
     usageNotes: 'Deprecated in IFC4. Use IfcWall with PredefinedType=STANDARD instead.',
+    examples: ['Straight vertical wall', 'Simple partition wall'],
   },
 
   IFCDOOR: {
@@ -179,7 +178,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcdoor.htm',
     icon: 'DoorOpen',
     properties: [
       { name: 'Name', description: 'Door identifier', dataType: 'IfcLabel', isRequired: false },
@@ -200,7 +198,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcwindow.htm',
     icon: 'Square',
     properties: [
       { name: 'Name', description: 'Window identifier', dataType: 'IfcLabel', isRequired: false },
@@ -221,7 +218,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcslab.htm',
     icon: 'Minus',
     properties: [
       { name: 'Name', description: 'Slab identifier', dataType: 'IfcLabel', isRequired: false },
@@ -239,7 +235,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifccolumn.htm',
     icon: 'Pilcrow',
     properties: [
       { name: 'Name', description: 'Column identifier', dataType: 'IfcLabel', isRequired: false },
@@ -247,6 +242,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_ColumnCommon', 'Pset_ConcreteElementGeneral'],
     usageNotes: 'Columns are typically part of the structural frame. Cross-section is defined by the profile.',
+    examples: ['Reinforced concrete column', 'Steel I-section column', 'Square concrete pillar', 'Circular column'],
   },
 
   IFCBEAM: {
@@ -256,7 +252,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcbeam.htm',
     icon: 'Minus',
     properties: [
       { name: 'Name', description: 'Beam identifier', dataType: 'IfcLabel', isRequired: false },
@@ -264,6 +259,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_BeamCommon', 'Pset_ConcreteElementGeneral'],
     usageNotes: 'Beams support slabs and transfer loads to columns. Profile defines the cross-sectional shape.',
+    examples: ['Steel I-beam', 'Reinforced concrete beam', 'Timber joist', 'Lintel above window', 'T-beam'],
   },
 
   IFCROOF: {
@@ -273,7 +269,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcroof.htm',
     icon: 'Home',
     properties: [
       { name: 'Name', description: 'Roof identifier', dataType: 'IfcLabel', isRequired: false },
@@ -281,6 +276,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_RoofCommon'],
     usageNotes: 'A roof may aggregate multiple slabs representing different roof surfaces.',
+    examples: ['Pitched gable roof', 'Flat roof', 'Hip roof', 'Mansard roof', 'Green roof'],
   },
 
   IFCOPENINGELEMENT: {
@@ -290,7 +286,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcFeatureElementSubtraction', 'IfcFeatureElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcopeningelement.htm',
     icon: 'SquareDashed',
     properties: [
       { name: 'Name', description: 'Opening identifier', dataType: 'IfcLabel', isRequired: false },
@@ -298,6 +293,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: [],
     usageNotes: 'Connected to walls via IFCRELVOIDSELEMENT. Doors/windows fill openings via IFCRELFILLSELEMENT.',
+    examples: ['Door opening in wall', 'Window opening', 'Service penetration', 'Shaft opening in slab'],
   },
 
   IFCSTAIR: {
@@ -307,7 +303,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'element',
     inheritance: ['IfcBuildingElement', 'IfcElement', 'IfcProduct', 'IfcObject', 'IfcObjectDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcstair.htm',
     icon: 'ArrowUpFromLine',
     properties: [
       { name: 'Name', description: 'Stair identifier', dataType: 'IfcLabel', isRequired: false },
@@ -315,6 +310,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: ['Pset_StairCommon'],
     usageNotes: 'A stair aggregates stair flights and landings via IFCRELAGGREGATES.',
+    examples: ['Straight run stair', 'L-shaped stair with landing', 'Spiral staircase', 'U-shaped stair', 'Curved stair'],
   },
 
   // ===== RELATIONSHIP ENTITIES =====
@@ -325,7 +321,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelDecomposes', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifckernel/lexical/ifcrelaggregates.htm',
     icon: 'GitBranch',
     properties: [
       { name: 'RelatingObject', description: 'The parent/container object', dataType: 'IfcObjectDefinition', isRequired: true },
@@ -343,7 +338,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelConnects', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcrelcontainedinspatialstructure.htm',
     icon: 'FolderInput',
     properties: [
       { name: 'RelatingStructure', description: 'The spatial container (storey, space)', dataType: 'IfcSpatialStructureElement', isRequired: true },
@@ -361,7 +355,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelDefines', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifckernel/lexical/ifcreldefinesbyproperties.htm',
     icon: 'FileText',
     properties: [
       { name: 'RelatingPropertyDefinition', description: 'The property set or quantity set', dataType: 'IfcPropertySetDefinitionSelect', isRequired: true },
@@ -379,7 +372,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelAssociates', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcrelassociatesmaterial.htm',
     icon: 'Layers',
     properties: [
       { name: 'RelatingMaterial', description: 'The material or material set', dataType: 'IfcMaterialSelect', isRequired: true },
@@ -397,7 +389,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelDecomposes', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcrelvoidselement.htm',
     icon: 'SquareDashed',
     properties: [
       { name: 'RelatingBuildingElement', description: 'Element with the void (wall)', dataType: 'IfcElement', isRequired: true },
@@ -415,7 +406,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelConnects', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcrelfillselement.htm',
     icon: 'SquareCheck',
     properties: [
       { name: 'RelatingOpeningElement', description: 'The opening to be filled', dataType: 'IfcOpeningElement', isRequired: true },
@@ -433,7 +423,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'relationship',
     inheritance: ['IfcRelDefines', 'IfcRelationship', 'IfcRoot'],
     introducedIn: 'IFC2x3',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifckernel/lexical/ifcreldefinesbytype.htm',
     icon: 'Copy',
     properties: [
       { name: 'RelatingType', description: 'The type object', dataType: 'IfcTypeObject', isRequired: true },
@@ -452,7 +441,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'property',
     inheritance: ['IfcPropertySetDefinition', 'IfcPropertyDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifckernel/lexical/ifcpropertyset.htm',
     icon: 'List',
     properties: [
       { name: 'Name', description: 'Property set name (e.g., Pset_WallCommon)', dataType: 'IfcLabel', isRequired: true },
@@ -470,7 +458,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'property',
     inheritance: ['IfcSimpleProperty', 'IfcProperty'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcpropertyresource/lexical/ifcpropertysinglevalue.htm',
     icon: 'Hash',
     properties: [
       { name: 'Name', description: 'Property name', dataType: 'IfcIdentifier', isRequired: true, example: 'IsExternal' },
@@ -489,7 +476,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'property',
     inheritance: ['IfcQuantitySet', 'IfcPropertySetDefinition', 'IfcPropertyDefinition', 'IfcRoot'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcelementquantity.htm',
     icon: 'Calculator',
     properties: [
       { name: 'Name', description: 'Quantity set name', dataType: 'IfcLabel', isRequired: true, example: 'Qto_WallBaseQuantities' },
@@ -509,7 +495,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'resource',
     inheritance: ['IfcMaterialDefinition'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcmaterialresource/lexical/ifcmaterial.htm',
     icon: 'Circle',
     properties: [
       { name: 'Name', description: 'Material name', dataType: 'IfcLabel', isRequired: true, example: 'Concrete' },
@@ -528,7 +513,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'resource',
     inheritance: ['IfcMaterialDefinition'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcmaterialresource/lexical/ifcmateriallayer.htm',
     icon: 'Layers',
     properties: [
       { name: 'Material', description: 'The layer material', dataType: 'IfcMaterial', isRequired: false },
@@ -548,7 +532,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'resource',
     inheritance: ['IfcMaterialDefinition'],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcmaterialresource/lexical/ifcmateriallayerset.htm',
     icon: 'Layers',
     properties: [
       { name: 'MaterialLayers', description: 'Ordered list of layers', dataType: 'LIST OF IfcMaterialLayer', isRequired: true },
@@ -567,7 +550,6 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     category: 'context',
     inheritance: [],
     introducedIn: 'IFC2x',
-    docsUrl: 'https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcutilityresource/lexical/ifcownerhistory.htm',
     icon: 'History',
     properties: [
       { name: 'OwningUser', description: 'Person and organization', dataType: 'IfcPersonAndOrganization', isRequired: true },
@@ -578,6 +560,7 @@ export const IFC_ENTITY_DEFINITIONS: Record<string, IFCEntityDefinition> = {
     ],
     relatedPropertySets: [],
     usageNotes: 'Attached to all IfcRoot objects. Enables tracking who created/modified elements and when.',
+    examples: ['Wall created by Architect on 2024-01-15', 'Door modified by Engineer on 2024-02-10', 'Slab added by BIM Coordinator'],
   },
 };
 
@@ -716,7 +699,7 @@ export function formatInheritanceChain(inheritance: string[]): string {
 }
 
 // Get docs URL for an entity type
-export function getDocsUrl(type: string): string {
-  const entityDef = getEntityDefinition(type);
-  return entityDef?.docsUrl || `https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/`;
+// Automatically generates the URL based on entity name and schema version
+export function getDocsUrl(type: string, schemaVersion: string = 'IFC4'): string {
+  return generateDocsUrl(type, schemaVersion);
 }

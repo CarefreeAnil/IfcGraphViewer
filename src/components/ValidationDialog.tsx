@@ -4,16 +4,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from '@/components/ui/button';
 import { ValidationReport } from '@/components/ValidationReport';
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
+import { GraphNode } from '@/types/graph';
 
 interface ValidationDialogProps {
   validation?: ValidationResult;
   hasErrors?: boolean;
   onValidate?: () => void;
   isValidating?: boolean;
+  nodes?: GraphNode[];
+  onEntityClick?: (entityId: string) => void;
 }
 
-export function ValidationDialog({ validation, hasErrors, onValidate, isValidating }: ValidationDialogProps) {
+export function ValidationDialog({ validation, hasErrors, onValidate, isValidating, nodes, onEntityClick }: ValidationDialogProps) {
   const [open, setOpen] = useState(false);
+
+  // Handler to close dialog and navigate to entity
+  const handleEntityClick = (entityId: string) => {
+    setOpen(false); // Close the dialog first
+    onEntityClick?.(entityId); // Then navigate
+  };
 
   // If no validation has been run, show validate button
   if (!validation) {
@@ -64,7 +73,7 @@ export function ValidationDialog({ validation, hasErrors, onValidate, isValidati
           </DialogTitle>
         </DialogHeader>
         <div className="mt-4">
-          <ValidationReport result={validation} />
+          <ValidationReport result={validation} nodes={nodes} onEntityClick={handleEntityClick} />
         </div>
       </DialogContent>
     </Dialog>

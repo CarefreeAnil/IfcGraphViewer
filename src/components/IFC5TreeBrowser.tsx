@@ -4,10 +4,11 @@
  */
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, ChevronDown, Box, Circle, Minus, Database } from 'lucide-react';
+import { ChevronRight, ChevronDown, Box, Circle, Minus, Database, BarChart3 } from 'lucide-react';
 import { ComposedObject } from '@/types/ifc5';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { VirtualList } from '@/components/VirtualList';
 
 interface IFC5TreeBrowserProps {
@@ -65,6 +66,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const displayName = node.name.split('/').pop() || node.name || 'root';
 
   const handleClick = () => {
+    console.log('[IFC5TreeBrowser] Node clicked:', node.name);
     onNodeSelect?.(node.name, node);
   };
 
@@ -136,6 +138,7 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [showStats, setShowStats] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [containerHeight, setContainerHeight] = useState(400);
@@ -259,20 +262,51 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
 
   React.useEffect(() => {
     if (!selectedPath || !listRef.current) return;
-    const index = visibleNodes.findIndex((item) => item.node.name === selectedPath);
-    if (index === -1) return;
-    const targetTop = Math.max(0, index * itemHeight - containerHeight / 2 + itemHeight / 2);
-    listRef.current.scrollTo({ top: targetTop, behavior: 'smooth' });
-  }, [selectedPath, visibleNodes, containerHeight]);
+    
+    // Ensure the selected item's parent is expanded
+    const pathParts = selectedPath.split('/');
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const parentPath = pathParts.slice(0, i + 1).join('/');
+      setExpandedNodes(prev => new Set([...prev, parentPath]));
+    }
+  }, [selectedPath]);
+
+  // Separate effect for scrolling - only trigger on selectedPath change, not visibleNodes change
+  React.useEffect(() => {
+    if (!selectedPath || !listRef.current) return;
+    
+    // Find and scroll to the selected item
+    // Use a small delay to ensure visibleNodes is updated with expanded parents
+    const timeoutId = setTimeout(() => {
+      const index = visibleNodes.findIndex((item) => item.node.name === selectedPath);
+      if (index !== -1 && listRef.current) {
+        const targetTop = Math.max(0, index * itemHeight - containerHeight / 2 + itemHeight / 2);
+        listRef.current.scrollTop = targetTop;
+      }
+    }, 50);
+    
+    return () => clearTimeout(timeoutId);
+  }, [selectedPath, itemHeight, containerHeight]);
 
   return (
     <div className="flex flex-col h-full bg-card">
       <div className="p-4 border-b space-y-3 bg-card">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">IFC5 Model Tree</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Navigate the IFC5 (.ifcx) structure
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">IFC5 Model Tree</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Navigate the IFC5 (.ifcx) structure
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowStats(!showStats)}
+            className="h-7 px-2"
+            title="Toggle Statistics"
+          >
+            <BarChart3 className={`w-3 h-3 ${showStats ? 'text-primary' : ''}`} />
+          </Button>
         </div>
 
         <Input
@@ -283,36 +317,26 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
           className="h-8 text-sm"
         />
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-blue-500/30">
-            <Box className="w-4 h-4 text-blue-500" />
-            <div>
-              <div className="font-medium text-foreground">Meshes</div>
-              <div className="text-muted-foreground">{stats.meshCount}</div>
+        {showStats && (
+          <div className="flex items-center gap-2 text-xs px-1">
+            <div className="flex items-center gap-1">
+              <Box className="w-3 h-3 text-blue-500" />
+              <span className="text-muted-foreground">{stats.meshCount}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Minus className="w-3 h-3 text-green-500" />
+              <span className="text-muted-foreground">{stats.curveCount}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Circle className="w-3 h-3 text-purple-500" />
+              <span className="text-muted-foreground">{stats.pointsCount}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Database className="w-3 h-3 text-gray-500" />
+              <span className="text-muted-foreground">{stats.groupCount}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-green-500/30">
-            <Minus className="w-4 h-4 text-green-500" />
-            <div>
-              <div className="font-medium text-foreground">Curves</div>
-              <div className="text-muted-foreground">{stats.curveCount}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-purple-500/30">
-            <Circle className="w-4 h-4 text-purple-500" />
-            <div>
-              <div className="font-medium text-foreground">Points</div>
-              <div className="text-muted-foreground">{stats.pointsCount}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-2 bg-secondary rounded border border-gray-500/30">
-            <Database className="w-4 h-4 text-gray-500" />
-            <div>
-              <div className="font-medium text-foreground">Groups</div>
-              <div className="text-muted-foreground">{stats.groupCount}</div>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
       <div ref={listContainerRef} className="flex-1 bg-card">

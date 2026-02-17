@@ -1,6 +1,4 @@
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
-import { validateIFC5JSONStructure } from '@/lib/ifcValidator';
-import { ValidationError, ValidationResult } from '@/lib/ifcValidatorEnhanced';
 
 /**
  * IFC5 Parser - Handles JSON-based .ifcx files
@@ -166,48 +164,6 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
     });
     
     const endTime = performance.now();
-
-    // Validate JSON structure only (IFC5 semantic validation is different from IFC4)
-    const baseValidationErrors = validateIFC5JSONStructure(jsonData);
-    
-    // Convert to enhanced validation errors with code field
-    const syntaxErrors: ValidationError[] = baseValidationErrors.map((err: any) => ({
-      severity: err.severity || 'error',
-      type: err.type || 'SYNTAX_ERROR',
-      code: err.code || 'IFC5_JSON_SYNTAX',
-      message: err.message,
-      entityId: err.entityId,
-      entityType: err.entityType,
-      lineNumber: err.lineNumber,
-    }));
-    
-    // Create validation result for IFC5 (only JSON structure checks)
-    const validation: ValidationResult = {
-      valid: syntaxErrors.length === 0,
-      schemaVersion: 'IFC5',
-      errors: syntaxErrors,
-      warnings: [],
-      info: [{
-        severity: 'info',
-        type: 'IFC5_FORMAT',
-        code: 'IFC5_JSON_FORMAT',
-        message: `IFC5 (JSON) format detected. Semantic validation rules are specific to IFC4 STEP format.`,
-      }],
-      stats: {
-        totalErrors: syntaxErrors.length,
-        totalWarnings: 0,
-        totalInfo: 1,
-        checkedEntities: nodes.length,
-        checkedRelationships: edges.length,
-        checkedProperties: 0,
-        entityTypeCount: {},
-        relationshipTypeCount: {},
-        missingRequiredProperties: 0,
-        invalidDataTypes: 0,
-        brokenReferences: 0,
-        circularReferences: 0,
-      },
-    };
     
     return {
       graphData: { nodes, edges },
@@ -221,8 +177,8 @@ export async function parseIFC5File(file: File): Promise<ParsedIFCData> {
         relationshipCount: edges.length,
         parseTime: endTime - startTime,
         ifcHeader: fileHeader,
+        isIFC5: true,
       },
-      validation,
     };
   } catch (error) {
     console.error('Error parsing IFC5 file:', error);
