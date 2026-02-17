@@ -1,10 +1,8 @@
-# IFC Graph Viewer - Master's Thesis POC
-
 **Proof of Concept: Developing a Unified Web-Based Platform for IFC Graph Visualization, Exploration, and Validation**
 
 ## About This Thesis Work
 
-### Thesis Overview
+### POC Overview
 The Industry Foundation Classes (IFC) schema underpins openBIM workflows, but tooling for schema exploration and validation is fragmented. Learners and practitioners lack a unified, accessible interface for understanding IFC structures across versions and for validating models efficiently. This thesis proposes a **client-side, web-based platform** that consolidates:
 
 - **Graph Visualization** - Interactive force-directed graphs showing entity relationships
