@@ -665,7 +665,7 @@ const Index = () => {
                   Transform IFC to <span className="text-gradient">Graph</span>
                 </h2>
                 <p className="text-muted-foreground max-w-md mx-auto">
-                  Upload an IFC file to parse its structure into a graph database
+                  Upload an IFC file to parse its structure into a graph
                   and visualize relationships between building elements.
                 </p>
               </div>
