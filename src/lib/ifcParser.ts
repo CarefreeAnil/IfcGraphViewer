@@ -239,7 +239,6 @@ const IFC_TYPE_MAPPING: Record<number, NodeType> = {
   [WebIFC.IFCRELASSOCIATESLIBRARY]: 'relationship',  // ADDED: Library associations
   [WebIFC.IFCRELSPACEBOUNDARY]: 'relationship',  // ADDED: Space boundary relationships
   [WebIFC.IFCRELCONNECTS]: 'relationship',  // ADDED: Generic connects
-  [WebIFC.IFCRELCONNECTSTOREVISIONCONTROL]: 'relationship',  // ADDED: Revision control
   [WebIFC.IFCRELDECLARES]: 'relationship',  // ADDED: Declaration relationships
   // Property and quantity entities - these have type codes in WebIFC
   ...(WebIFC.IFCPROPERTYSET !== undefined && { [WebIFC.IFCPROPERTYSET]: 'property' }),
