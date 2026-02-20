@@ -6,12 +6,12 @@
 import { ExternalLink, AlertCircle, AlertTriangle, Info, ChevronDown, Code2, Link } from 'lucide-react';
 import { ValidationError } from '../../../src/lib/ifcValidatorEnhanced';
 import { GraphNode } from '../../../src/types/graph';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../src/components/ui/collapsible';
+import { Badge } from '../../../src/components/ui/badge';
+import { Button } from '../../../src/components/ui/button';
+import { Card } from '../../../src/components/ui/card';
+import { Checkbox } from '../../../src/components/ui/checkbox';
+import { ScrollArea } from '../../../src/components/ui/scroll-area';
 import {
   formatStepId,
   getSeverityDisplay,
@@ -277,13 +277,13 @@ export function SchemaResults({
         <Checkbox
           id="include-passed-schema"
           checked={includeNonErrors}
-          onCheckedChange={(checked) => setIncludeNonErrors(checked === true)}
+          onCheckedChange={(checked: boolean) => setIncludeNonErrors(checked === true)}
         />
         <label
           htmlFor="include-passed-schema"
           className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
         >
-          Include Passed, Disabled and N/A
+           Include Passed, Disabled and N/A
         </label>
       </div>
 

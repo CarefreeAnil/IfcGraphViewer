@@ -188,6 +188,13 @@ const Index = () => {
     }
   }, [learningMode, learningSample?.hasGuidedLearning, parsedData, isIFC5]);
 
+  // Reset lastLoadedIFC5Ref when viewer is unloaded so object reloads when viewer is reloaded
+  useEffect(() => {
+    if (!viewer3DLoaded && isIFC5) {
+      lastLoadedIFC5Ref.current = null;
+    }
+  }, [viewer3DLoaded, isIFC5]);
+
   // Load composed object once viewer is initialized (avoid repeated re-fit)
   useEffect(() => {
     if (!isIFC5 || !viewer3DInitialized || !parsedData?.rawData?.composedObject) {
@@ -608,8 +615,9 @@ const Index = () => {
   }, [parsedData?.allEntities, parsedData?.geometryEntities, parsedData?.rawData?.rawStepLines]);
 
   // Memoize filtered graph data for progressive learning
+  // Only apply progressive filtering for guided learning samples
   const filteredGraphDataForLearning = useMemo(() => {
-    if (!parsedData?.graphData || !learningMode) {
+    if (!parsedData?.graphData || !learningMode || !learningSample?.hasGuidedLearning) {
       return parsedData?.graphData || { nodes: [], edges: [] };
     }
     return getProgressiveGraphData(
@@ -617,9 +625,9 @@ const Index = () => {
       parsedData.graphData.edges,
       currentLearningLayer
     );
-  }, [parsedData?.graphData, learningMode, currentLearningLayer]);
+  }, [parsedData?.graphData, learningMode, learningSample?.hasGuidedLearning, currentLearningLayer]);
 
-  // Use filtered graph data in learning mode, full graph otherwise
+  // Use filtered graph data in learning mode (only for guided samples), full graph otherwise
   const displayGraphData = learningMode ? filteredGraphDataForLearning : (parsedData?.graphData || { nodes: [], edges: [] });
 
   return (

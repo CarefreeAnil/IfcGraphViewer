@@ -4,14 +4,14 @@
  */
 
 import { ExternalLink, AlertCircle, AlertTriangle, Info, ChevronDown } from 'lucide-react';
-import { ValidationError } from '@/lib/ifcValidatorEnhanced';
-import { GraphNode } from '@/types/graph';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ValidationError } from '../../../src/lib/ifcValidatorEnhanced';
+import { GraphNode } from '../../../src/types/graph';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../src/components/ui/collapsible';
+import { Badge } from '../../../src/components/ui/badge';
+import { Button } from '../../../src/components/ui/button';
+import { Card } from '../../../src/components/ui/card';
+import { Checkbox } from '../../../src/components/ui/checkbox';
+import { ScrollArea } from '../../../src/components/ui/scroll-area';
 import {
   groupByRuleCode,
   formatStepId,
@@ -110,7 +110,7 @@ export function BuildingSmartResults({
           <Checkbox
             id="include-info"
             checked={includeInfoResults}
-            onCheckedChange={(checked) => setIncludeInfoResults(checked === true)}
+            onCheckedChange={(checked: boolean) => setIncludeInfoResults(checked === true)}
           />
           <label
             htmlFor="include-info"
@@ -301,7 +301,7 @@ export function BuildingSmartResults({
         ))}
       </div>
 
-      {ruleGroups.length === 0 && includeNonErrors && (
+      {ruleGroups.length === 0 && includeInfoResults && (
         <div className="p-8 border rounded-lg bg-green-50 text-center">
           <Info className="w-10 h-10 text-green-500 mx-auto mb-2" />
           <p className="text-green-800 font-medium">

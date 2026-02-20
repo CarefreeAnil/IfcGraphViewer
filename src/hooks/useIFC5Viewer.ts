@@ -3,7 +3,7 @@
  * Handles 3D visualization of IFC5 composed objects
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -39,6 +39,15 @@ export function useIFC5Viewer(
   const selectedPathRef = useRef<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Trigger cleanup when active becomes false
+  useEffect(() => {
+    if (active === false && cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+  }, [active]);
 
   // Initialize scene when active and container has size
   useEffect(() => {
@@ -191,6 +200,21 @@ export function useIFC5Viewer(
         window.removeEventListener('resize', handleResize);
         renderer.domElement.removeEventListener('click', handleCanvasClick);
 
+        // Dispose all geometries and materials in the scene
+        if (sceneRef.current) {
+          sceneRef.current.traverse((obj) => {
+            if (obj instanceof THREE.Mesh) {
+              obj.geometry?.dispose();
+              const mat = obj.material;
+              if (Array.isArray(mat)) {
+                mat.forEach((m) => m.dispose());
+              } else {
+                mat?.dispose();
+              }
+            }
+          });
+        }
+
         if (renderer && container.contains(renderer.domElement)) {
           container.removeChild(renderer.domElement);
         }
@@ -200,10 +224,12 @@ export function useIFC5Viewer(
         cameraRef.current = null;
         rendererRef.current = null;
         controlsRef.current = null;
+        objectMapRef.current.clear(); // Clear object references
+        lastLoadedRootRef.current = null; // Reset so object will reload when viewer reinitializes
       };
 
-      // Store cleanup on ref for effect cleanup
-      (container as any)._ifc5Cleanup = cleanup;
+      // Store cleanup for triggering when active becomes false
+      cleanupRef.current = cleanup;
     };
 
     tryInit();
@@ -213,11 +239,7 @@ export function useIFC5Viewer(
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
       }
-      const container = containerRef.current as any;
-      if (container?._ifc5Cleanup) {
-        container._ifc5Cleanup();
-        delete container._ifc5Cleanup;
-      }
+      // Cleanup is handled by the cleanup effect, not here
     };
   }, [active, containerRef]);
 
@@ -429,7 +451,7 @@ export function useIFC5Viewer(
   };
 
   // Load composed object
-  const loadComposedObject = (root: ComposedObject) => {
+  const loadComposedObject = useCallback((root: ComposedObject) => {
     console.log('[loadComposedObject] Called with root:', root?.name, { scene: sceneRef.current, camera: cameraRef.current, controls: controlsRef.current });
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) {
       console.warn('[loadComposedObject] Scene not initialized, returning');
@@ -511,10 +533,10 @@ export function useIFC5Viewer(
     } else {
       console.warn('[loadComposedObject] Model bounding box is empty');
     }
-  };
+  }, []);
 
   // Select object by path
-  const selectObject = (path: string | null) => {
+  const selectObject = useCallback((path: string | null) => {
     // Unhighlight previous selection
     if (selectedPathRef.current) {
       const prevObj = objectMapRef.current.get(selectedPathRef.current);
@@ -533,7 +555,7 @@ export function useIFC5Viewer(
         highlightObject(obj);
       }
     }
-  };
+  }, []);
 
   // Highlight object
   const highlightObject = (obj: THREE.Object3D) => {

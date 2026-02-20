@@ -186,6 +186,7 @@ export function calculateProgress(progress: LearningProgress): number {
 /**
  * Get progressive graph data filtered by learning layer
  * Shows only nodes and edges relevant to the current layer and all previous layers
+ * Includes relationship nodes that bridge visible entities
  */
 export function getProgressiveGraphData(
   nodes: GraphNode[],
@@ -214,20 +215,65 @@ export function getProgressiveGraphData(
     layerEntityTypes[layerOrder[i]].forEach(type => visibleEntityTypes.add(type));
   }
 
-  // Filter nodes: keep only nodes matching visible entity types
-  const filteredNodes = nodes.filter(node => {
+  // Build a map of node ID to node for quick lookup
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+  // Helper to check if a node is a relationship node
+  const isRelationshipNode = (nodeId: string): boolean => {
+    const node = nodeMap.get(nodeId);
+    if (!node) return false;
     const entityType = node.ifcType || node.type || '';
-    return Array.from(visibleEntityTypes).some(type =>
+    return entityType.toLowerCase().includes('ifcrel');
+  };
+
+  // First pass: identify core visible nodes (matching explicit layer entity types)
+  const visibleNodeIds = new Set<string>();
+  nodes.forEach(node => {
+    const entityType = node.ifcType || node.type || '';
+    if (Array.from(visibleEntityTypes).some(type =>
       entityType.toLowerCase().includes(type.toLowerCase())
-    );
+    )) {
+      visibleNodeIds.add(node.id);
+    }
   });
 
-  const visibleNodeIds = new Set(filteredNodes.map(n => n.id));
+  // Second pass: iteratively identify relationship nodes that can be used by visible nodes
+  // and other relationship nodes that lead to visible nodes
+  const relationshipNodesToInclude = new Set<string>();
+  let previousRoundCount = -1;
+  
+  // Iterate until we've stabilized (no new nodes added)
+  while (previousRoundCount !== relationshipNodesToInclude.size) {
+    previousRoundCount = relationshipNodesToInclude.size;
+    
+    edges.forEach(edge => {
+      const sourceInVisibleOrRel = visibleNodeIds.has(edge.source) || relationshipNodesToInclude.has(edge.source);
+      const targetInVisibleOrRel = visibleNodeIds.has(edge.target) || relationshipNodesToInclude.has(edge.target);
+      
+      // If source is visible/included and target is a relationship, include the relationship
+      if (sourceInVisibleOrRel && isRelationshipNode(edge.target)) {
+        relationshipNodesToInclude.add(edge.target);
+      }
+      
+      // If target is visible/included and source is a relationship, include the relationship
+      if (targetInVisibleOrRel && isRelationshipNode(edge.source)) {
+        relationshipNodesToInclude.add(edge.source);
+      }
+    });
+  }
+
+  // Combine core visible nodes with included relationship nodes
+  const finalVisibleNodeIds = new Set([...visibleNodeIds, ...relationshipNodesToInclude]);
+
+  // Filter nodes: keep only the final set of visible nodes
+  const filteredNodes = nodes.filter(node => finalVisibleNodeIds.has(node.id));
 
   // Filter edges: keep only edges where BOTH source and target nodes are visible
   const filteredEdges = edges.filter(edge =>
-    visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+    finalVisibleNodeIds.has(edge.source) && finalVisibleNodeIds.has(edge.target)
   );
+
+  console.log(`[Learning] Layer: ${currentLayer}, Visible entities: ${visibleNodeIds.size}, Relationship nodes: ${relationshipNodesToInclude.size}, Total nodes: ${filteredNodes.length}, Edges: ${filteredEdges.length}`);
 
   return {
     nodes: filteredNodes,
