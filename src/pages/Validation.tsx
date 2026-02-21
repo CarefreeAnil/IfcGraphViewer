@@ -595,24 +595,6 @@ const Validation = () => {
                   <div className="text-center py-12">
                     <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
                     <p className="text-lg font-semibold text-destructive mb-4">{validationResults.message}</p>
-
-                    {/* Show backend server instructions if the error is about connection */}
-                    {validationResults.message?.toLowerCase().includes('backend') && (
-                      <div className="mt-6 text-left bg-muted p-6 rounded-lg max-w-2xl mx-auto">
-                        <h4 className="font-semibold mb-3 text-sm">How to start the backend server:</h4>
-                        <div className="space-y-2 text-xs text-muted-foreground font-mono">
-                          <p className="bg-background p-2 rounded border">1. Open a terminal/command prompt</p>
-                          <p className="bg-background p-2 rounded border">2. cd bSValidate</p>
-                          <p className="bg-background p-2 rounded border">3. npm start</p>
-                        </div>
-                        <p className="mt-4 text-xs text-muted-foreground">
-                          Or on Windows, double-click <code className="bg-background px-1 py-0.5 rounded">bSValidate/START_SERVER.bat</code>
-                        </p>
-                        <p className="mt-4 text-xs text-muted-foreground">
-                          The server should start on <code className="bg-background px-1 py-0.5 rounded">http://localhost:5001</code>
-                        </p>
-                      </div>
-                    )}
                   </div>
                 </CardContent>
               </Card>

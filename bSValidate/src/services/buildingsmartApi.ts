@@ -91,7 +91,7 @@ export class BuildingSmartApiError extends Error {
   }
 }
 
-const API_BASE = 'http://localhost:5001/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001/api';
 
 /**
  * Submit IFC file for validation
@@ -115,7 +115,7 @@ export async function submitValidation(
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('text/html')) {
         throw new BuildingSmartApiError(
-          'Backend server is not responding correctly. Please ensure the validation backend server is running at http://localhost:5001',
+          'Backend server is not responding correctly. Please ensure the validation backend server is running.',
           response.status
         );
       }
@@ -136,7 +136,7 @@ export async function submitValidation(
     // Check for JSON parse errors (typically means HTML response)
     if (error instanceof SyntaxError && error.message.includes('JSON')) {
       throw new BuildingSmartApiError(
-        'Backend server is not running or not accessible. Please start the backend server at http://localhost:5001 using: cd bSValidate && npm start',
+        'Backend server is not running or not accessible. Please start the backend server.',
         undefined,
         error
       );
@@ -145,7 +145,7 @@ export async function submitValidation(
     // Network errors (CORS, connection refused, etc.)
     if (error instanceof TypeError) {
       throw new BuildingSmartApiError(
-        'Cannot connect to backend server at http://localhost:5001. Please ensure: 1) Backend server is running, 2) No firewall blocking the connection',
+        'Cannot connect to backend server. Please ensure it is running and accessible.',
         undefined,
         error
       );
@@ -173,7 +173,7 @@ export async function fetchValidationResults(
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('text/html')) {
         throw new BuildingSmartApiError(
-          'Backend server is not responding correctly. Please ensure the validation backend server is running at http://localhost:5001',
+          'Backend server is not responding correctly. Please ensure the validation backend server is running.',
           response.status
         );
       }
@@ -194,7 +194,7 @@ export async function fetchValidationResults(
     // Check for JSON parse errors (typically means HTML response)
     if (error instanceof SyntaxError && error.message.includes('JSON')) {
       throw new BuildingSmartApiError(
-        'Backend server is not running or not accessible. Please start the backend server at http://localhost:5001 using: cd bSValidate && npm start',
+        'Backend server is not running or not accessible. Please start the backend server.',
         undefined,
         error
       );
@@ -203,7 +203,7 @@ export async function fetchValidationResults(
     // Network errors (CORS, connection refused, etc.)
     if (error instanceof TypeError) {
       throw new BuildingSmartApiError(
-        'Cannot connect to backend server at http://localhost:5001. Please ensure the backend server is running',
+        'Cannot connect to backend server. Please ensure the backend server is running.',
         undefined,
         error
       );
@@ -273,7 +273,7 @@ export async function fetchValidationTasks(
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('text/html')) {
         throw new BuildingSmartApiError(
-          'Backend server is not responding correctly. Please ensure the validation backend server is running at http://localhost:5001',
+          'Backend server is not responding correctly. Please ensure the validation backend server is running.',
           response.status
         );
       }
@@ -294,7 +294,7 @@ export async function fetchValidationTasks(
     // Check for JSON parse errors (typically means HTML response)
     if (error instanceof SyntaxError && error.message.includes('JSON')) {
       throw new BuildingSmartApiError(
-        'Backend server is not running or not accessible. Please start the backend server at http://localhost:5001',
+        'Backend server is not running or not accessible. Please start the backend server.',
         undefined,
         error
       );
@@ -303,7 +303,7 @@ export async function fetchValidationTasks(
     // Network errors (CORS, connection refused, etc.)
     if (error instanceof TypeError) {
       throw new BuildingSmartApiError(
-        'Cannot connect to backend server at http://localhost:5001. Please ensure the backend server is running',
+        'Cannot connect to backend server. Please ensure the backend server is running.',
         undefined,
         error
       );
@@ -332,7 +332,7 @@ export async function cancelValidation(jobId: string): Promise<void> {
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('text/html')) {
         throw new BuildingSmartApiError(
-          'Backend server is not responding correctly. Please ensure the validation backend server is running at http://localhost:5001',
+          'Backend server is not responding correctly. Please ensure the validation backend server is running.',
           response.status
         );
       }
@@ -352,7 +352,7 @@ export async function cancelValidation(jobId: string): Promise<void> {
     // Check for JSON parse errors (typically means HTML response)
     if (error instanceof SyntaxError && error.message.includes('JSON')) {
       throw new BuildingSmartApiError(
-        'Backend server is not running or not accessible. Please start the backend server at http://localhost:5001',
+        'Backend server is not running or not accessible. Please start the backend server.',
         undefined,
         error
       );
@@ -361,7 +361,7 @@ export async function cancelValidation(jobId: string): Promise<void> {
     // Network errors (CORS, connection refused, etc.)
     if (error instanceof TypeError) {
       throw new BuildingSmartApiError(
-        'Cannot connect to backend server at http://localhost:5001. Please ensure the backend server is running',
+        'Cannot connect to backend server. Please ensure the backend server is running.',
         undefined,
         error
       );
