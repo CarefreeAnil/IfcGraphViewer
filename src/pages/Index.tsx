@@ -38,6 +38,7 @@ import { useUIState } from '@/contexts/UIStateContext';
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
 const Viewer3D = lazy(() => import('@/components/Viewer3D'));
 const IFC5GraphVisualization = lazy(() => import('@/components/IFC5GraphVisualization').then(m => ({ default: m.IFC5GraphVisualization })));
+const IFC5SourceViewer = lazy(() => import('@/components/IFC5SourceViewer').then(m => ({ default: m.IFC5SourceViewer })));
 
 const Index = () => {
   const navigate = useNavigate();
@@ -46,6 +47,8 @@ const Index = () => {
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedIFC5Node, setSelectedIFC5Node] = useState<ComposedObject | null>(null);
+  const [selectedIFC5ComposedPath, setSelectedIFC5ComposedPath] = useState<string | null>(null);
+  const [selectedIFC5RawPath, setSelectedIFC5RawPath] = useState<string | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4>(2); // Default to LoD2 (Minimal)
@@ -87,16 +90,120 @@ const Index = () => {
   // Ref to hold the selectObject function from useIFC5Viewer
   const selectObjectRef = useRef<((path: string) => void) | null>(null);
 
+  // Bridge selection between composed hierarchy paths (Graph/Tree/3D) and raw IFC5 data paths (Source JSON).
+  const ifc5SelectionMaps = useMemo(() => {
+    const composedNodeMap = new Map<string, ComposedObject>();
+    const rawToComposed = new Map<string, string>();
+    const composedToRaw = new Map<string, string>();
+    const rawPathSet = new Set<string>();
+
+    const composedRoot = parsedData?.rawData?.composedObject;
+    const ifc5File = parsedData?.rawData?.ifc5File;
+
+    if (composedRoot) {
+      const walkComposed = (node: ComposedObject) => {
+        composedNodeMap.set(node.name, node);
+
+        const rawPath = node.attributes?.__internal_rawPath;
+        if (typeof rawPath === 'string' && rawPath.length > 0) {
+          rawToComposed.set(rawPath, node.name);
+          if (!composedToRaw.has(node.name)) {
+            composedToRaw.set(node.name, rawPath);
+          }
+        }
+
+        node.children?.forEach(walkComposed);
+      };
+      walkComposed(composedRoot);
+    }
+
+    if (!ifc5File?.data?.length) {
+      return { composedNodeMap, rawToComposed, composedToRaw, rawPathSet };
+    }
+
+    const rawNodeMap = new Map<string, { children?: Record<string, string | null>; inherits?: Record<string, string | null> }>();
+    const incomingRefs = new Map<string, number>();
+
+    ifc5File.data.forEach((node) => {
+      rawPathSet.add(node.path);
+      rawNodeMap.set(node.path, node);
+      incomingRefs.set(node.path, 0);
+    });
+
+    ifc5File.data.forEach((node) => {
+      Object.values(node.children ?? {}).forEach((childPath) => {
+        if (typeof childPath === 'string' && incomingRefs.has(childPath)) {
+          incomingRefs.set(childPath, (incomingRefs.get(childPath) ?? 0) + 1);
+        }
+      });
+      Object.values(node.inherits ?? {}).forEach((inheritPath) => {
+        if (typeof inheritPath === 'string' && incomingRefs.has(inheritPath)) {
+          incomingRefs.set(inheritPath, (incomingRefs.get(inheritPath) ?? 0) + 1);
+        }
+      });
+    });
+
+    const roots = Array.from(incomingRefs.entries())
+      .filter(([, count]) => count === 0)
+      .map(([path]) => path);
+
+    const visitedKeys = new Set<string>();
+
+    const composePath = (parentPath: string, childName: string) =>
+      parentPath ? `${parentPath}/${childName}` : `/${childName}`;
+
+    const walkRaw = (rawPath: string, composedPath: string) => {
+      const visitKey = `${rawPath}|${composedPath}`;
+      if (visitedKeys.has(visitKey)) return;
+      visitedKeys.add(visitKey);
+
+      if (composedNodeMap.has(composedPath) && !rawToComposed.has(rawPath)) {
+        rawToComposed.set(rawPath, composedPath);
+        if (!composedToRaw.has(composedPath)) {
+          composedToRaw.set(composedPath, rawPath);
+        }
+      }
+
+      const rawNode = rawNodeMap.get(rawPath);
+      if (!rawNode?.children) return;
+
+      Object.entries(rawNode.children).forEach(([childName, childRawPath]) => {
+        if (typeof childRawPath !== 'string' || !rawNodeMap.has(childRawPath)) return;
+        walkRaw(childRawPath, composePath(composedPath, childName));
+      });
+    };
+
+    const startRoots = roots.length > 0 ? roots : Array.from(rawNodeMap.keys());
+    startRoots.forEach((rootRawPath) => {
+      const rootSegment = rootRawPath.split('/').pop() || rootRawPath;
+      walkRaw(rootRawPath, composePath('', rootSegment));
+    });
+
+    return { composedNodeMap, rawToComposed, composedToRaw, rawPathSet };
+  }, [parsedData?.rawData?.composedObject, parsedData?.rawData?.ifc5File]);
+
   // Handle IFC5 node selection (defined early to avoid circular dependency)
   const handleIFC5NodeSelect = useCallback((path: string, node: ComposedObject) => {
     logger.debug('IFC5 node selected', { path, nodeName: node.name });
-    setSelectedIFC5Node(node);
+
+    const isRawPath = ifc5SelectionMaps.rawPathSet.has(path);
+    const resolvedComposedPath = isRawPath ? ifc5SelectionMaps.rawToComposed.get(path) ?? null : path;
+    const resolvedRawPath = isRawPath ? path : ifc5SelectionMaps.composedToRaw.get(path) ?? null;
+    const resolvedComposedNode = resolvedComposedPath
+      ? ifc5SelectionMaps.composedNodeMap.get(resolvedComposedPath) ?? null
+      : null;
+
+    setSelectedIFC5Node(resolvedComposedNode ?? node);
+    setSelectedIFC5ComposedPath(resolvedComposedNode?.name ?? resolvedComposedPath);
+    setSelectedIFC5RawPath(resolvedRawPath);
+
     // Also highlight in 3D viewer if loaded
-    if (viewer3DLoaded && isIFC5 && selectObjectRef.current) {
+    const pathFor3D = resolvedComposedNode?.name ?? resolvedComposedPath;
+    if (viewer3DLoaded && isIFC5 && pathFor3D && selectObjectRef.current) {
       logger.debug('Syncing selection to 3D viewer');
-      selectObjectRef.current(path);
+      selectObjectRef.current(pathFor3D);
     }
-  }, [viewer3DLoaded, isIFC5]);
+  }, [ifc5SelectionMaps, viewer3DLoaded, isIFC5]);
 
   // Handle 3D object click
   const handleIFC5ObjectClick = useCallback((path: string) => {
@@ -122,8 +229,8 @@ const Index = () => {
   }, [parsedData, handleIFC5NodeSelect]);
 
   // IFC5 3D Viewer hook
-  const { 
-    loadComposedObject, 
+  const {
+    loadComposedObject,
     selectObject,
     isInitialized: viewer3DInitialized
   } = useIFC5Viewer(ifc5ViewerContainerRef, viewer3DLoaded, handleIFC5ObjectClick);
@@ -231,7 +338,7 @@ const Index = () => {
       // Store the file buffer in a Ref for the 3D viewer (doesn't need state)
       const buffer = await file.arrayBuffer();
       ifcFileBufferRef.current = buffer;
-      
+
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
 
@@ -245,26 +352,26 @@ const Index = () => {
 
       // Update parsedData with enriched graph
       data.graphData = graphData;
-      
+
       // Parser returns parsed data only - no validation.
       // Validation is on-demand via handleValidate().
-      
+
       // Clear unload flag when new file is loaded
       sessionStorage.removeItem('ifcFileUnloaded');
-      
+
       // Extract schema version from header
       const schemaIdentifiers = data.metadata?.ifcHeader?.fileSchema?.schemaIdentifiers || [];
       console.log('[Index] Metadata:', data.metadata);
       console.log('[Index] ifcHeader:', data.metadata?.ifcHeader);
       console.log('[Index] fileSchema:', data.metadata?.ifcHeader?.fileSchema);
       console.log('[Index] schemaIdentifiers:', schemaIdentifiers);
-      
+
       let detectedVersion = 'IFC4'; // Default
-      
+
       if (schemaIdentifiers.length > 0) {
         const schemaStr = schemaIdentifiers[0].toUpperCase();
         console.log('[Index] Raw schema string:', schemaIdentifiers[0], '-> normalized:', schemaStr);
-        
+
         if (schemaStr.includes('IFC4X3') || schemaStr.includes('IFC4_3') || schemaStr.includes('IFC43')) {
           detectedVersion = 'IFC4X3';
         } else if (schemaStr.includes('IFC4')) {
@@ -275,14 +382,19 @@ const Index = () => {
           detectedVersion = 'IFC5';
         }
       }
-      
+
       console.log('[Index] Detected schema version:', detectedVersion);
       setSchemaVersion(detectedVersion);
       setParsedData(data);
-      
+
       // Auto-load 3D viewer for IFC5 files
       if (data.metadata?.isIFC5) {
         setViewer3DLoaded(true);
+        // Reset IFC5-specific UI state for the new file
+        setSelectedIFC5Node(null);
+        setSelectedIFC5ComposedPath(null);
+        setSelectedIFC5RawPath(null);
+        setIfc5GraphLoaded(false);
       }
       toast.success(`Parsed ${data.metadata.entityCount} entities and ${data.metadata.relationshipCount} relationships`);
     } catch (error) {
@@ -314,15 +426,15 @@ const Index = () => {
 
   // Handle navigation from validation page with highlighted entity
   useEffect(() => {
-    const state = location.state as { 
-      parsedData?: ParsedIFCData; 
-      highlightedEntityId?: string; 
-      ifcFileBuffer?: ArrayBuffer; 
+    const state = location.state as {
+      parsedData?: ParsedIFCData;
+      highlightedEntityId?: string;
+      ifcFileBuffer?: ArrayBuffer;
       fileName?: string;
       validationResults?: any;
       selectedValidator?: string;
     } | null;
-    
+
     if (state) {
       // Restore parsed data if coming from validation page
       if (state.parsedData && !parsedData) {
@@ -339,14 +451,14 @@ const Index = () => {
       if (state.highlightedEntityId && (parsedData || state.parsedData)) {
         const data = parsedData || state.parsedData;
         logger.debug('Looking for entity to highlight', { entityId: state.highlightedEntityId });
-        
+
         if (data) {
           // Search in allEntities first (complete dataset)
-          const entityToHighlight = data.allEntities?.find(e => 
+          const entityToHighlight = data.allEntities?.find(e =>
             e.id === state.highlightedEntityId ||
             `#${e.expressId}` === state.highlightedEntityId ||
             String(e.expressId) === state.highlightedEntityId.replace('#', '')
-          ) || data.graphData.nodes.find(n => 
+          ) || data.graphData.nodes.find(n =>
             n.id === state.highlightedEntityId ||
             `#${n.expressId}` === state.highlightedEntityId ||
             String(n.expressId) === state.highlightedEntityId.replace('#', '')
@@ -366,7 +478,7 @@ const Index = () => {
           }
         }
       }
-      
+
       // Clear navigation state to prevent re-triggering
       navigate(location.pathname, { replace: true, state: null });
     }
@@ -427,11 +539,13 @@ const Index = () => {
   const handleReset = useCallback(() => {
     // Set flag to prevent stale validation pages from working
     sessionStorage.setItem('ifcFileUnloaded', 'true');
-    
+
     // Clear all state explicitly
     setParsedData(null);
     setSelectedNode(null);
     setSelectedIFC5Node(null);
+    setSelectedIFC5ComposedPath(null);
+    setSelectedIFC5RawPath(null);
     setHighlightedTypes([]);
     setSearchQuery('');
     setGraphLoD(2);
@@ -457,11 +571,11 @@ const Index = () => {
 
     // Clear navigation state completely
     navigate('/', { replace: true, state: null });
-    
+
     toast.success('File unloaded', {
       description: 'All file data has been removed from memory'
     });
-    
+
     // Force a micro-task to allow cleanup
     setTimeout(() => {
       // Try to trigger garbage collection hint (if available)
@@ -477,10 +591,10 @@ const Index = () => {
 
   // Keep 3D selection in sync when selection changes in panels
   useEffect(() => {
-    if (viewer3DLoaded && isIFC5 && selectedIFC5Node?.name && selectObjectRef.current) {
-      selectObjectRef.current(selectedIFC5Node.name);
+    if (viewer3DLoaded && isIFC5 && selectedIFC5ComposedPath && selectObjectRef.current) {
+      selectObjectRef.current(selectedIFC5ComposedPath);
     }
-  }, [viewer3DLoaded, isIFC5, selectedIFC5Node?.name]);
+  }, [viewer3DLoaded, isIFC5, selectedIFC5ComposedPath]);
 
   const handleTypeToggle = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -561,20 +675,20 @@ const Index = () => {
   // Handle navigation from validation report to entity
   const handleEntityNavigation = useCallback((entityId: string) => {
     if (!parsedData || !parsedData.graphData?.nodes) return;
-    
+
     // Find the node
     const node = parsedData.graphData.nodes.find(n => n.id === entityId);
     if (!node) return;
-    
+
     // Set as selected node (this will sync across all views)
     setSelectedNode(node);
-    
+
     // Switch to IFC Browser tab if not already there
     // You might need to add state management for active tab if needed
 
     // Optionally scroll to the element in tree view
     // This would require adding a scroll handler in IFCBrowser
-    
+
   }, [parsedData]);
 
   // OPTIMIZATION: Create minimal enrichment for IFC Browser (just add _ifcStep, no _schemaColor)
@@ -592,7 +706,7 @@ const Index = () => {
       properties: {
         ...entity.properties,
         _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
-                  `#${entity.expressId}= ${entity.ifcType}(...);`
+          `#${entity.expressId}= ${entity.ifcType}(...);`
       }
     }));
 
@@ -603,7 +717,7 @@ const Index = () => {
       properties: {
         ...entity.properties,
         _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
-                  `#${entity.expressId}= ${entity.ifcType}(...);`
+          `#${entity.expressId}= ${entity.ifcType}(...);`
       }
     }));
 
@@ -685,13 +799,17 @@ const Index = () => {
               exit={{ opacity: 0 }}
               className="h-full flex flex-col"
             >
-              {/* Four-Panel Horizontal Layout: Properties (15%) | Graph (35%) | Tree (25%) | 3D Viewer (25%) */}
+              {/* Layout: Properties | Graph | Tree | 3D Viewer | Source (IFC5 only) */}
               <ResizablePanelGroup direction="horizontal" className="h-full">
-                {/* Properties Panel - 15% (Left) */}
-                <ResizablePanel defaultSize={15} minSize={10} maxSize={30}>
+                {/* Properties Panel - 12% (Left) */}
+                <ResizablePanel id="properties" order={1} defaultSize={12} minSize={8} maxSize={25}>
                   <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
                     {isIFC5 ? (
-                      <IFC5PropertyViewer node={selectedIFC5Node} />
+                      <IFC5PropertyViewer
+                        node={selectedIFC5Node}
+                        composedObject={parsedData.rawData?.composedObject ?? null}
+                        onNodeSelect={handleIFC5NodeSelect}
+                      />
                     ) : (
                       <div className="space-y-4 p-4">
                         {/* Node Details */}
@@ -715,8 +833,8 @@ const Index = () => {
 
                 <ResizableHandle />
 
-                {/* Graph Panel - 35% (Middle-Left) */}
-                <ResizablePanel defaultSize={35} minSize={25} maxSize={60}>
+                {/* Graph Panel - 28% (Middle-Left) */}
+                <ResizablePanel id="graph" order={2} defaultSize={28} minSize={20} maxSize={50}>
                   {isIFC5 ? (
                     !ifc5GraphLoaded ? (
                       <div className="h-full w-full bg-background/50 flex items-center justify-center">
@@ -745,7 +863,7 @@ const Index = () => {
                           composedObject={parsedData.rawData?.composedObject!}
                           ifc5File={parsedData.rawData?.ifc5File}
                           onNodeSelect={handleIFC5NodeSelect}
-                          selectedNodePath={selectedIFC5Node?.name || null}
+                          selectedNodePath={selectedIFC5ComposedPath}
                         />
                       </Suspense>
                     )
@@ -848,14 +966,14 @@ const Index = () => {
 
                 <ResizableHandle />
 
-                {/* Tree Browser Panel - 25% (Middle-Right) */}
-                <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+                {/* Tree Browser Panel - 20% (Middle-Right) */}
+                <ResizablePanel id="tree" order={3} defaultSize={20} minSize={12} maxSize={35}>
                   <div className="h-full overflow-hidden border-r border-border">
                     {isIFC5 ? (
                       <IFC5TreeBrowser
                         composedObject={parsedData.rawData?.composedObject}
                         onNodeSelect={handleIFC5NodeSelect}
-                        selectedPath={selectedIFC5Node?.name}
+                        selectedPath={selectedIFC5ComposedPath}
                       />
                     ) : (
                       <IFCBrowser
@@ -871,8 +989,8 @@ const Index = () => {
 
                 <ResizableHandle />
 
-                {/* 3D Viewer Panel - 25% (Right) */}
-                <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+                {/* 3D Viewer Panel - 20% (Right) */}
+                <ResizablePanel id="viewer3d" order={4} defaultSize={20} minSize={10} maxSize={35}>
                   {!viewer3DLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center border-l border-border">
                       <div className="text-center space-y-4">
@@ -891,7 +1009,7 @@ const Index = () => {
                         <div ref={ifc5ViewerContainerRef} className="h-full w-full" />
                       ) : (
                         <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading 3D viewer...</div>}>
-                          <Viewer3D 
+                          <Viewer3D
                             selectedNodeId={selectedNode?.id}
                             onSelectNode={(nodeId) => {
                               const node = parsedData?.graphData?.nodes?.find(n => n.id === nodeId);
@@ -903,7 +1021,7 @@ const Index = () => {
                           />
                         </Suspense>
                       )}
-                      
+
                       {/* Unload 3D Viewer Button */}
                       <div className="absolute bottom-2 right-2 z-20">
                         <button
@@ -916,6 +1034,29 @@ const Index = () => {
                     </div>
                   )}
                 </ResizablePanel>
+
+                {/* Source Viewer Panel — only rendered for IFC5 (.ifcx) files */}
+                {isIFC5 && parsedData.rawData?.ifc5File && (
+                  <>
+                    <ResizableHandle />
+                    <ResizablePanel id="source" order={5} defaultSize={20} minSize={12} maxSize={35}>
+                      <div className="h-full overflow-hidden border-l border-border">
+                        <Suspense fallback={
+                          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                            Loading source viewer…
+                          </div>
+                        }>
+                          <IFC5SourceViewer
+                            ifc5File={parsedData.rawData.ifc5File}
+                            composedObject={parsedData.rawData.composedObject ?? null}
+                            selectedPath={selectedIFC5RawPath ?? selectedIFC5ComposedPath}
+                            onNodeSelect={handleIFC5NodeSelect}
+                          />
+                        </Suspense>
+                      </div>
+                    </ResizablePanel>
+                  </>
+                )}
               </ResizablePanelGroup>
             </motion.div>
           )}

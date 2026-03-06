@@ -252,6 +252,12 @@ export function composeNode(
   postCompositionNode: PostCompositionNode,
   preCompositionNodes: Map<string, PreCompositionNode>
 ): PostCompositionNode {
+  // Keep the originating raw IFC5 path on each composed node for cross-panel selection sync.
+  // Do not overwrite when inherit composition runs on the same post node.
+  if (!postCompositionNode.attributes.has('__internal_rawPath')) {
+    postCompositionNode.attributes.set('__internal_rawPath', path);
+  }
+
   const preCompositionNode = preCompositionNodes.get(path);
 
   if (preCompositionNode) {
