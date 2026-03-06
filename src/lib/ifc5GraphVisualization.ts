@@ -142,8 +142,8 @@ function processDataNode(
 
   // Create main data node
   const pathParts = dataNode.path.split('/').filter(Boolean);
-  const nodeName = pathParts[pathParts.length - 1] || dataNode.path;
   const nodeDepth = pathParts.length;
+  const nodeName = extractFriendlyName(dataNode.path, dataNode.attributes);
 
   // Skip if exceeds max depth
   if (config.maxDepth && nodeDepth > config.maxDepth) {
@@ -159,7 +159,6 @@ function processDataNode(
     label: nodeName,
     type: nodeType,
     ifcType: ifcClass || 'IFC5Node',
-    expressId: dataNode.path,
     properties: {
       path: dataNode.path,
       depth: nodeDepth,
@@ -226,7 +225,7 @@ function processAttributes(
     attrs.forEach(({ key, value }) => {
       // Check if this is a geometry attribute
       const isGeometry = isGeometryAttribute(key, value);
-      
+
       if (isGeometry && !config.showGeometryNodes) {
         return;
       }
@@ -240,7 +239,6 @@ function processAttributes(
         label: displayKey,
         type: isGeometry ? 'geometry' : 'attribute',
         ifcType: 'Attribute',
-        expressId: attrNodeId,
         properties: {
           namespace,
           key,
@@ -404,46 +402,56 @@ function categorizeRelationship(
   relType: string
 ): 'spatial' | 'material' | 'geometry' | 'property' | 'general' {
   // Material relationships
-  if (ifcClass?.includes('Material') || nodeType === 'material') {
+  if (
+    ifcClass?.toLowerCase().includes('material') ||
+    nodeType === 'material'
+  ) {
     return 'material';
   }
-  
-  // Spatial relationships (containment, aggregation)
-  const spatialClasses = [
-    'IfcSite', 'IfcBuilding', 'IfcBuildingStorey', 'IfcSpace', 'IfcSpatialElement'
-  ];
-  if (ifcClass && spatialClasses.some(cls => ifcClass.includes(cls))) {
-    return 'spatial';
-  }
-  
-  // Geometry relationships
+
+  // Geometry-only relationships (Mesh/Curve/Points nodes)
   if (nodeType === 'Mesh' || nodeType === 'Curve' || nodeType === 'Points' || relType === 'geometry') {
     return 'geometry';
   }
-  
-  // Property relationships
+
+  // Property/attribute relationships
   if (ifcClass?.includes('Property') || relType === 'property' || relType === 'attribute') {
     return 'property';
   }
-  
+
+  // All child (containment) relationships are spatial — this covers
+  // Project→Site→Building→Storey→Space→Wall hierarchy
+  if (relType === 'child') {
+    return 'spatial';
+  }
+
   return 'general';
 }
 
 /**
- * Extract material name with fallback to code
- * Inspired by HTML viewer's material handling
+ * Extract material name with fallback to code.
+ * After composition the nested object is flattened:
+ *   bsi::ifc::material::name, bsi::ifc::material::code
  */
 function extractMaterialName(attributes?: Record<string, any>): string | null {
   if (!attributes) return null;
 
-  // First try to get material name
+  // Flattened form (post-composition)
+  const flatName = attributes['bsi::ifc::material::name'];
+  if (flatName && typeof flatName === 'string' && flatName !== '$' && flatName !== 'Unnamed') {
+    return flatName;
+  }
+  const flatCode = attributes['bsi::ifc::material::code'];
+  if (flatCode && typeof flatCode === 'string' && flatCode !== '$') {
+    return flatCode;
+  }
+
+  // Raw form (pre-composition / direct IFC5Node attributes)
   const materialAttr = attributes['bsi::ifc::material'];
-  if (materialAttr) {
-    // If name exists and is not generic, use it
+  if (materialAttr && typeof materialAttr === 'object') {
     if (materialAttr.name && materialAttr.name !== '$' && materialAttr.name !== 'Unnamed') {
       return materialAttr.name;
     }
-    // Fallback to code if name is missing or generic
     if (materialAttr.code && materialAttr.code !== '$') {
       return materialAttr.code;
     }
@@ -453,14 +461,48 @@ function extractMaterialName(attributes?: Record<string, any>): string | null {
 }
 
 /**
- * Extract IFC class from attributes
+ * Extract friendly name with fallback to material name or path tail
+ */
+function extractFriendlyName(path: string, attributes?: Record<string, any>): string {
+  let displayName = path.split('/').pop() || path || 'root';
+  if (attributes) {
+    const nameAttr = attributes['bsi::ifc::name'] || attributes['ifc::name'];
+    if (nameAttr && typeof nameAttr === 'string' && nameAttr !== '$') {
+      displayName = nameAttr;
+    } else {
+      const ifcClass = extractIFCClass(attributes)?.toLowerCase() || '';
+      // Only use material fallback naming for actual material-class nodes.
+      if (ifcClass.includes('material')) {
+        const materialName = extractMaterialName(attributes);
+        if (materialName) {
+          displayName = materialName;
+        }
+      }
+    }
+  }
+  return displayName;
+}
+
+/**
+ * Extract IFC class from attributes.
+ * convertToComposedObject() flattens {code, uri} objects, so the class code
+ * lives at 'bsi::ifc::class::code' in the composed attributes.
  */
 function extractIFCClass(attributes?: Record<string, any>): string | null {
   if (!attributes) return null;
 
+  // Flattened form (ComposedObject from convertToComposedObject)
+  if (typeof attributes['bsi::ifc::class::code'] === 'string') {
+    return attributes['bsi::ifc::class::code'];
+  }
+
+  // Raw form (IFC5Node attributes before composition)
   const classAttr = attributes['bsi::ifc::class'];
   if (classAttr && typeof classAttr === 'object' && 'code' in classAttr) {
     return classAttr.code;
+  }
+  if (typeof classAttr === 'string') {
+    return classAttr;
   }
 
   return null;
@@ -555,28 +597,30 @@ export function convertComposedObjectToGraph(
     }
 
     const nodeId = obj.name;
-    let nodeName = obj.name.split('/').pop() || 'root';
+    let nodeName = extractFriendlyName(obj.name, obj.attributes);
 
-    // Enhanced material name handling - use material code if name is generic
-    if (obj.attributes) {
-      const materialName = extractMaterialName(obj.attributes);
-      if (materialName) {
-        nodeName = materialName;
-      }
-    }
+    // Extract IFC class from attributes for color-coding.
+    // After convertToComposedObject() the {code,uri} object is flattened to 'bsi::ifc::class::code'.
+    const ifcClassName: string | null = extractIFCClass(obj.attributes);
 
-    // Create main node
+    // Create main node — keep key namespaced attrs so the graph component can color nodes
     const mainNode: GraphNode = {
       id: nodeId,
       label: nodeName,
       type: obj.type || 'Group',
-      ifcType: obj.type || 'Group',
-      expressId: nodeId,
+      ifcType: ifcClassName || obj.type || 'Group',
       properties: {
         path: obj.name,
         depth,
         _nodeCategory: 'data',
         _hasChildren: !!(obj.children && obj.children.length > 0),
+        // Preserve the IFC class so graph can color-code by class.
+        // After convertToComposedObject() the class object is flattened to ::code.
+        'bsi::ifc::class::code': obj.attributes?.['bsi::ifc::class::code']
+          ?? (obj.attributes?.['bsi::ifc::class'] as any)?.code
+          ?? null,
+        'bsi::ifc::name': obj.attributes?.['bsi::ifc::name'] ?? null,
+        'bsi::ifc::material::name': obj.attributes?.['bsi::ifc::material::name'] ?? null,
         ...extractCoreAttributes(obj.attributes),
       },
     };
@@ -589,7 +633,7 @@ export function convertComposedObjectToGraph(
       // Categorize relationship for filtering
       const ifcClass = obj.attributes ? extractIFCClass(obj.attributes) : null;
       const edgeCategory = categorizeRelationship(ifcClass, obj.type, 'child');
-      
+
       edges.push({
         id: `${parentId}->${nodeId}`,
         source: parentId,

@@ -286,14 +286,14 @@ function reconstructIFCStepFormat(typeName: string, entity: any, ifcApi: WebIFC.
   try {
     // Get the entity's expressID for reference in properties
     const expressId = entity.expressID;
-    
+
     // Build a parameter list showing references as #xxx and values as-is
     const params: string[] = [];
-    
+
     // Iterate through all properties to preserve order and structure
     for (const [key, value] of Object.entries(entity)) {
       if (key === 'type' || key === 'expressID') continue;
-      
+
       // Format value for display
       if (value === null || value === undefined) {
         params.push('$');  // $ represents undefined/null in IFC STEP
@@ -333,7 +333,7 @@ function reconstructIFCStepFormat(typeName: string, entity: any, ifcApi: WebIFC.
         params.push(String(value));
       }
     }
-    
+
     return `#${expressId}= ${typeName}(${params.join(', ')})`;
   } catch (err) {
     // Fallback - just show basic info
@@ -354,68 +354,73 @@ export type ParseProgressCallback = (progress: {
  */
 function extractRawStepLines(fileText: string): Map<number, string> {
   const stepLineMap = new Map<number, string>();
-  
+
   try {
-    // Extract DATA section
-    const dataMatch = fileText.match(/DATA;\s*([\s\S]*?)\s*ENDSEC;/i);
-    if (!dataMatch) {
+    const dataStart = fileText.indexOf('DATA;');
+    if (dataStart === -1) {
       console.warn('Could not find DATA section in IFC file');
       return stepLineMap;
     }
+    const dataEnd = fileText.indexOf('ENDSEC;', dataStart);
+    if (dataEnd === -1) {
+      console.warn('Could not find ENDSEC; after DATA;');
+      return stepLineMap;
+    }
 
-    const dataContent = dataMatch[1];
-    console.log('[Parser] DATA section found, length:', dataContent.length);
-    
-    // Extract each line - format: #123=ENTITYTYPE(...)
-    // Lines can span multiple physical lines, so we need to handle that
-    const lines = dataContent.split('\n');
-    let currentLine = '';
-    let currentId: number | null = null;
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      
-      if (!line) continue;
-      
-      // Check if this line starts a new STEP entity
-      const idMatch = line.match(/^#(\d+)=/);
-      
-      if (idMatch) {
-        // If we have a previous line, save it
-        if (currentId !== null && currentLine) {
-          stepLineMap.set(currentId, currentLine);
+    console.log('[Parser] DATA section found, extracting lines sequentially...');
+
+    let pos = dataStart + 5;
+    while (pos < dataEnd) {
+      const hashIdx = fileText.indexOf('#', pos);
+      if (hashIdx === -1 || hashIdx >= dataEnd) break;
+
+      // Read ID
+      let idStr = '';
+      let i = hashIdx + 1;
+      while (i < dataEnd && fileText[i] >= '0' && fileText[i] <= '9') {
+        idStr += fileText[i];
+        i++;
+      }
+
+      // Ensure it's an entity definition: #[id]=
+      // Allow spaces between ID and =
+      while (i < dataEnd && fileText[i] === ' ') i++;
+
+      if (idStr.length > 0 && fileText[i] === '=') {
+        const id = parseInt(idStr, 10);
+        let inString = false;
+        let lineEnd = i + 1;
+
+        // Find the end of this statement (a semicolon not within quotes)
+        while (lineEnd < dataEnd) {
+          const char = fileText[lineEnd];
+          if (char === "'") {
+            inString = !inString;
+          } else if (char === ';' && !inString) {
+            // Found end of statement
+            break;
+          }
+          lineEnd++;
         }
-        
-        // Start new line
-        currentId = parseInt(idMatch[1], 10);
-        currentLine = line;
+
+        if (lineEnd <= dataEnd) {
+          // Include the semicolon, replace newlines/extra spaces
+          stepLineMap.set(id, fileText.substring(hashIdx, lineEnd + 1).replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' '));
+          pos = lineEnd + 1;
+        } else {
+          break; // Malformed
+        }
       } else {
-        // Continue previous line
-        if (currentId !== null) {
-          currentLine += ' ' + line;
-        }
-      }
-      
-      // Check if line is complete (ends with ;)
-      if (currentLine.endsWith(';')) {
-        if (currentId !== null) {
-          stepLineMap.set(currentId, currentLine);
-          currentId = null;
-          currentLine = '';
-        }
+        // Not an ID definition, move on
+        pos = hashIdx + 1;
       }
     }
-    
-    // Handle last line if incomplete
-    if (currentId !== null && currentLine) {
-      stepLineMap.set(currentId, currentLine);
-    }
-    
+
     console.log('[Parser] Extracted', stepLineMap.size, 'STEP lines');
   } catch (err) {
     console.warn('Error extracting raw STEP lines:', err);
   }
-  
+
   return stepLineMap;
 }
 
@@ -428,48 +433,46 @@ function extractIFCHeader(fileText: string): any {
   };
 
   try {
-    // Extract HEADER section - find lines between HEADER; and ENDSEC;
-    const headerMatch = fileText.match(/HEADER;([\s\S]*?)ENDSEC;/i);
-    if (!headerMatch) {
-      console.warn('Could not find HEADER section in IFC file');
-      return result;
-    }
+    const headerStart = fileText.indexOf('HEADER;');
+    if (headerStart === -1) return result;
+    const headerEnd = fileText.indexOf('ENDSEC;', headerStart);
+    if (headerEnd === -1) return result;
 
-    const headerContent = headerMatch[1].trim();
+    const headerContent = fileText.substring(headerStart, headerEnd + 7).trim();
     result.fullHeader = headerContent;
 
-    // FILE_DESCRIPTION
+    // Fast regex matching on just the short header section instead of the whole file
     const fdMatch = headerContent.match(/FILE_DESCRIPTION\s*\(\s*\(([\s\S]*?)\)\s*,\s*'([^']*)'\s*\);/i);
     if (fdMatch) {
-        const descStr = fdMatch[1];
-        result.fileDescription.description = descStr.split(',').map(s => s.trim().replace(/^'|'$/g, ''));
-        result.fileDescription.implementationLevel = fdMatch[2];
+      const descStr = fdMatch[1];
+      result.fileDescription.description = descStr.split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+      result.fileDescription.implementationLevel = fdMatch[2];
     }
 
     // FILE_NAME
     // Try robust match first
     const fnMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*\(([\s\S]*?)\)\s*,\s*\(([\s\S]*?)\)\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\);/i);
     if (fnMatch) {
-        result.fileName.name = fnMatch[1];
-        result.fileName.timeStamp = fnMatch[2];
-        result.fileName.author = fnMatch[3].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
-        result.fileName.organization = fnMatch[4].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
-        result.fileName.preprocessorVersion = fnMatch[5];
-        result.fileName.originatingSystem = fnMatch[6];
-        result.fileName.authorization = fnMatch[7];
+      result.fileName.name = fnMatch[1];
+      result.fileName.timeStamp = fnMatch[2];
+      result.fileName.author = fnMatch[3].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+      result.fileName.organization = fnMatch[4].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+      result.fileName.preprocessorVersion = fnMatch[5];
+      result.fileName.originatingSystem = fnMatch[6];
+      result.fileName.authorization = fnMatch[7];
     } else {
-        // Fallback or partial match
-        const nameMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'/i);
-        if (nameMatch) result.fileName.name = nameMatch[1];
-        
-        const timeMatch = headerContent.match(/FILE_NAME\s*\([^,]*,\s*'([^']*)'/i);
-        if (timeMatch) result.fileName.timeStamp = timeMatch[1];
+      // Fallback or partial match
+      const nameMatch = headerContent.match(/FILE_NAME\s*\(\s*'([^']*)'/i);
+      if (nameMatch) result.fileName.name = nameMatch[1];
+
+      const timeMatch = headerContent.match(/FILE_NAME\s*\([^,]*,\s*'([^']*)'/i);
+      if (timeMatch) result.fileName.timeStamp = timeMatch[1];
     }
 
     // FILE_SCHEMA
     const fsMatch = headerContent.match(/FILE_SCHEMA\s*\(\s*\(([\s\S]*?)\)\s*\);/i);
     if (fsMatch) {
-        result.fileSchema.schemaIdentifiers = fsMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+      result.fileSchema.schemaIdentifiers = fsMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
     }
   } catch (err) {
     console.warn('Error extracting IFC header:', err);
@@ -484,101 +487,101 @@ export async function parseIFCFile(
 ): Promise<ParsedIFCData> {
   console.log('[Parser] Starting parse:', file.name, 'size:', file.size);
   const startTime = performance.now();
-  
+
   // Notify progress: File loading started
   onProgress?.({
     stage: 'loading',
     percentage: 10,
     message: 'Loading IFC file...'
   });
-  
+
   const ifcApi = new WebIFC.IfcAPI();
-  
+
   // Set the WASM path to the root where static files are copied
   await ifcApi.Init((path: string) => {
     // In development/production, WASM files are copied to root
     return `/${path}`;
   });
-  
+
   const loadTime = performance.now();
-  
+
   const buffer = await file.arrayBuffer();
   const data = new Uint8Array(buffer);
-  
+
   // Detect file format (STEP vs JSON/IFCX)
   let fileFormat: 'STEP' | 'JSON' = 'STEP';
   let fileText = '';
   // Force Read as Text to ensure we can detect header commands
   // This is fast for 16MB
   try {
-     fileText = new TextDecoder().decode(data);
+    fileText = new TextDecoder().decode(data);
   } catch (e) { console.warn('Text decode failed'); }
-  
+
   let isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
-  
+
   // Extract IFC header metadata from raw file content
   let ifcHeader: any = {
     fullHeader: '',
   };
   let syntaxErrors: ValidationError[] = [];
-  
+
   let rawStepLines: Map<number, string> = new Map();
-  
+
   try {
     // Check if it's a JSON file (IFC5) or STEP file
     if (fileText.trim().startsWith('{') || isIFC5File(file)) {
       fileFormat = 'JSON';
       console.log(`[Parser] Detected file format: JSON (IFC5)`);
-      
+
       // For JSON/IFC5 files, use the dedicated IFC5 parser
       onProgress?.({
         stage: 'parsing',
         percentage: 20,
         message: 'Parsing IFC5 (.ifcx) JSON format...'
       });
-      
+
       try {
         // Load IFC5 file structure
         const ifc5File: IFC5File = await loadIFC5FromFile(file);
-        
+
         onProgress?.({
           stage: 'parsing',
           percentage: 40,
           message: 'Composing IFC5 tree structure...'
         });
-        
+
         // Parse and compose the tree (skip schema validation for now as not all schemas are included)
         const composedTree = parseIFC5Tree(ifc5File, {
           validateSchemas: false,
           createArtificialRoot: true,
         });
-        
+
         onProgress?.({
           stage: 'parsing',
           percentage: 60,
           message: 'Converting IFC5 to graph representation...'
         });
-        
+
         // Convert to ComposedObject for rendering
         const composedObject: ComposedObject = convertToComposedObject(
           '',
           composedTree,
           ifc5File.schemas
         );
-        
+
         // Convert to graph structure
         const { nodes, edges } = convertToGraph(composedObject);
-        
+
         // Get statistics
         const stats = getIFC5Statistics(composedObject);
         const fileInfo = getIFC5FileInfo(ifc5File);
-        
+
         onProgress?.({
           stage: 'processing',
           percentage: 80,
           message: 'Finalizing IFC5 data...'
         });
-        
+
         // Build the result structure
         const result: ParsedIFCData = {
           graphData: {
@@ -616,13 +619,13 @@ export async function parseIFCFile(
             ifc5File,       // Store the original file for reference
           },
         };
-        
+
         onProgress?.({
           stage: 'complete',
           percentage: 100,
           message: 'IFC5 file parsed successfully'
         });
-        
+
         return result;
       } catch (err) {
         console.error('Failed to parse as IFC5:', err);
@@ -639,7 +642,7 @@ export async function parseIFCFile(
       fileFormat = 'STEP';
       console.log(`[Parser] Detected file format: STEP`);
     }
-    
+
     // Only extract header for STEP files
     if (fileFormat === 'STEP') {
       ifcHeader = extractIFCHeader(fileText);
@@ -657,33 +660,33 @@ export async function parseIFCFile(
       // This frees ~20MB for the 19MB file
       fileText = '';
     }
-    
+
     // If fileName wasn't extracted from header, use the file name
     if (ifcHeader.fileName && typeof ifcHeader.fileName === 'object' && !ifcHeader.fileName.name) {
       ifcHeader.fileName.name = file.name;
     } else if (!ifcHeader.fileName) {
-       // Fallback
-       ifcHeader.fileName = { name: file.name };
+      // Fallback
+      ifcHeader.fileName = { name: file.name };
     }
   } catch (err) {
     console.warn('Could not extract IFC header from file text:', err);
     // Fallback: use file name
     ifcHeader.fileName = { name: file.name };
   }
-  
+
   const modelOpenStart = performance.now();
   const modelId = ifcApi.OpenModel(data);
   const modelOpenEnd = performance.now();
   const modelOpenTime = modelOpenEnd - modelOpenStart;
   console.log(`[Parser Timing] WebIFC.OpenModel(): ${modelOpenTime.toFixed(2)}ms`);
-  
+
   // Notify progress: Parsing started
   onProgress?.({
     stage: 'parsing',
     percentage: 20,
     message: 'Parsing IFC model structure...'
   });
-  
+
   // Cache for IFC lines to avoid redundant GetLine calls
   const lineCache = new Map<number, any>();
   const getLine = (id: number) => {
@@ -692,14 +695,14 @@ export async function parseIFCFile(
     lineCache.set(id, line);
     return line;
   };
-  
+
   const allEntities: GraphNode[] = [];  // Semantic entities (non-geometry)
   const geometryEntities: GraphNode[] = [];  // Geometry and representation entities
   const nodeMap = new Map<number, GraphNode>();
-  
+
   // Get all entity types in the model
   const allTypes = ifcApi.GetAllTypesOfModel(modelId);
-  
+
   // ADMIN_ONLY_TYPES: Entities that should NEVER appear in any visualization
   // These are purely administrative and have 0% visual value
   // All other entities will be included in the complete dataset for LoD filtering
@@ -710,7 +713,7 @@ export async function parseIFCFile(
     'IFCPERSONANDORGANIZATION',   // Person + org combo
     'IFCAPPLICATION',             // Software that created entity
   ]);
-  
+
   // METADATA_PROPERTIES that should be skipped during REFERENCE EXTRACTION
   // We still parse them (for tree browser), but don't extract references from them
   // This prevents: IfcSite -> OwnerHistory -> Person false reference chains
@@ -787,144 +790,144 @@ export async function parseIFCFile(
   // we iterate ALL lines present in the model. This is O(N) where N is entity count.
   console.log('[Parser] Starting entity extraction...');
   const entityLoopStart = performance.now();
-  
+
   try {
-      // Parse ALL entity types to get complete 1:1 representation of IFC file
-      // Geometry filtering happens in graph building, not in the parser
-      // This ensures IFC Browser shows all entities exactly as in the file
-      const relevantTypes = allTypes;
+    // Parse ALL entity types to get complete 1:1 representation of IFC file
+    // Geometry filtering happens in graph building, not in the parser
+    // This ensures IFC Browser shows all entities exactly as in the file
+    const relevantTypes = allTypes;
 
-      console.log(`[Parser] Processing: ${allTypes.length} types (including geometry for IFC Browser)`);
+    console.log(`[Parser] Processing: ${allTypes.length} types (including geometry for IFC Browser)`);
 
-      // OPTIMIZATION 1: Use Set for O(1) property lookup instead of O(n) array iteration
-      const ESSENTIAL_PROPERTIES_SET = new Set([
-        'Name', 'name',
-        'Description', 'description',
-        'GlobalId', 'globalId',
-        'ObjectType', 'objectType',
-        'Tag', 'tag',
-        'type', 'expressID',
-        // Relationship pointers (Crucial for GraphBuilder)
-        'RelatingObject', 'RelatedObjects',
-        'RelatingStructure', 'RelatedElements',
-        'RelatingPropertyDefinition', 'RelatingMaterial',
-        'RelatingElement', 'RelatedElement',
-        'RelatingBuildingElement', 'RelatedOpeningElement',
-        'RelatingOpeningElement', 'RelatedBuildingElement',
-        'Representation'
-      ]);
+    // OPTIMIZATION 1: Use Set for O(1) property lookup instead of O(n) array iteration
+    const ESSENTIAL_PROPERTIES_SET = new Set([
+      'Name', 'name',
+      'Description', 'description',
+      'GlobalId', 'globalId',
+      'ObjectType', 'objectType',
+      'Tag', 'tag',
+      'type', 'expressID',
+      // Relationship pointers (Crucial for GraphBuilder)
+      'RelatingObject', 'RelatedObjects',
+      'RelatingStructure', 'RelatedElements',
+      'RelatingPropertyDefinition', 'RelatingMaterial',
+      'RelatingElement', 'RelatedElement',
+      'RelatingBuildingElement', 'RelatedOpeningElement',
+      'RelatingOpeningElement', 'RelatedBuildingElement',
+      'Representation'
+    ]);
 
-      // OPTIMIZATION 2: Minimal properties for geometry entities (much faster extraction)
-      const GEOMETRY_MINIMAL_PROPERTIES_SET = new Set([
-        'Name', 'name', 'type', 'expressID'
-      ]);
+    // OPTIMIZATION 2: Minimal properties for geometry entities (much faster extraction)
+    const GEOMETRY_MINIMAL_PROPERTIES_SET = new Set([
+      'Name', 'name', 'type', 'expressID'
+    ]);
 
-      const typeCount = relevantTypes.length;
+    const typeCount = relevantTypes.length;
 
-      for (let typeIdx = 0; typeIdx < typeCount; typeIdx++) {
-          const typeInfo = relevantTypes[typeIdx];
-          const typeId = typeInfo.typeID;
-          const typeName = getTypeName(ifcApi, modelId, typeId);
+    for (let typeIdx = 0; typeIdx < typeCount; typeIdx++) {
+      const typeInfo = relevantTypes[typeIdx];
+      const typeId = typeInfo.typeID;
+      const typeName = getTypeName(ifcApi, modelId, typeId);
 
-          // PERFORMANCE: Skip IFCREL* types (relationships)
-          // GraphBuilder already extracts relationships from entity properties
-          // Parsing these adds 85+ seconds for no benefit
-          if (typeName.startsWith('IFCREL')) continue;
+      // PERFORMANCE: Skip IFCREL* types (relationships)
+      // GraphBuilder already extracts relationships from entity properties
+      // Parsing these adds 85+ seconds for no benefit
+      if (typeName.startsWith('IFCREL')) continue;
 
-          // Report progress
-          if (typeIdx % 5 === 0) {
-            const pct = 10 + Math.floor((typeIdx / typeCount) * 80);
-            onProgress?.({
-                stage: 'processing',
-                percentage: pct,
-                message: `Scanning ${typeName} (${typeIdx}/${typeCount})...`
-            });
-            await allowUIUpdate();
-          }
-
-          const lineIds = ifcApi.GetLineIDsWithType(modelId, typeId);
-          const lineCount = lineIds.size();
-          
-          for (let i = 0; i < lineCount; i++) {
-              const expressId = lineIds.get(i);
-              
-              try {
-                  const entity = getLine(expressId);
-                  if (!entity) continue;
-
-                  // OPTIMIZATION 3: Geometry entities use minimal property set (much faster!)
-                  const isGeometry = isGeometryType(typeName);
-                  const propertiesSet = isGeometry ? GEOMETRY_MINIMAL_PROPERTIES_SET : ESSENTIAL_PROPERTIES_SET;
-
-                  // --- PROPERTY EXTRACTION START ---
-                  const properties: Record<string, any> = {};
-
-                  for (const key of propertiesSet) {
-                    const value = entity[key as keyof typeof entity];
-                    if (value === null || value === undefined) continue;
-
-                    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                      if (value.value !== undefined) {
-                        properties[key] = value.value;
-                      } else if (key === 'GlobalId' || key === 'globalId') {
-                        properties[key] = value;
-                      }
-                    } else if (Array.isArray(value)) {
-                      // OPTIMIZATION 5: Store raw array, defer unwrapping to graphBuilder
-                      // Avoids .map() call per entity (saves 10% of parse time)
-                      if (key === 'RelatedObjects' || key === 'RelatedElements' || key === 'Representation') {
-                          properties[key] = value;
-                      }
-                    } else if (typeof value !== 'function') {
-                      properties[key] = value;
-                    }
-                  }
-
-                  properties['_entityType'] = entity.type;
-                  properties['_expressID'] = entity.expressID;
-
-                  const schemaDef = getEntityDef(typeName);
-                  let nodeTypeFromSchema: NodeType = 'element';
-                  if (schemaDef) {
-                     const cat = schemaDef.category;
-                     if (cat === 'spatial') nodeTypeFromSchema = typeName === 'IFCSPACE' ? 'space' : 'building';
-                     else if (cat === 'structural') nodeTypeFromSchema = 'element';
-                     else if (cat === 'property') nodeTypeFromSchema = 'property';
-                     else if (cat === 'relationship') nodeTypeFromSchema = 'relationship';
-                  }
-
-                  const isVisible = nodeTypeFromSchema !== 'property' && nodeTypeFromSchema !== 'relationship';
-
-                  const node: GraphNode = {
-                    id: `node_${expressId}`,
-                    label: properties.Name || properties.name || properties.label || getEntityDisplayName(typeName),
-                    type: nodeTypeFromSchema,
-                    ifcType: typeName,
-                    isGraphVisible: isVisible,
-                    properties,  // OPTIMIZATION 6: No spread operator - direct assignment
-                    expressId,
-                  };
-
-                  // Separate geometry entities from semantic entities
-                  if (isGeometryType(typeName)) {
-                    geometryEntities.push(node);
-                  } else {
-                    allEntities.push(node);
-                  }
-                  nodeMap.set(expressId, node);
-              } catch (e) { /* skip */ }
-          }
-
-          // OPTIMIZATION 7: Clear cache per type batch (every ~50-100 types)
-          // Frees memory for WebIFC entity objects after they're parsed
-          if (typeIdx % 50 === 0) {
-              lineCache.clear();
-          }
+      // Report progress
+      if (typeIdx % 5 === 0) {
+        const pct = 10 + Math.floor((typeIdx / typeCount) * 80);
+        onProgress?.({
+          stage: 'processing',
+          percentage: pct,
+          message: `Scanning ${typeName} (${typeIdx}/${typeCount})...`
+        });
+        await allowUIUpdate();
       }
+
+      const lineIds = ifcApi.GetLineIDsWithType(modelId, typeId);
+      const lineCount = lineIds.size();
+
+      for (let i = 0; i < lineCount; i++) {
+        const expressId = lineIds.get(i);
+
+        try {
+          const entity = getLine(expressId);
+          if (!entity) continue;
+
+          // OPTIMIZATION 3: Geometry entities use minimal property set (much faster!)
+          const isGeometry = isGeometryType(typeName);
+          const propertiesSet = isGeometry ? GEOMETRY_MINIMAL_PROPERTIES_SET : ESSENTIAL_PROPERTIES_SET;
+
+          // --- PROPERTY EXTRACTION START ---
+          const properties: Record<string, any> = {};
+
+          for (const key of propertiesSet) {
+            const value = entity[key as keyof typeof entity];
+            if (value === null || value === undefined) continue;
+
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+              if (value.value !== undefined) {
+                properties[key] = value.value;
+              } else if (key === 'GlobalId' || key === 'globalId') {
+                properties[key] = value;
+              }
+            } else if (Array.isArray(value)) {
+              // OPTIMIZATION 5: Store raw array, defer unwrapping to graphBuilder
+              // Avoids .map() call per entity (saves 10% of parse time)
+              if (key === 'RelatedObjects' || key === 'RelatedElements' || key === 'Representation') {
+                properties[key] = value;
+              }
+            } else if (typeof value !== 'function') {
+              properties[key] = value;
+            }
+          }
+
+          properties['_entityType'] = entity.type;
+          properties['_expressID'] = entity.expressID;
+
+          const schemaDef = getEntityDef(typeName);
+          let nodeTypeFromSchema: NodeType = 'element';
+          if (schemaDef) {
+            const cat = schemaDef.category;
+            if (cat === 'spatial') nodeTypeFromSchema = typeName === 'IFCSPACE' ? 'space' : 'building';
+            else if (cat === 'structural') nodeTypeFromSchema = 'element';
+            else if (cat === 'property') nodeTypeFromSchema = 'property';
+            else if (cat === 'relationship') nodeTypeFromSchema = 'relationship';
+          }
+
+          const isVisible = nodeTypeFromSchema !== 'property' && nodeTypeFromSchema !== 'relationship';
+
+          const node: GraphNode = {
+            id: `node_${expressId}`,
+            label: properties.Name || properties.name || properties.label || getEntityDisplayName(typeName),
+            type: nodeTypeFromSchema,
+            ifcType: typeName,
+            isGraphVisible: isVisible,
+            properties,  // OPTIMIZATION 6: No spread operator - direct assignment
+            expressId,
+          };
+
+          // Separate geometry entities from semantic entities
+          if (isGeometryType(typeName)) {
+            geometryEntities.push(node);
+          } else {
+            allEntities.push(node);
+          }
+          nodeMap.set(expressId, node);
+        } catch (e) { /* skip */ }
+      }
+
+      // OPTIMIZATION 7: Clear cache per type batch (every ~50-100 types)
+      // Frees memory for WebIFC entity objects after they're parsed
+      if (typeIdx % 50 === 0) {
+        lineCache.clear();
+      }
+    }
   } catch (err) {
-      console.error('Fatal error in entity loop:', err);
+    console.error('Fatal error in entity loop:', err);
   }
-  
+
   const entityLoopEnd = performance.now();
   const entityLoopTime = entityLoopEnd - entityLoopStart;
 
@@ -937,15 +940,15 @@ export async function parseIFCFile(
     message: `Parsed ${allEntities.length + geometryEntities.length} entities (${allEntities.length} semantic, ${geometryEntities.length} geometry) in ${entityLoopTime.toFixed(0)}ms`
   });
 
-  
+
   // Clear cache and free resources immediately
   lineCache.clear();
   ifcApi.CloseModel(modelId);
   ifcApi.Dispose();
-  
+
   const endTime = performance.now();
   const totalTime = endTime - startTime;
-  
+
   // Post final progress
   onProgress?.({
     stage: 'complete',

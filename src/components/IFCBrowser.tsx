@@ -113,14 +113,14 @@ function buildPlainIFCLine(node: GraphNode): string {
 }
 
 // Component to display STEP line with syntax highlighting and expandable references
-function StepLineViewer({ 
-  node, 
+function StepLineViewer({
+  node,
   nodes,
   nodeByExpressId,
-  onReferenceClick, 
-  isSelected, 
+  onReferenceClick,
+  isSelected,
   onClick,
-  selectedRef 
+  selectedRef
 }: {
   node: GraphNode;
   nodes: GraphNode[];
@@ -131,16 +131,16 @@ function StepLineViewer({
   selectedRef: React.RefObject<HTMLDivElement> | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  
+
   // Get the raw STEP line from properties
   const rawStepLine = node.properties._ifcStep as string || '';
-  
+
   // Extract reference IDs from the STEP line (find all #NUMBER patterns)
   const references = useMemo(() => {
     const refs: { stepId: number; position: number }[] = [];
     const refRegex = /#(\d+)/g;
     let match;
-    
+
     while ((match = refRegex.exec(rawStepLine)) !== null) {
       const stepId = parseInt(match[1], 10);
       // Skip the entity's own ID at the start
@@ -148,7 +148,7 @@ function StepLineViewer({
         refs.push({ stepId, position: match.index });
       }
     }
-    
+
     // Remove duplicates
     const unique = new Map<number, { stepId: number; position: number }>();
     refs.forEach(r => {
@@ -156,25 +156,25 @@ function StepLineViewer({
         unique.set(r.stepId, r);
       }
     });
-    
+
     return Array.from(unique.values()).sort((a, b) => a.position - b.position);
   }, [rawStepLine, node.expressId]);
-  
+
   // Color-code the STEP line for syntax highlighting
   const renderStepLine = () => {
     if (!rawStepLine) return null;
-    
+
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
     const refRegex = /#(\d+)/g;
     let match;
     const matches: Array<{ index: number; length: number; stepId: number }> = [];
-    
+
     while ((match = refRegex.exec(rawStepLine)) !== null) {
       const stepId = parseInt(match[1], 10);
       matches.push({ index: match.index, length: match[0].length, stepId });
     }
-    
+
     // Add non-reference parts and reference parts
     for (const ref of matches) {
       if (ref.index > lastIndex) {
@@ -189,7 +189,7 @@ function StepLineViewer({
           parts.push(<span key={`text-${lastIndex}`}>{text}</span>);
         }
       }
-      
+
       parts.push(
         <span
           key={`ref-${ref.stepId}-${ref.index}`}
@@ -199,16 +199,16 @@ function StepLineViewer({
           #{ref.stepId}
         </span>
       );
-      
+
       lastIndex = ref.index + ref.length;
     }
-    
+
     if (lastIndex < rawStepLine.length) {
       parts.push(
         <span key="end">{rawStepLine.substring(lastIndex)}</span>
       );
     }
-    
+
     return parts;
   };
 
@@ -443,7 +443,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     const map = new Map<string, ReferenceWithContext[]>();
 
     if (!selectedNodeId) return map;
-    
+
     const selectedNode = nodeById.get(selectedNodeId);
     if (!selectedNode) return map;
 
@@ -453,14 +453,14 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
 
     // Look for all nodes whose STEP lines contain the selected entity's ID
     const searchPattern = `#${selectedExpressId}`;
-    
+
     for (const node of nodes) {
       // Don't reference itself
       if (node.id === selectedNodeId) continue;
 
       // Get the raw STEP line
       const rawStepLine = node.properties._ifcStep as string || '';
-      
+
       // Check if this node's STEP line contains a reference to the selected entity
       // Make sure it's an actual reference (preceded by #)
       if (rawStepLine.includes(searchPattern)) {
@@ -522,9 +522,9 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
         if (targetNode && targetNode.id !== sourceNodeId) {
           const existing = map.get(sourceNodeId)!;
           if (!existing.find(r => r.node.id === targetNode.id)) {
-            existing.push({ 
-              node: targetNode, 
-              viaProperty: propertyNames.join(', ') 
+            existing.push({
+              node: targetNode,
+              viaProperty: propertyNames.join(', ')
             });
           }
         }
@@ -563,14 +563,17 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
       const type = (n.ifcType || '').toLowerCase();
       const id = n.expressId ? n.expressId.toString() : '';
 
-      return label.includes(query) || type.includes(query) || id.includes(query);
+      // Also search by GlobalId (GUID)
+      const guid = typeof n.properties?.GlobalId === 'string' ? n.properties.GlobalId.toLowerCase() : '';
+
+      return label.includes(query) || type.includes(query) || id.includes(query) || guid.includes(query);
     });
   }, [sortedNodes, deferredQuery]);
 
   // CRITICAL: Virtual scrolling window - only render visible items
   const ITEM_HEIGHT = 24; // Height of each entity row in pixels
   const VISIBLE_ITEMS = 50; // Number of items to render (50 items = ~1200px)
-  
+
   const visibleStartIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VISIBLE_ITEMS);
   const visibleEndIndex = Math.min(filteredNodes.length, visibleStartIndex + VISIBLE_ITEMS * 3); // 3x buffer
   const visibleNodes = filteredNodes.slice(visibleStartIndex, visibleEndIndex);
@@ -616,12 +619,22 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
       if (targetNode) {
         onNodeSelect(targetNode);
         setGoToId('');
-        
+
         // Scroll to item
         const nodeIndex = filteredNodes.findIndex(n => n.id === targetNode.id);
         if (nodeIndex >= 0 && entityListRef.current) {
           const targetScrollTop = nodeIndex * ITEM_HEIGHT;
-          entityListRef.current.scrollTop = Math.max(0, targetScrollTop - 300);
+          const scrollPosition = Math.max(0, targetScrollTop - 300);
+
+          isProgrammaticScroll.current = true;
+          setScrollTop(scrollPosition);
+
+          requestAnimationFrame(() => {
+            if (entityListRef.current) {
+              entityListRef.current.scrollTop = scrollPosition;
+            }
+            setTimeout(() => { isProgrammaticScroll.current = false; }, 50);
+          });
         }
       } else {
         toast.error(`Entity #${id} not found`);
@@ -629,48 +642,44 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
     }
   }, [goToId, nodeByExpressId, onNodeSelect, filteredNodes]);
 
-  // Auto-scroll to selected node
-  useEffect(() => {
-    if (!selectedNodeId || !entityListRef.current) return;
+  // Handle locate selected node
+  const handleLocateSelected = useCallback(() => {
+    if (!selectedNodeId || !entityListRef.current) {
+      toast.info('No entity selected to locate');
+      return;
+    }
 
     // Find the selected node's index in the filtered list
     const nodeIndex = filteredNodes.findIndex(n => n.id === selectedNodeId);
     if (nodeIndex < 0) {
-      console.warn('[IFCBrowser] Selected node not found in filtered list:', selectedNodeId);
+      toast.warning('Selected entity is hidden by the current search filter');
       return;
     }
 
-    // Calculate scroll position - position item at 150px from top (about 6-7 items)
+    // Calculate scroll position - position item at 150px from top
     const OFFSET_FROM_TOP = 150;
     const targetScrollTop = nodeIndex * ITEM_HEIGHT;
     const scrollPosition = Math.max(0, targetScrollTop - OFFSET_FROM_TOP);
 
-    // Only scroll if the item is not already visible in a good position
-    const currentScroll = entityListRef.current.scrollTop;
-    const containerHeight = entityListRef.current.clientHeight;
-    const itemTopInViewport = targetScrollTop - currentScroll;
-    const isInGoodPosition = itemTopInViewport >= 100 && itemTopInViewport <= (containerHeight - 200);
-
-    if (isInGoodPosition) {
-      return;
-    }
-
     // Mark as programmatic scroll to prevent onScroll from interfering
     isProgrammaticScroll.current = true;
 
-    // Update state immediately (synchronously) for virtual list calculations
+    // 1. Update React state immediately so virtual items render
     setScrollTop(scrollPosition);
 
-    // Set DOM scroll position
-    if (entityListRef.current) {
-      entityListRef.current.scrollTop = scrollPosition;
-    }
+    // 2. We must wait for React to finish rendering the virtual DOM 
+    // before we can successfully set the DOM element's scrollTop
+    requestAnimationFrame(() => {
+      if (entityListRef.current) {
+        entityListRef.current.scrollTop = scrollPosition;
+      }
 
-    // Reset flag after scroll completes
-    setTimeout(() => {
-      isProgrammaticScroll.current = false;
-    }, 200);
-  }, [selectedNodeId, ITEM_HEIGHT]);
+      // Reset flag after scroll completes
+      setTimeout(() => {
+        isProgrammaticScroll.current = false;
+      }, 50);
+    });
+  }, [selectedNodeId, filteredNodes, ITEM_HEIGHT]);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -685,14 +694,14 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
               const lines: string[] = [];
               lines.push('ISO-10303-21;');
               lines.push('HEADER;');
-              
+
               // Use metadata header if available, otherwise use defaults
               const header = metadata?.ifcHeader;
               const fileDesc = header?.fileDescription || 'ViewDefinition [CoordinationView]';
               const fileName = header?.fileName || 'exported.ifc';
               const fileSchema = header?.fileSchema || 'IFC2X3';
               const timeStamp = header?.timeStamp || '';
-              
+
               lines.push(`FILE_DESCRIPTION(('${fileDesc}'),'2;1');`);
               // Include timestamp in FILE_NAME if available
               if (timeStamp) {
@@ -718,12 +727,12 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
           </Button>
         </div>
 
-        {/* Search and Go to ID */}
+        {/* Search, Go to ID, and Locate */}
         <div className="flex gap-2">
           <div className="flex-1 relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search by type, name, or #ID..."
+              placeholder="Search by type, name, or #ID/GUID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-8 text-sm pl-8 font-mono"
@@ -737,8 +746,18 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
               onKeyDown={(e) => e.key === 'Enter' && handleGoToId()}
               className="h-8 w-20 text-sm font-mono"
             />
-            <Button size="sm" variant="outline" onClick={handleGoToId} className="h-8 px-2">
+            <Button size="sm" variant="outline" onClick={handleGoToId} className="h-8 px-2" title="Go to Express ID">
               <Hash className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant={selectedNodeId ? "default" : "outline"}
+              onClick={handleLocateSelected}
+              className="h-8 px-3 ml-1"
+              disabled={!selectedNodeId}
+              title="Locate selected entity"
+            >
+              Locate
             </Button>
           </div>
         </div>
@@ -788,7 +807,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
             </div>
 
             {/* Virtualized Entity List */}
-            <div 
+            <div
               ref={entityListRef}
               className="flex-1 overflow-y-auto font-mono text-xs"
               onScroll={(e) => {
@@ -803,7 +822,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                 {visibleStartIndex > 0 && (
                   <div style={{ height: offsetY }} />
                 )}
-                
+
                 {/* Visible items */}
                 <div>
                   {visibleNodes.length > 0 ? (
@@ -825,7 +844,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                     </div>
                   )}
                 </div>
-                
+
                 {/* Bottom spacer */}
                 {visibleEndIndex < filteredNodes.length && (
                   <div style={{ height: (filteredNodes.length - visibleEndIndex) * ITEM_HEIGHT }} />

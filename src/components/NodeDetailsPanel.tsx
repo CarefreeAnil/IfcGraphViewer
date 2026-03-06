@@ -32,6 +32,10 @@ const TYPE_ICONS: Record<NodeType, React.ReactNode> = {
   relationship: <Box className="w-5 h-5" />,
   geometry: <Box className="w-5 h-5" />,
   other: <Box className="w-5 h-5" />,
+  Mesh: <Box className="w-5 h-5" />,
+  Curve: <Box className="w-5 h-5" />,
+  Points: <Box className="w-5 h-5" />,
+  Group: <Box className="w-5 h-5" />,
 };
 
 const TYPE_LABELS: Record<NodeType, string> = {
@@ -42,6 +46,10 @@ const TYPE_LABELS: Record<NodeType, string> = {
   relationship: 'Relationship',
   geometry: 'Geometry',
   other: 'Other',
+  Mesh: 'Mesh Geometry',
+  Curve: 'Curve Geometry',
+  Points: 'Point Cloud',
+  Group: 'Group',
 };
 
 const categoryColors: Record<string, string> = {
@@ -60,7 +68,7 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
   if (!node) return null;
 
   // For space entities, prioritize LongName over Name
-  const displayName = node.type === 'space' 
+  const displayName = node.type === 'space'
     ? (node.properties.LongName || node.properties.Name || node.label)
     : node.label;
 
@@ -70,9 +78,9 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
     name: displayName,
     attributes: node.properties || {},
     isMetadata: node.type === 'property' || node.type === 'other',
-    category: node.type === 'relationship' ? 'relationship' : 
-              (node.type === 'property' || node.type === 'other') ? 'metadata' : 
-              'structural',
+    category: node.type === 'relationship' ? 'relationship' :
+      (node.type === 'property' || node.type === 'other') ? 'metadata' :
+        'structural',
   };
 
   const definition = getEntityDefinition(entity.type);
@@ -186,9 +194,9 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
                   exit={{ opacity: 0, height: 0 }}
                   className="space-y-3"
                 >
-                  <EducationContent 
-                    entity={entity} 
-                    definition={definition} 
+                  <EducationContent
+                    entity={entity}
+                    definition={definition}
                     relatedPsets={relatedPsets}
                     schemaVersion={schemaVersion}
                   />
@@ -198,23 +206,35 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
 
             {/* Actual Properties */}
             {filteredProps.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-2 mt-2">
                 <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   <Tag className="w-3.5 h-3.5" />
                   Actual Properties
                 </label>
-                <div className="space-y-1">
-                  {filteredProps.map(([key, value]) => (
-                    <div key={key} className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/50">
-                      <span className="text-xs text-muted-foreground capitalize">
-                        {key.replace(/([A-Z])/g, ' $1').trim()}
-                      </span>
-                      <span className="text-xs font-mono text-foreground">
-                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                {(() => {
+                  const groups: Record<string, Record<string, any>> = {
+                    "General Properties": {}
+                  };
+
+                  filteredProps.forEach(([key, value]) => {
+                    const match = key.match(/^\[([^\]]+)\]\s*(.+)$/);
+                    if (match) {
+                      const groupName = match[1];
+                      const propName = match[2];
+                      if (!groups[groupName]) groups[groupName] = {};
+                      groups[groupName][propName] = value;
+                    } else {
+                      groups["General Properties"][key] = value;
+                    }
+                  });
+
+                  if (Object.keys(groups["General Properties"]).length === 0) {
+                    delete groups["General Properties"];
+                  }
+
+                  // We use an internal state for expanding property sections to avoid polluting the global state
+                  return <PropertyGroupsRenderer groups={groups} />;
+                })()}
               </div>
             )}
           </div>
@@ -244,12 +264,59 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
   );
 }
 
-function EducationContent({ 
-  entity, 
-  definition, 
+// Internal component to handle state for the property groups
+function PropertyGroupsRenderer({ groups }: { groups: Record<string, Record<string, any>> }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(Object.keys(groups))); // Expanded by default
+
+  const toggleGroup = (groupName: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      {Object.entries(groups).map(([groupName, props]) => (
+        <EducationSection
+          key={groupName}
+          title={`${groupName} (${Object.keys(props).length})`}
+          icon={<Tag className="w-3.5 h-3.5" />}
+          isOpen={expandedGroups.has(groupName)}
+          onToggle={() => toggleGroup(groupName)}
+        >
+          <div className="space-y-1 mb-1">
+            {Object.entries(props).map(([key, value]) => (
+              <div key={key} className="flex items-center justify-between px-2 py-1.5 rounded bg-muted/30">
+                <span className="text-[11px] text-muted-foreground capitalize flex-1 min-w-0 pr-2">
+                  {key.replace(/([A-Z])/g, ' $1').trim()}
+                </span>
+                <span
+                  className="text-[11px] font-mono text-foreground truncate max-w-[60%] text-right"
+                  title={typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                >
+                  {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </EducationSection>
+      ))}
+    </div>
+  );
+}
+
+function EducationContent({
+  entity,
+  definition,
   relatedPsets,
   schemaVersion = 'IFC4'
-}: { 
+}: {
   entity: IFCEntity;
   definition: any;
   relatedPsets: any[];
@@ -370,8 +437,8 @@ function EducationContent({
           <div className="flex flex-wrap gap-1">
             {[entity.type, ...definition.inheritance].map((type, index) => (
               <div key={type} className="flex items-center">
-                <Badge 
-                  variant={index === 0 ? 'default' : 'outline'} 
+                <Badge
+                  variant={index === 0 ? 'default' : 'outline'}
                   className="text-[10px] font-mono"
                 >
                   {type}
@@ -398,11 +465,10 @@ function EducationContent({
               const hasValue = entity.attributes[prop.name] !== undefined;
               const actualValue = entity.attributes[prop.name];
               return (
-                <div 
+                <div
                   key={prop.name}
-                  className={`rounded p-1.5 text-[11px] ${
-                    hasValue ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/50'
-                  }`}
+                  className={`rounded p-1.5 text-[11px] ${hasValue ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/50'
+                    }`}
                 >
                   <div className="flex items-center gap-1 justify-between">
                     <div className="flex items-center gap-1">
@@ -520,13 +586,13 @@ function EducationContent({
   );
 }
 
-function EducationSection({ 
-  title, 
-  icon, 
-  isOpen, 
-  onToggle, 
-  children 
-}: { 
+function EducationSection({
+  title,
+  icon,
+  isOpen,
+  onToggle,
+  children
+}: {
   title: string;
   icon: React.ReactNode;
   isOpen: boolean;

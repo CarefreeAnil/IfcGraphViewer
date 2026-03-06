@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { 
+import {
   Search, Tag, ChevronRight, ChevronDown, Hash, Box,
-  BookOpen, ExternalLink, Info, GitBranch, List, 
-  FileText, CheckCircle, AlertCircle, Lightbulb 
+  BookOpen, ExternalLink, Info, GitBranch, List,
+  FileText, CheckCircle, AlertCircle, Lightbulb
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,8 +14,8 @@ import { Separator } from '@/components/ui/separator';
 import { GraphNode, NodeType } from '@/types/graph';
 import { IFCEntity } from '@/types/ifc';
 import { getEntityDef } from '@/lib/ifcSchema';
-import { 
-  getEntityDefinition, 
+import {
+  getEntityDefinition,
   getRelatedPropertySets,
   getDocsUrl,
 } from '@/data/ifc-schema';
@@ -35,6 +35,10 @@ const TYPE_COLORS: Record<NodeType, string> = {
   relationship: 'bg-node-relationship/20 text-node-relationship border-node-relationship/30',
   geometry: 'bg-gray-500/20 text-gray-500 border-gray-500/30',
   other: 'bg-gray-600/20 text-gray-600 border-gray-600/30',
+  Mesh: 'bg-gray-500/20 text-gray-500 border-gray-500/30',
+  Curve: 'bg-gray-500/20 text-gray-500 border-gray-500/30',
+  Points: 'bg-gray-500/20 text-gray-500 border-gray-500/30',
+  Group: 'bg-gray-600/20 text-gray-600 border-gray-600/30',
 };
 
 const categoryColors: Record<string, string> = {
@@ -59,11 +63,11 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
   const filteredNodes = useMemo(() => {
     if (!searchQuery.trim()) return nodes;
     const query = searchQuery.toLowerCase();
-    return nodes.filter(node => 
+    return nodes.filter(node =>
       node.label.toLowerCase().includes(query) ||
       node.ifcType.toLowerCase().includes(query) ||
-      Object.entries(node.properties).some(([key, value]) => 
-        key.toLowerCase().includes(query) || 
+      Object.entries(node.properties).some(([key, value]) =>
+        key.toLowerCase().includes(query) ||
         String(value).toLowerCase().includes(query)
       )
     );
@@ -141,7 +145,7 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
                 const schemaDef = getEntityDef(ifcType);
                 const displayName = schemaDef?.displayName || ifcType;
                 const schemaColor = schemaDef?.color || '#888';
-                
+
                 return (
                   <div key={ifcType} className="mb-1">
                     {/* Type Header */}
@@ -154,7 +158,7 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
                       ) : (
                         <ChevronRight className="w-4 h-4 text-muted-foreground" />
                       )}
-                      <div 
+                      <div
                         className="w-3 h-3 rounded-full"
                         style={{ backgroundColor: schemaColor }}
                         title={schemaDef?.description}
@@ -186,11 +190,10 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
                                 toggleNode(node.id);
                                 onNodeSelect(node);
                               }}
-                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md transition-colors text-left ${
-                                selectedNodeId === node.id 
-                                  ? 'bg-primary/20 border border-primary/30' 
-                                  : 'hover:bg-muted/50'
-                              }`}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md transition-colors text-left ${selectedNodeId === node.id
+                                ? 'bg-primary/20 border border-primary/30'
+                                : 'hover:bg-muted/50'
+                                }`}
                             >
                               {expandedNodes.has(node.id) ? (
                                 <ChevronDown className="w-3 h-3 text-muted-foreground" />
@@ -238,28 +241,56 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
 
                                 {/* Properties Section */}
                                 {Object.keys(node.properties).length > 0 && (
-                                  <div className="bg-muted/30 rounded-md p-2 space-y-1">
-                                    <div className="flex items-center gap-1 mb-2 text-xs text-muted-foreground">
-                                      <Tag className="w-3 h-3" />
-                                      <span>Actual Properties</span>
-                                    </div>
-                                    {Object.entries(node.properties).map(([key, value]) => (
-                                      <div
-                                        key={key}
-                                        className="flex items-start justify-between gap-2 px-2 py-1 rounded bg-background/50 text-xs"
-                                      >
-                                        <span className="text-muted-foreground font-medium min-w-0 break-words">
-                                          {key}
-                                        </span>
-                                        <span className="text-foreground font-mono text-right min-w-0 break-all">
-                                          {formatPropertyValue(value)}
-                                        </span>
-                                      </div>
-                                    ))}
-                                    
+                                  <div className="bg-muted/30 rounded-md p-2 space-y-3">
+                                    {/* Group properties dynamically */}
+                                    {(() => {
+                                      const groups: Record<string, Record<string, any>> = {
+                                        "General Properties": {}
+                                      };
+
+                                      Object.entries(node.properties).forEach(([key, value]) => {
+                                        const match = key.match(/^\[([^\]]+)\]\s*(.+)$/);
+                                        if (match) {
+                                          const groupName = match[1];
+                                          const propName = match[2];
+                                          if (!groups[groupName]) groups[groupName] = {};
+                                          groups[groupName][propName] = value;
+                                        } else {
+                                          groups["General Properties"][key] = value;
+                                        }
+                                      });
+
+                                      // Omit General Properties if empty
+                                      if (Object.keys(groups["General Properties"]).length === 0) {
+                                        delete groups["General Properties"];
+                                      }
+
+                                      return Object.entries(groups).map(([groupName, props]) => (
+                                        <div key={groupName} className="space-y-1">
+                                          <div className="flex items-center gap-1 mb-1 text-xs font-semibold text-primary/80">
+                                            <Tag className="w-3 h-3" />
+                                            <span>{groupName}</span>
+                                          </div>
+                                          {Object.entries(props).map(([key, value]) => (
+                                            <div
+                                              key={key}
+                                              className="flex items-start justify-between gap-2 px-2 py-1 rounded bg-background/50 text-xs"
+                                            >
+                                              <span className="text-muted-foreground font-medium min-w-0 break-words flex-1">
+                                                {key}
+                                              </span>
+                                              <span className="text-foreground font-mono text-right min-w-0 break-all max-w-[60%]">
+                                                {formatPropertyValue(value)}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ));
+                                    })()}
+
                                     {/* Express ID */}
                                     {node.expressId && (
-                                      <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-background/50 text-xs mt-2 border-t border-border pt-2">
+                                      <div className="flex items-center justify-between gap-2 px-2 py-1/2 mt-2 border-t border-border pt-2 text-xs">
                                         <span className="flex items-center gap-1 text-muted-foreground">
                                           <Hash className="w-3 h-3" />
                                           Express ID
@@ -308,9 +339,9 @@ function EducationContent({ node }: { node: GraphNode }) {
     name: node.label,
     attributes: node.properties || {},
     isMetadata: node.type === 'property' || node.type === 'other',
-    category: node.type === 'relationship' ? 'relationship' : 
-              (node.type === 'property' || node.type === 'other') ? 'metadata' : 
-              'structural',
+    category: node.type === 'relationship' ? 'relationship' :
+      (node.type === 'property' || node.type === 'other') ? 'metadata' :
+        'structural',
   };
 
   const definition = getEntityDefinition(entity.type);
@@ -401,8 +432,8 @@ function EducationContent({ node }: { node: GraphNode }) {
           <div className="flex flex-wrap gap-1">
             {[entity.type, ...definition.inheritance].map((type, index) => (
               <div key={type} className="flex items-center">
-                <Badge 
-                  variant={index === 0 ? 'default' : 'outline'} 
+                <Badge
+                  variant={index === 0 ? 'default' : 'outline'}
                   className="text-[10px] font-mono"
                 >
                   {type}
@@ -428,11 +459,10 @@ function EducationContent({ node }: { node: GraphNode }) {
             {definition.properties.slice(0, 5).map((prop) => {
               const hasValue = entity.attributes[prop.name] !== undefined;
               return (
-                <div 
+                <div
                   key={prop.name}
-                  className={`rounded p-1.5 text-[11px] ${
-                    hasValue ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/50'
-                  }`}
+                  className={`rounded p-1.5 text-[11px] ${hasValue ? 'bg-green-500/10 border border-green-500/20' : 'bg-muted/50'
+                    }`}
                 >
                   <div className="flex items-center gap-1">
                     {hasValue ? (
@@ -486,13 +516,13 @@ function EducationContent({ node }: { node: GraphNode }) {
 }
 
 // Mini collapsible section for education content
-function EducationSection({ 
-  title, 
-  icon, 
-  isOpen, 
-  onToggle, 
-  children 
-}: { 
+function EducationSection({
+  title,
+  icon,
+  isOpen,
+  onToggle,
+  children
+}: {
   title: string;
   icon: React.ReactNode;
   isOpen: boolean;
