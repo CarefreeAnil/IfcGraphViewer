@@ -699,23 +699,32 @@ export function validateIFCFileSyntax(content: string): ValidationError[] {
   }
 
   // Check for balanced parentheses and semicolons in data lines
-  const dataSection = content.match(/DATA;([\s\S]*?)ENDSEC;/);
-  if (dataSection) {
-    const lines = dataSection[1].split('\n').filter(line => line.trim());
-    // Only check sample of lines if file is huge to avoid browser hang
-    const limit = Math.min(lines.length, 500);
+  // Use indexOf-based scanning to avoid copying the entire DATA section
+  const dataStart = content.indexOf('DATA;');
+  const dataEnd = dataStart !== -1 ? content.indexOf('ENDSEC;', dataStart) : -1;
+  if (dataStart !== -1 && dataEnd !== -1) {
+    let pos = dataStart + 5;
+    let linesChecked = 0;
+    const limit = 500;
 
-    for(let i=0; i<limit; i++) {
-        const line = lines[i];
-        if (line.trim().length > 0 && !line.trim().endsWith(';')) {
-        errors.push(enrichErrorWithFunctionalPart({
-          severity: 'error',
-          type: 'SYNTAX_ERROR',
-          code: 'SYN004',
-          message: `Line ${i + 1} does not end with semicolon (checked first 500 lines)`,
-          lineNumber: i + 1,
-        }));
+    while (pos < dataEnd && linesChecked < limit) {
+      const lineEnd = content.indexOf('\n', pos);
+      const end = lineEnd === -1 || lineEnd > dataEnd ? dataEnd : lineEnd;
+      const line = content.substring(pos, end).trim();
+
+      if (line.length > 0) {
+        if (!line.endsWith(';')) {
+          errors.push(enrichErrorWithFunctionalPart({
+            severity: 'error',
+            type: 'SYNTAX_ERROR',
+            code: 'SYN004',
+            message: `Line does not end with semicolon (checked first ${limit} lines)`,
+            lineNumber: linesChecked + 1,
+          }));
+        }
+        linesChecked++;
       }
+      pos = end + 1;
     }
   }
 

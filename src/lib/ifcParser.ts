@@ -1,6 +1,7 @@
 import * as WebIFC from 'web-ifc';
 import { GraphData, GraphNode, GraphEdge, NodeType, ParsedIFCData } from '@/types/graph';
-import { validateIFCData, validateIFCFileSyntax, ValidationError } from '@/lib/ifcValidatorEnhanced';
+// Local validation is disabled (WIP) - will be re-enabled later
+// import { validateIFCData, validateIFCFileSyntax, ValidationError } from '@/lib/ifcValidatorEnhanced';
 import { getEntityDef, getEntityDisplayName } from '@/lib/ifcSchema';
 import { NODE_COLORS } from '@/lib/colorScheme';
 // IFC5 imports
@@ -134,6 +135,7 @@ const GEOMETRY_TYPES = new Set([
   'IFCOPENSHELL',
   'IFCFACE',
   'IFCFACESURFACE',
+  'IFCFACEBASEDSURFACEMODEL', // Deprecated in IFC4
   'IFCFACEOUTERBOUND',
   'IFCFACEBOUND',
   'IFCLOOP',
@@ -206,57 +208,6 @@ const GEOMETRY_TYPES = new Set([
   'IFCCONNECTIONPOINTECCENTRICITY',
 ]);
 
-// IFC Type mapping - fallback for types without schema
-const IFC_TYPE_MAPPING: Record<number, NodeType> = {
-  // Spatial entities
-  [WebIFC.IFCBUILDING]: 'building',
-  [WebIFC.IFCBUILDINGSTOREY]: 'building',
-  [WebIFC.IFCSITE]: 'building',
-  [WebIFC.IFCPROJECT]: 'building',
-  [WebIFC.IFCSPACE]: 'space',
-  // Structural elements
-  [WebIFC.IFCWALL]: 'element',
-  [WebIFC.IFCWALLSTANDARDCASE]: 'element',
-  [WebIFC.IFCDOOR]: 'element',
-  [WebIFC.IFCWINDOW]: 'element',
-  [WebIFC.IFCSLAB]: 'element',
-  [WebIFC.IFCCOLUMN]: 'element',
-  [WebIFC.IFCBEAM]: 'element',
-  [WebIFC.IFCROOF]: 'element',
-  [WebIFC.IFCSTAIR]: 'element',
-  [WebIFC.IFCRAILING]: 'element',
-  [WebIFC.IFCFURNISHINGELEMENT]: 'element',
-  // Relationship entities - ALL relationships should have type 'relationship'
-  [WebIFC.IFCRELCONTAINEDINSPATIALSTRUCTURE]: 'relationship',
-  [WebIFC.IFCRELAGGREGATES]: 'relationship',
-  [WebIFC.IFCRELVOIDSELEMENT]: 'relationship',
-  [WebIFC.IFCRELFILLSELEMENT]: 'relationship',
-  [WebIFC.IFCRELDEFINESBYPROPERTIES]: 'relationship',  // FIXED: Was 'property', should be 'relationship'
-  [WebIFC.IFCRELDEFINESBYTYPE]: 'relationship',  // ADDED: Was missing, causing default to 'element'
-  [WebIFC.IFCRELASSOCIATES]: 'relationship',  // ADDED: Material/classification associations
-  [WebIFC.IFCRELASSOCIATESMATERIAL]: 'relationship',  // ADDED: Material associations
-  [WebIFC.IFCRELASSOCIATESCLASSIFICATION]: 'relationship',  // ADDED: Classification associations
-  [WebIFC.IFCRELASSOCIATESLIBRARY]: 'relationship',  // ADDED: Library associations
-  [WebIFC.IFCRELSPACEBOUNDARY]: 'relationship',  // ADDED: Space boundary relationships
-  [WebIFC.IFCRELCONNECTS]: 'relationship',  // ADDED: Generic connects
-  [WebIFC.IFCRELDECLARES]: 'relationship',  // ADDED: Declaration relationships
-  // Property and quantity entities - these have type codes in WebIFC
-  ...(WebIFC.IFCPROPERTYSET !== undefined && { [WebIFC.IFCPROPERTYSET]: 'property' }),
-  ...(WebIFC.IFCELEMENTQUANTITY !== undefined && { [WebIFC.IFCELEMENTQUANTITY]: 'property' }),
-};
-
-function getNodeType(ifcType: number): NodeType {
-  const mapped = IFC_TYPE_MAPPING[ifcType];
-  if (mapped) return mapped;
-
-  // If not in explicit mapping, infer from WebIFC type name
-  const typeName = Object.entries(WebIFC).find(([key, val]) => val === ifcType)?.[0] || '';
-  if (typeName.includes('REL')) return 'relationship';  // Any IFCREL* type
-  if (typeName.includes('PROPERTY') || typeName.includes('QUANTITY')) return 'property';
-
-  return 'element';  // Default fallback
-}
-
 function getTypeName(ifcApi: WebIFC.IfcAPI, modelId: number, typeId: number): string {
   try {
     const typeName = ifcApi.GetNameFromTypeCode(typeId);
@@ -275,70 +226,6 @@ export { isGeometryType };
 // Utility to allow UI to update without blocking
 function allowUIUpdate(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
-}
-
-/**
- * Reconstructs IFC STEP format representation preserving references.
- * Converts entity object back to IFC STEP-like format with #xxx reference markers.
- * Example: IfcSite(#9, 'Name', ...) instead of IfcSite({OwnerHistory: {...}, Name: 'Name', ...})
- */
-function reconstructIFCStepFormat(typeName: string, entity: any, ifcApi: WebIFC.IfcAPI, modelId: number): string {
-  try {
-    // Get the entity's expressID for reference in properties
-    const expressId = entity.expressID;
-
-    // Build a parameter list showing references as #xxx and values as-is
-    const params: string[] = [];
-
-    // Iterate through all properties to preserve order and structure
-    for (const [key, value] of Object.entries(entity)) {
-      if (key === 'type' || key === 'expressID') continue;
-
-      // Format value for display
-      if (value === null || value === undefined) {
-        params.push('$');  // $ represents undefined/null in IFC STEP
-      } else if (typeof value === 'object' && !Array.isArray(value)) {
-        // This might be a reference - check if it has expressID
-        const objValue = value as any;
-        if (objValue?.expressID !== undefined) {
-          params.push(`#${objValue.expressID}`);
-        } else if (objValue?.value !== undefined) {
-          // Wrapped value - unwrap it
-          const v = objValue.value;
-          if (typeof v === 'string') {
-            params.push(`'${v}'`);
-          } else {
-            params.push(String(v));
-          }
-        } else {
-          // Complex object - try to extract a meaningful representation
-          params.push(JSON.stringify(value).substring(0, 20) + '...');
-        }
-      } else if (Array.isArray(value)) {
-        // Array of values/references
-        const arrayItems = value.map((v: any) => {
-          if (v === null || v === undefined) return '$';
-          if (typeof v === 'object' && v.expressID !== undefined) return `#${v.expressID}`;
-          if (typeof v === 'string') return `'${v}'`;
-          return String(v);
-        });
-        params.push(`(${arrayItems.join(', ')})`);
-      } else if (typeof value === 'string') {
-        params.push(`'${value}'`);
-      } else if (typeof value === 'number') {
-        params.push(String(value));
-      } else if (typeof value === 'boolean') {
-        params.push(value ? '.T.' : '.F.');
-      } else {
-        params.push(String(value));
-      }
-    }
-
-    return `#${expressId}= ${typeName}(${params.join(', ')})`;
-  } catch (err) {
-    // Fallback - just show basic info
-    return `#${(entity as any)?.expressID}= ${typeName}(...)`;
-  }
 }
 
 // Type for progress callback
@@ -374,38 +261,42 @@ function extractRawStepLines(fileText: string): Map<number, string> {
       const hashIdx = fileText.indexOf('#', pos);
       if (hashIdx === -1 || hashIdx >= dataEnd) break;
 
-      // Read ID
-      let idStr = '';
+      // Read ID using substring instead of char-by-char concatenation
       let i = hashIdx + 1;
-      while (i < dataEnd && fileText[i] >= '0' && fileText[i] <= '9') {
-        idStr += fileText[i];
+      while (i < dataEnd && fileText.charCodeAt(i) >= 48 && fileText.charCodeAt(i) <= 57) {
         i++;
       }
+      const idLen = i - (hashIdx + 1);
 
       // Ensure it's an entity definition: #[id]=
       // Allow spaces between ID and =
-      while (i < dataEnd && fileText[i] === ' ') i++;
+      while (i < dataEnd && fileText.charCodeAt(i) === 32) i++;
 
-      if (idStr.length > 0 && fileText[i] === '=') {
-        const id = parseInt(idStr, 10);
+      if (idLen > 0 && fileText.charCodeAt(i) === 61) { // '='
+        const id = parseInt(fileText.substring(hashIdx + 1, hashIdx + 1 + idLen), 10);
         let inString = false;
         let lineEnd = i + 1;
 
         // Find the end of this statement (a semicolon not within quotes)
+        // Use charCodeAt for faster character comparison in tight loop
         while (lineEnd < dataEnd) {
-          const char = fileText[lineEnd];
-          if (char === "'") {
+          const ch = fileText.charCodeAt(lineEnd);
+          if (ch === 39) { // single quote
             inString = !inString;
-          } else if (char === ';' && !inString) {
-            // Found end of statement
+          } else if (ch === 59 && !inString) { // semicolon
             break;
           }
           lineEnd++;
         }
 
         if (lineEnd <= dataEnd) {
-          // Include the semicolon, replace newlines/extra spaces
-          stepLineMap.set(id, fileText.substring(hashIdx, lineEnd + 1).replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' '));
+          // Include the semicolon, only apply regex cleanup if line contains newlines
+          const raw = fileText.substring(hashIdx, lineEnd + 1);
+          if (raw.indexOf('\n') !== -1 || raw.indexOf('\r') !== -1) {
+            stepLineMap.set(id, raw.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' '));
+          } else {
+            stepLineMap.set(id, raw);
+          }
           pos = lineEnd + 1;
         } else {
           break; // Malformed
@@ -523,7 +414,6 @@ export async function parseIFCFile(
   let ifcHeader: any = {
     fullHeader: '',
   };
-  let syntaxErrors: ValidationError[] = [];
 
   let rawStepLines: Map<number, string> = new Map();
 
@@ -653,8 +543,8 @@ export async function parseIFCFile(
       rawStepLines = extractRawStepLines(fileText);
       console.log(`[Parser] STEP: Extracted ${rawStepLines.size} raw STEP lines (ALL entities)`);
 
-      // Perform syntax validation (STEP format)
-      syntaxErrors = validateIFCFileSyntax(fileText);
+      // Local validation disabled (WIP) - will be re-enabled later
+      // syntaxErrors = validateIFCFileSyntax(fileText);
 
       // Clear fileText after extraction - it's no longer needed and can consume significant memory
       // This frees ~20MB for the 19MB file
@@ -703,88 +593,6 @@ export async function parseIFCFile(
   // Get all entity types in the model
   const allTypes = ifcApi.GetAllTypesOfModel(modelId);
 
-  // ADMIN_ONLY_TYPES: Entities that should NEVER appear in any visualization
-  // These are purely administrative and have 0% visual value
-  // All other entities will be included in the complete dataset for LoD filtering
-  const ADMIN_ONLY_TYPES = new Set([
-    'IFCOWNERHISTORY',           // Admin ownership tracking
-    'IFCPERSON',                  // Creator/modifier person
-    'IFCORGANIZATION',            // Creator/modifier organization  
-    'IFCPERSONANDORGANIZATION',   // Person + org combo
-    'IFCAPPLICATION',             // Software that created entity
-  ]);
-
-  // METADATA_PROPERTIES that should be skipped during REFERENCE EXTRACTION
-  // We still parse them (for tree browser), but don't extract references from them
-  // This prevents: IfcSite -> OwnerHistory -> Person false reference chains
-  const METADATA_PROPERTIES = new Set([
-    'OwnerHistory',               // Never extract references from this
-    'LastModifyingUser',
-    'LastModifyingApplication',
-    'CreationDate',
-    'OwningUser',                 // In OwnerHistory
-    'OwningApplication',          // In OwnerHistory
-  ]);
-
-  // PROPERTY_TYPES that should be parsed but not shown as graph nodes
-  const PROPERTY_TYPES = new Set([
-    'IFCPROPERTYSET',
-    'IFCELEMENTQUANTITY',
-    'IFCQUANTITYLENGTH',
-    'IFCQUANTITYAREA',
-    'IFCQUANTITYVOLUME',
-    'IFCQUANTITYCOUNT',
-    'IFCQUANTITYWEIGHT',
-    'IFCQUANTITYTIME',
-    'IFCSINGLEVALUEPROPERTIES',
-    'IFCENUMERATEDVALUEPROPERTY',
-    'IFCPROPERTYTABLEVALUE',
-    'IFCRANGEPROPERTY',
-    'IFCREFERENCEVALUEPROPERTY',
-    'IFCLISTVALUEPROPERTY',
-    'IFCPROPERTYENUMERATION',
-    'IFCMATERIALPROPERTIES',
-    'IFCMECHANICALPROPERTIES',
-    'IFCTHERMALPROPERTIES',
-    'IFCHYDRAULICFLUIDPROPERTIES',
-    // Material and classification properties
-    'IFCMATERIAL',
-    'IFCMATERIALLAYER',
-    'IFCMATERIALLAYERSET',
-    'IFCMATERIALCONSTITUENTSET',
-    'IFCCLASSIFICATION',
-    'IFCCLASSIFICATIONREFERENCE',
-    // Representation and placement - geometric/structural metadata
-    'IFCPRODUCTDEFINITIONSHAPE',        // Shape representation container
-    'IFCLOCALPLACEMENT',                // Coordinate system placement
-    'IFCAXIS2PLACEMENT2D',              // 2D coordinate system
-    'IFCAXIS2PLACEMENT3D',              // 3D coordinate system
-    // Profile and boundary definitions - geometric templates
-    'IFCARBITRARYCLOSEDPROFILEDEF',     // Profile definition
-    'IFCFACEOUTERBOUND',                // Face boundary
-    'IFCCLOSEDSHELL',                   // Shell geometry primitive
-    'IFCCLOSINGCONTEXT',                // Closing definition
-    // Type definitions - schema templates, not instances
-    'IFCWALLTYPE',                      // Wall type template
-    'IFCDOORTYPE',                      // Door type template
-    'IFCWINDOWTYPE',                    // Window type template
-    'IFCSLABTYPE',                      // Slab type template
-    'IFCCOLUMNTYPE',                    // Column type template
-    'IFCBEAMTYPE',                      // Beam type template
-    'IFCDUCTTYPE',                      // Duct type template
-    'IFCPIPESEGMENTTYPE',               // Pipe type template
-    'IFCPUMPTYPE',                      // Pump type template
-    'IFCFANTYPE',                       // Fan type template
-    'IFCCHILLERTYPE',                   // Chiller type template
-    'IFCCOILTYPE',                      // Coil type template
-    'IFCBOILERTYPE',                    // Boiler type template
-    'IFCCOVERING TYPE',                 // Covering type template
-    'IFCRELDEFINESBYTYPE',              // Type definition relationship
-    // Color and styling - appearance metadata
-    'IFCCOLOURRGB',                     // Color definition
-    'IFCSURFACESTYLE',                  // Surface styling
-  ]);
-
   // 3. Process entities
   // OPTIMIZATION: Instead of iterating by Schema Type (which requires checking 800+ types),
   // we iterate ALL lines present in the model. This is O(N) where N is entity count.
@@ -807,14 +615,20 @@ export async function parseIFCFile(
       'ObjectType', 'objectType',
       'Tag', 'tag',
       'type', 'expressID',
-      // Relationship pointers (Crucial for GraphBuilder)
+      // Relationship pointers (Crucial for GraphBuilder LPG edges)
       'RelatingObject', 'RelatedObjects',
       'RelatingStructure', 'RelatedElements',
       'RelatingPropertyDefinition', 'RelatingMaterial',
-      'RelatingElement', 'RelatedElement',
       'RelatingBuildingElement', 'RelatedOpeningElement',
       'RelatingOpeningElement', 'RelatedBuildingElement',
-      'Representation'
+      'RelatingType', 'RelatingClassification',
+      'RelatingElement', 'RelatedElement',
+      'RelatingSpace',
+      'RelatingContext', 'RelatedDefinitions',
+      'RelatingLibrary',
+      'RelatingGroup',           // IFCRELASSIGNSTOGROUP
+      'RelatingPort', 'RelatedPort', // IFCRELCONNECTSPORTS, IFCRELCONNECTSPORTTOELEMENT
+      'RelatingSystem', 'RelatedBuildings', // IFCRELSERVICESBUILDINGS
     ]);
 
     // OPTIMIZATION 2: Minimal properties for geometry entities (much faster extraction)
@@ -829,13 +643,11 @@ export async function parseIFCFile(
       const typeId = typeInfo.typeID;
       const typeName = getTypeName(ifcApi, modelId, typeId);
 
-      // PERFORMANCE: Skip IFCREL* types (relationships)
-      // GraphBuilder already extracts relationships from entity properties
-      // Parsing these adds 85+ seconds for no benefit
-      if (typeName.startsWith('IFCREL')) continue;
+      // NOTE: IFCREL* types are parsed to create LPG relationship nodes in the graph.
+      // The GraphBuilder uses these as intermediate nodes for edge creation.
 
-      // Report progress
-      if (typeIdx % 5 === 0) {
+      // Report progress — yield every 20 types (balance between GC opportunity and delay)
+      if (typeIdx % 20 === 0) {
         const pct = 10 + Math.floor((typeIdx / typeCount) * 80);
         onProgress?.({
           stage: 'processing',
@@ -848,16 +660,31 @@ export async function parseIFCFile(
       const lineIds = ifcApi.GetLineIDsWithType(modelId, typeId);
       const lineCount = lineIds.size();
 
+      // OPTIMIZATION: Hoist per-type computations out of inner entity loop
+      // These are constant for all entities of the same type
+      const isGeometry = isGeometryType(typeName);
+      const propertiesSet = isGeometry ? GEOMETRY_MINIMAL_PROPERTIES_SET : ESSENTIAL_PROPERTIES_SET;
+      const schemaDef = getEntityDef(typeName);
+      let nodeTypeFromSchema: NodeType = 'element';
+      if (schemaDef) {
+        const cat = schemaDef.category;
+        if (cat === 'spatial') nodeTypeFromSchema = typeName === 'IFCSPACE' ? 'space' : 'building';
+        else if (cat === 'structural') nodeTypeFromSchema = 'element';
+        else if (cat === 'property') nodeTypeFromSchema = 'property';
+        else if (cat === 'relationship') nodeTypeFromSchema = 'relationship';
+      } else if (typeName.toUpperCase().startsWith('IFCREL')) {
+        // Fallback: any IFCREL* type not in schema is still a relationship
+        // Note: WebIFC returns PascalCase names (e.g. 'IfcRelAssignsToGroup')
+        nodeTypeFromSchema = 'relationship';
+      }
+      const isVisible = nodeTypeFromSchema !== 'property' && nodeTypeFromSchema !== 'relationship';
+
       for (let i = 0; i < lineCount; i++) {
         const expressId = lineIds.get(i);
 
         try {
           const entity = getLine(expressId);
           if (!entity) continue;
-
-          // OPTIMIZATION 3: Geometry entities use minimal property set (much faster!)
-          const isGeometry = isGeometryType(typeName);
-          const propertiesSet = isGeometry ? GEOMETRY_MINIMAL_PROPERTIES_SET : ESSENTIAL_PROPERTIES_SET;
 
           // --- PROPERTY EXTRACTION START ---
           const properties: Record<string, any> = {};
@@ -875,7 +702,7 @@ export async function parseIFCFile(
             } else if (Array.isArray(value)) {
               // OPTIMIZATION 5: Store raw array, defer unwrapping to graphBuilder
               // Avoids .map() call per entity (saves 10% of parse time)
-              if (key === 'RelatedObjects' || key === 'RelatedElements' || key === 'Representation') {
+              if (key === 'RelatedObjects' || key === 'RelatedElements' || key === 'RelatedDefinitions' || key === 'RelatedBuildings' || key === 'Representation') {
                 properties[key] = value;
               }
             } else if (typeof value !== 'function') {
@@ -885,18 +712,6 @@ export async function parseIFCFile(
 
           properties['_entityType'] = entity.type;
           properties['_expressID'] = entity.expressID;
-
-          const schemaDef = getEntityDef(typeName);
-          let nodeTypeFromSchema: NodeType = 'element';
-          if (schemaDef) {
-            const cat = schemaDef.category;
-            if (cat === 'spatial') nodeTypeFromSchema = typeName === 'IFCSPACE' ? 'space' : 'building';
-            else if (cat === 'structural') nodeTypeFromSchema = 'element';
-            else if (cat === 'property') nodeTypeFromSchema = 'property';
-            else if (cat === 'relationship') nodeTypeFromSchema = 'relationship';
-          }
-
-          const isVisible = nodeTypeFromSchema !== 'property' && nodeTypeFromSchema !== 'relationship';
 
           const node: GraphNode = {
             id: `node_${expressId}`,
@@ -909,7 +724,7 @@ export async function parseIFCFile(
           };
 
           // Separate geometry entities from semantic entities
-          if (isGeometryType(typeName)) {
+          if (isGeometry) {
             geometryEntities.push(node);
           } else {
             allEntities.push(node);

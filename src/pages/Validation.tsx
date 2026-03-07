@@ -465,6 +465,10 @@ const Validation = () => {
                     <p>✓ Official compliance checking</p>
                   </div>
 
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    Warning: Your IFC file will be sent to the buildingSMART validation service for online validation.
+                  </div>
+
                   <div className="pt-4 border-t">
                     <h4 className="font-semibold mb-2 text-sm">Validate your IFC files against the following checks:</h4>
                     <ul className="text-xs space-y-1 text-muted-foreground">
