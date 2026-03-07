@@ -199,6 +199,7 @@ const ENTITY_TO_LAYER_MAP: Record<string, 'domain' | 'interoperability' | 'core'
   'IfcResource': 'core',
   'IfcGroup': 'core',
   'IfcSystem': 'core',
+  'IfcDistributionSystem': 'core',
   'IfcZone': 'core',
   'IfcContext': 'core',
   'IfcProjectLibrary': 'core',

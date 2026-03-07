@@ -20,7 +20,6 @@ import { ValidationDialog } from '@/components/ValidationDialog';
 import { IFC5TreeBrowser } from '@/components/IFC5TreeBrowser';
 import { IFC5PropertyViewer } from '@/components/IFC5PropertyViewer';
 import { ConsolidatedLearningPanel } from '@/features/educational/components/ConsolidatedLearningPanel';
-import { createGraphDataFromEntities } from '@/lib/graphBuilder';
 import { ParsedIFCData, GraphNode, NodeType } from '@/types/graph';
 import { ComposedObject } from '@/types/ifc5';
 import { EducationalSample } from '@/features/educational/data/educationalSamples';
@@ -28,7 +27,8 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { useIFCWorker } from '@/hooks/useIFCWorker';
-import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
+// Local validation is disabled (WIP) - will be re-enabled later
+// import { validateIFCData } from '@/lib/ifcValidatorEnhanced';
 import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
 import { logger } from '@/utils/logger';
 import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
@@ -342,16 +342,8 @@ const Index = () => {
       // Parse in Web Worker (non-blocking)
       const data = await parseFile(file);
 
-      // OPTIMIZATION: Create graph data with STEP lines in single pass
-      // (adds both _schemaColor AND _ifcStep, eliminates separate enrichEntitiesForTree call)
-      const graphData = createGraphDataFromEntities(
-        data.allEntities,
-        data.graphData.edges,
-        data.rawData?.rawStepLines  // Pass STEP lines for tree browser display
-      );
-
-      // Update parsedData with enriched graph
-      data.graphData = graphData;
+      // Graph data is already built in the Web Worker (via createGraphDataFromEntities)
+      // No need to rebuild on main thread - data.graphData already has enriched nodes/edges
 
       // Parser returns parsed data only - no validation.
       // Validation is on-demand via handleValidate().
@@ -699,34 +691,29 @@ const Index = () => {
       logger.debug('Creating enrichedEntities for IFCBrowser');
     }
 
-    // CRITICAL: Enrich BOTH semantic and geometry entities with _ifcStep
-    // IFC Browser must show 1:1 representation - no missing entities
-    const enrichedSemantic = (parsedData.allEntities || []).map(entity => ({
-      ...entity,
-      properties: {
-        ...entity.properties,
-        _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
-          `#${entity.expressId}= ${entity.ifcType}(...);`
-      }
-    }));
+    // graphData.nodes already have _ifcStep and _schemaColor from graphBuilder (via worker)
+    // so we can use them directly. Only geometry entities need enrichment.
+    const graphNodes = parsedData.graphData?.nodes || [];
 
-    // CRITICAL: Enrich geometry entities with STEP lines (don't return as-is)
-    // This was missing geometry STEP content in the display
-    const enrichedGeometry = (parsedData.geometryEntities || []).map(entity => ({
+    // Enrich geometry entities with STEP lines (these weren't processed through graphBuilder)
+    const geometryEntities = parsedData.geometryEntities || [];
+    const rawStepLines = parsedData.rawData?.rawStepLines;
+
+    const enrichedGeometry = geometryEntities.map(entity => ({
       ...entity,
       properties: {
         ...entity.properties,
-        _ifcStep: parsedData.rawData?.rawStepLines?.get(entity.expressId) ||
+        _ifcStep: rawStepLines?.get(entity.expressId) ||
           `#${entity.expressId}= ${entity.ifcType}(...);`
       }
     }));
 
     // Combine and sort by expressId for 1:1 IFC file representation (no gaps)
-    const combined = [...enrichedSemantic, ...enrichedGeometry];
+    const combined = [...graphNodes, ...enrichedGeometry];
     combined.sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
 
     return combined;
-  }, [parsedData?.allEntities, parsedData?.geometryEntities, parsedData?.rawData?.rawStepLines]);
+  }, [parsedData?.graphData?.nodes, parsedData?.geometryEntities, parsedData?.rawData?.rawStepLines]);
 
   // Memoize filtered graph data for progressive learning
   // Only apply progressive filtering for guided learning samples

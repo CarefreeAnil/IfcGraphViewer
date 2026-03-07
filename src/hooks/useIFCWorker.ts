@@ -109,13 +109,24 @@ export function useIFCWorker() {
             worker.terminate();
             workerRef.current = null;
 
-            // Convert rawStepLines object back to Map (was serialized for postMessage)
-            // Keys were converted to strings, need to convert back to numbers
-            if (data?.rawData?.rawStepLines && typeof data.rawData.rawStepLines === 'object' && !(data.rawData.rawStepLines instanceof Map)) {
+            // Convert rawStepLines parallel arrays back to Map
+            // Worker serializes as { keys: Int32Array, values: string[] } for efficient transfer
+            if (data?.rawData?.rawStepLines && !(data.rawData.rawStepLines instanceof Map)) {
+              const raw = data.rawData.rawStepLines as any;
               const stepsMap = new Map<number, string>();
-              Object.entries(data.rawData.rawStepLines).forEach(([key, value]) => {
-                stepsMap.set(parseInt(key, 10), value as string);
-              });
+              if (raw.keys instanceof Int32Array && Array.isArray(raw.values)) {
+                // Parallel array format (optimized)
+                const keys = raw.keys;
+                const values = raw.values;
+                for (let i = 0; i < keys.length; i++) {
+                  stepsMap.set(keys[i], values[i]);
+                }
+              } else if (typeof raw === 'object') {
+                // Legacy Object format (fallback)
+                Object.entries(raw).forEach(([key, value]) => {
+                  stepsMap.set(parseInt(key, 10), value as string);
+                });
+              }
               data.rawData.rawStepLines = stepsMap;
             }
 

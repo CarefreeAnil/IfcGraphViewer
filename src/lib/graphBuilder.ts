@@ -1,9 +1,9 @@
 /**
  * Graph Builder Module
- * 
+ *
  * Responsible for creating graph visualization data from raw IFC entities.
  * This is a pure transformation layer: raw entities → enriched graph data
- * 
+ *
  * Separation of concerns:
  * - Parser: reads IFC file → produces pure 1:1 entity data
  * - GraphBuilder: takes entity data → adds visualization metadata (colors, edges)
@@ -83,18 +83,28 @@ export function createGraphDataFromEntities(
   const relationshipDebug: Record<string, { count: number; edgesCreated: number; missingNodeCount: number; examples: string[] }> = {};
   let relCount = 0;
 
+  // Build a single Map of node IDs for fast existence checks AND lookups
+  // Used by both edge extraction (below) and edge analysis (later)
+  // Also counts relationship node types in the same pass
+  const nodeById = new Map<string, GraphNode>();
+  const relationshipNodeCount: Record<string, number> = {};
+  for (const node of graphNodes) {
+    nodeById.set(node.id, node);
+    if (node.type === 'relationship' && node.ifcType) {
+      relationshipNodeCount[node.ifcType] = (relationshipNodeCount[node.ifcType] || 0) + 1;
+    }
+  }
+
   // Only extract additional edges from properties if we have very few edges
   // (fallback mechanism for edge cases or alternative data sources)
   if (edges.length === 0) {
     console.log('[GraphBuilder] Extracting relationships from entity properties (LPG model)...');
     const edgeSet = new Set<string>();
+    const relNodesWithEdges = new Set<string>(); // Track which relationship nodes have edges
 
     // Helper to format ID
     const toNodeId = (id: number | string) =>
       typeof id === 'string' && id.startsWith('node_') ? id : `node_${id}`;
-
-    // Optimization: Build a Set of existing node IDs for fast existence checks
-    const nodeIds = new Set(graphNodes.map(n => n.id));
 
     const addEdgeThroughRelationshipNode = (
       source: number | string,
@@ -102,22 +112,23 @@ export function createGraphDataFromEntities(
       relationshipNodeId: string,
       relationshipType: string
     ) => {
-      if (source === undefined || target === undefined) return;
+      if (source === undefined || source === null || target === undefined || target === null) return;
+      if (source === 0 || target === 0) return; // expressID 0 is invalid
 
       const sId = toNodeId(source);
       const tId = toNodeId(target);
 
       // Only add valid edges where all nodes exist
-      if (!nodeIds.has(sId) || !nodeIds.has(tId) || !nodeIds.has(relationshipNodeId)) {
+      if (!nodeById.has(sId) || !nodeById.has(tId) || !nodeById.has(relationshipNodeId)) {
         // Track missing nodes for this relationship type
         if (relationshipDebug[relationshipType]) {
           relationshipDebug[relationshipType].missingNodeCount++;
 
           // Store example of missing node for debugging
           const missing = [];
-          if (!nodeIds.has(sId)) missing.push(`source:${sId}`);
-          if (!nodeIds.has(tId)) missing.push(`target:${tId}`);
-          if (!nodeIds.has(relationshipNodeId)) missing.push(`relNode:${relationshipNodeId}`);
+          if (!nodeById.has(sId)) missing.push(`source:${sId}`);
+          if (!nodeById.has(tId)) missing.push(`target:${tId}`);
+          if (!nodeById.has(relationshipNodeId)) missing.push(`relNode:${relationshipNodeId}`);
 
           if (relationshipDebug[relationshipType].examples.length < 3) {
             relationshipDebug[relationshipType].examples.push(`${missing.join(', ')}`);
@@ -126,9 +137,9 @@ export function createGraphDataFromEntities(
 
         if (relCount < 10) {
           const missing = [];
-          if (!nodeIds.has(sId)) missing.push(`source:${sId}`);
-          if (!nodeIds.has(tId)) missing.push(`target:${tId}`);
-          if (!nodeIds.has(relationshipNodeId)) missing.push(`relNode:${relationshipNodeId}`);
+          if (!nodeById.has(sId)) missing.push(`source:${sId}`);
+          if (!nodeById.has(tId)) missing.push(`target:${tId}`);
+          if (!nodeById.has(relationshipNodeId)) missing.push(`relNode:${relationshipNodeId}`);
           console.log(`[GraphBuilder] MISSING NODES for ${relationshipType} (${relationshipNodeId}): ${missing.join(', ')}`);
         }
         return;
@@ -138,6 +149,7 @@ export function createGraphDataFromEntities(
       if (relationshipDebug[relationshipType]) {
         relationshipDebug[relationshipType].edgesCreated += 2; // Two edges per relationship
       }
+      relNodesWithEdges.add(relationshipNodeId);
 
       // Edge 1: Source → RelationshipNode (labeled 'relating')
       const edgeKey1 = `${sId}-relating-${relationshipNodeId}`;
@@ -169,8 +181,7 @@ export function createGraphDataFromEntities(
     };
 
     // Iterate all entities to build LPG-format relationships
-    let relCount = 0;
-    const relationshipDebug: Record<string, { count: number; edgesCreated: number; missingNodeCount: number; examples: string[] }> = {};
+    const relationshipDebugInner: Record<string, { count: number; edgesCreated: number; missingNodeCount: number; examples: string[] }> = {};
 
     // OPTIMIZATION: Helper to unwrap raw arrays from parser (deferred unwrapping)
     // Parser stores raw arrays; graphBuilder unwraps on-demand during edge building
@@ -213,6 +224,7 @@ export function createGraphDataFromEntities(
           RelatedOpeningElement: props.RelatedOpeningElement,
           RelatingPropertyDefinition: props.RelatingPropertyDefinition,
           RelatingMaterial: props.RelatingMaterial,
+          RelatingType: props.RelatingType,
         });
       }
 
@@ -280,18 +292,109 @@ export function createGraphDataFromEntities(
         const targets = unwrapArray(props.RelatedObjects);
         targets.forEach((target: any) => addEdgeThroughRelationshipNode(source, target, relNodeId, relType));
       }
+
+      // 8. Space Boundaries (IFCRELSPACEBOUNDARY)
+      // RelatingSpace → RelationshipNode → RelatedBuildingElement
+      if (props.RelatingSpace !== undefined && props.RelatedBuildingElement !== undefined) {
+        addEdgeThroughRelationshipNode(unwrapValue(props.RelatingSpace), unwrapValue(props.RelatedBuildingElement), relNodeId, relType);
+      }
+      // Fallback: space boundary may also link via RelatingSpace + RelatedElement (IFC4 subtype variations)
+      else if (props.RelatingSpace !== undefined && props.RelatedElement !== undefined) {
+        addEdgeThroughRelationshipNode(unwrapValue(props.RelatingSpace), unwrapValue(props.RelatedElement), relNodeId, relType);
+      }
+
+      // 9. Element Connections (IFCRELCONNECTSPATHELEMENTS, IFCRELCONNECTSELEMENTS, IFCRELCONNECTSPORTS)
+      // RelatingElement → RelationshipNode → RelatedElement
+      if (props.RelatingElement !== undefined && props.RelatedElement !== undefined) {
+        addEdgeThroughRelationshipNode(unwrapValue(props.RelatingElement), unwrapValue(props.RelatedElement), relNodeId, relType);
+      }
+
+      // 10. Declarations (IFCRELDECLARES)
+      // RelatingContext → RelationshipNode → RelatedDefinitions
+      if (props.RelatingContext !== undefined && props.RelatedDefinitions) {
+        const source = unwrapValue(props.RelatingContext);
+        const targets = unwrapArray(props.RelatedDefinitions);
+        targets.forEach((target: any) => addEdgeThroughRelationshipNode(source, target, relNodeId, relType));
+      }
+
+      // 11. Library (IFCRELASSOCIATESLIBRARY)
+      // RelatingLibrary → RelationshipNode → RelatedObjects
+      if (props.RelatingLibrary !== undefined && props.RelatedObjects) {
+        const source = unwrapValue(props.RelatingLibrary);
+        const targets = unwrapArray(props.RelatedObjects);
+        targets.forEach((target: any) => addEdgeThroughRelationshipNode(source, target, relNodeId, relType));
+      }
+
+      // 13. Group Assignment (IFCRELASSIGNSTOGROUP)
+      // RelatingGroup → RelationshipNode → RelatedObjects
+      if (props.RelatingGroup !== undefined && props.RelatedObjects) {
+        const source = unwrapValue(props.RelatingGroup);
+        const targets = unwrapArray(props.RelatedObjects);
+        targets.forEach((target: any) => addEdgeThroughRelationshipNode(source, target, relNodeId, relType));
+      }
+
+      // 14. Port-to-Element (IFCRELCONNECTSPORTTOELEMENT)
+      // RelatingPort → RelationshipNode → RelatedElement
+      if (props.RelatingPort !== undefined && props.RelatedElement !== undefined) {
+        addEdgeThroughRelationshipNode(unwrapValue(props.RelatingPort), unwrapValue(props.RelatedElement), relNodeId, relType);
+      }
+
+      // 15. Port-to-Port (IFCRELCONNECTSPORTS)
+      // RelatingPort → RelationshipNode → RelatedPort
+      if (props.RelatingPort !== undefined && props.RelatedPort !== undefined) {
+        addEdgeThroughRelationshipNode(unwrapValue(props.RelatingPort), unwrapValue(props.RelatedPort), relNodeId, relType);
+      }
+
+      // 16. Services Buildings (IFCRELSERVICESBUILDINGS)
+      // RelatingSystem → RelationshipNode → RelatedBuildings
+      if (props.RelatingSystem !== undefined && props.RelatedBuildings) {
+        const source = unwrapValue(props.RelatingSystem);
+        const targets = unwrapArray(props.RelatedBuildings);
+        targets.forEach((target: any) => addEdgeThroughRelationshipNode(source, target, relNodeId, relType));
+      }
+
+      // 12. Generic STEP-line fallback for any relationship type not matched above.
+      // Checks if this specific entity has zero edges, then parses the raw STEP line
+      // to extract entity references. This handles relationship types whose property
+      // names aren't in ESSENTIAL_PROPERTIES_SET or that WebIFC returns differently.
+      //
+      // IFC STEP relationship format (after IfcRoot's 4 attrs: GlobalId, OwnerHistory, Name, Description):
+      //   #ID= IFCREL*('guid',#ownerHist,'name','desc', <relationship-specific params>);
+      // The relationship-specific params contain #refs to Relating/Related entities.
+      if (rawStepLines && !relNodesWithEdges.has(relNodeId)) {
+        const stepLine = rawStepLines.get(entity.expressId);
+        if (stepLine) {
+          // Extract all #ID entity references from the STEP line
+          const allRefs: number[] = [];
+          const refRegex = /#(\d+)/g;
+          let match;
+          while ((match = refRegex.exec(stepLine)) !== null) {
+            allRefs.push(parseInt(match[1], 10));
+          }
+
+          // Remove the entity's own ID and OwnerHistory (first ref after self)
+          const otherRefs = allRefs.filter(r => r !== entity.expressId);
+          if (otherRefs.length >= 2) {
+            // Skip OwnerHistory (index 0)
+            const relRefs = otherRefs.slice(1);
+
+            // Filter to only refs that exist as graph nodes (skips geometry/null refs)
+            const validRefs = relRefs.filter(r => nodeById.has(toNodeId(r)));
+
+            if (validRefs.length >= 2) {
+              // First valid ref = relating (source), remaining = related (targets)
+              const source = validRefs[0];
+              const targets = validRefs.slice(1);
+              for (const target of targets) {
+                addEdgeThroughRelationshipNode(source, target, relNodeId, relType);
+              }
+            }
+          }
+        }
+      }
     }
     console.log(`[GraphBuilder] Created ${edges.length} edges through relationship nodes (LPG model).`);
-    console.log('[GraphBuilder] Relationship types processed:', {
-      aggregates: graphNodes.filter(n => n.ifcType === 'IFCRELAGGREGATES').length,
-      containedInSpatial: graphNodes.filter(n => n.ifcType === 'IFCRELCONTAINEDINSPATIALSTRUCTURE').length,
-      definesProperties: graphNodes.filter(n => n.ifcType === 'IFCRELDEFINESBYPROPERTIES').length,
-      associatesMaterial: graphNodes.filter(n => n.ifcType === 'IFCRELASSOCIATESMATERIAL').length,
-      voidsElement: graphNodes.filter(n => n.ifcType === 'IFCRELVOIDSELEMENT').length,
-      fillsElement: graphNodes.filter(n => n.ifcType === 'IFCRELFILLSELEMENT').length,
-      definesType: graphNodes.filter(n => n.ifcType === 'IFCRELDEFINESBYTYPE').length,
-      associatesClassification: graphNodes.filter(n => n.ifcType === 'IFCRELASSOCIATESCLASSIFICATION').length,
-    });
+    console.log('[GraphBuilder] Relationship types processed:', relationshipDebug);
 
     // Detailed debug summary showing which relationships failed to create edges
     console.log('[GraphBuilder] === RELATIONSHIP DEBUG SUMMARY (from entity properties) ===');
@@ -311,18 +414,11 @@ export function createGraphDataFromEntities(
 
   // Count which relationships have edges
   const relationshipEdgeCount: Record<string, number> = {};
-  const relationshipNodeCount: Record<string, number> = {};
-
-  graphNodes.forEach(node => {
-    if (node.type === 'relationship' && node.ifcType) {
-      relationshipNodeCount[node.ifcType] = (relationshipNodeCount[node.ifcType] || 0) + 1;
-    }
-  });
 
   edges.forEach(edge => {
     // Check if either endpoint is a relationship node
-    const sourceNode = graphNodes.find(n => n.id === edge.source);
-    const targetNode = graphNodes.find(n => n.id === edge.target);
+    const sourceNode = nodeById.get(edge.source);
+    const targetNode = nodeById.get(edge.target);
 
     if (sourceNode?.type === 'relationship' && sourceNode.ifcType) {
       relationshipEdgeCount[sourceNode.ifcType] = (relationshipEdgeCount[sourceNode.ifcType] || 0) + 1;
@@ -459,7 +555,7 @@ function attachPropertySets(nodes: GraphNode[], rawStepLines: Map<number, string
             if (numMatch) {
               val = parseFloat(numMatch[1]);
             } else {
-              // Boolean 
+              // Boolean
               const boolMatch = propLine.match(/,\s*IFC(BOOLEAN|LOGICAL)\s*\(\s*\.([TF])\.\s*\)/i);
               if (boolMatch) {
                 val = boolMatch[2] === 'T';

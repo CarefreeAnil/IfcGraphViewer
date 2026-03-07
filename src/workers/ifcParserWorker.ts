@@ -97,14 +97,22 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
           result.metadata.relationshipCount = enrichedGraph.edges.length;
       }
 
-      // Convert rawStepLines Map to object for serialization through postMessage
-      // (Maps cannot be serialized through Web Workers)
+      // Serialize rawStepLines Map as parallel arrays for efficient transfer
+      // Int32Array for keys can be Transferred (zero-copy), strings are cloned
+      // This avoids creating a 300K-property Object intermediary
+      let rawStepKeysBuffer: ArrayBuffer | undefined;
       if (result.rawData?.rawStepLines && result.rawData.rawStepLines instanceof Map) {
-        const stepsObject: Record<string, string> = {};
-        result.rawData.rawStepLines.forEach((value, key) => {
-          stepsObject[key.toString()] = value;
+        const map = result.rawData.rawStepLines as Map<number, string>;
+        const keys = new Int32Array(map.size);
+        const values: string[] = new Array(map.size);
+        let idx = 0;
+        map.forEach((value, key) => {
+          keys[idx] = key;
+          values[idx] = value;
+          idx++;
         });
-        result.rawData.rawStepLines = stepsObject as any;
+        result.rawData.rawStepLines = { keys, values } as any;
+        rawStepKeysBuffer = keys.buffer;
       }
 
       const graphBuildEnd = performance.now();
@@ -119,7 +127,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         },
       } as WorkerResponse);
 
-      // Send completion message with timing info from last progress message
+      // Send completion message — transfer rawStepLines keys buffer (zero-copy)
       const response: WorkerResponse = {
         type: 'complete',
         fileId,
@@ -129,7 +137,11 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
           message: lastProgress.message,  // Include final timing message
         } : undefined,
       };
-      self.postMessage(response);
+      const transferables: Transferable[] = [];
+      if (rawStepKeysBuffer) {
+        transferables.push(rawStepKeysBuffer);
+      }
+      self.postMessage(response, transferables);
 
     } catch (error) {
       // Send error message

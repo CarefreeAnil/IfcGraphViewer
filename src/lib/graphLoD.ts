@@ -173,6 +173,11 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
   // Admin types that should NEVER appear (administrative metadata)
   const ADMIN_EXCLUDE_TYPES = new Set([
     'IFCOWNERHISTORY', 'IFCPERSON', 'IFCORGANIZATION', 'IFCPERSONANDORGANIZATION', 'IFCAPPLICATION',
+    'IFCMAPCONVERSION', 'IFCPROJECTEDCRS',
+    'IFCCOMPLEXPROPERTY',
+    // TODO: Re-enable when LPG edge extraction supports these types
+    'IFCRELSPACEBOUNDARY', 'IFCRELSPACEBOUNDARY1STLEVEL', 'IFCRELSPACEBOUNDARY2NDLEVEL',
+    'IFCRELCONNECTSPATHELEMENTS',
   ]);
 
   // Auxiliary types: geometric primitives, style definitions, schema metadata
@@ -553,24 +558,40 @@ export function applyLoD(
 
     return true;
   });
-  
+
   const finalEdges = (lod >= GraphLoD.LoD3_Essential)
     ? addBidirectionalEdges(filteredEdges)
     : filteredEdges;
 
-  logger.info(`LoD${lod} applied: ${filteredNodes.length} nodes, ${finalEdges.length} edges (reduced from ${nodes.length} nodes, ${edges.length} edges)`);
+  // Post-filter: remove relationship nodes that lost ALL their edges after filtering.
+  // This prevents floating IFCREL* nodes when their connected endpoints are excluded at lower LoD levels.
+  const connectedNodeIds = new Set<string>();
+  for (const edge of finalEdges) {
+    connectedNodeIds.add(typeof edge.source === 'string' ? edge.source : String(edge.source));
+    connectedNodeIds.add(typeof edge.target === 'string' ? edge.target : String(edge.target));
+  }
+  const finalNodes = filteredNodes.filter(node => {
+    // Keep non-relationship nodes always
+    if (node.type !== 'relationship' && !(node.ifcType || '').toUpperCase().startsWith('IFCREL')) {
+      return true;
+    }
+    // Relationship nodes: only keep if they have at least one edge
+    return connectedNodeIds.has(node.id);
+  });
+
+  logger.info(`LoD${lod} applied: ${finalNodes.length} nodes, ${finalEdges.length} edges (reduced from ${nodes.length} nodes, ${edges.length} edges)`);
   
-  const nodeReduction = nodes.length > 0 ? ((1 - filteredNodes.length / nodes.length) * 100).toFixed(1) : '0';
+  const nodeReduction = nodes.length > 0 ? ((1 - finalNodes.length / nodes.length) * 100).toFixed(1) : '0';
   const edgeReduction = edges.length > 0 ? ((1 - filteredEdges.length / edges.length) * 100).toFixed(1) : '0';
-  
+
   return {
     filteredData: {
-      nodes: filteredNodes,
+      nodes: finalNodes,
       edges: finalEdges,
     },
     stats: {
       originalNodes: nodes.length,
-      filteredNodes: filteredNodes.length,
+      filteredNodes: finalNodes.length,
       originalEdges: edges.length,
       filteredEdges: filteredEdges.length,
       nodeReduction: parseFloat(nodeReduction),
