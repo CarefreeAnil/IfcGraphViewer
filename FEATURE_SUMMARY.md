@@ -1,474 +1,496 @@
-Comprehensive Feature Implementation Summary
+﻿# Comprehensive Feature Implementation Summary
 
 ## Overview
 
-Multi-faceted IFC visualization platform with **4 visualization modes** (Graph, Tree, Properties, 3D), **dual format support** (IFC4 STEP + IFC5 JSON), **advanced validation** (buildingSMART API integration), **dynamic learning system**, and **performance optimization through Level of Detail (LoD) filtering**. Recent updates include IFC5 parser implementation, 3D viewer integration, validation system, learning features, and graph optimization framework.
+Multi-format IFC visualization platform with **dual format support** (IFC STEP + IFC5 JSON), **five visualization modes** (Graph, Tree/Browser, Property Viewer, 3D Viewer, IFC5 Source Viewer), **buildingSMART API validation**, **dynamic educational learning system**, and **graph Level of Detail (LoD) optimization**. All parsing runs in Web Workers; all five IFC5 panels (Graph, Tree, Properties, Source, 3D) are bidirectionally synchronized.
 
-## Major Features Added
+---
 
-### 1. IFC5 Parser Implementation
+## Format Support
 
-#### IFC5ParserMain (`src/lib/ifc5ParserMain.ts`)
-- **Lines**: 325
-- **Status**: ✅ Complete
-- **Features**:
-  - Full IFC5 JSON structure parsing
-  - UUID-based entity identification
-  - Hierarchical relationship extraction
-  - Property mapping from `bsi::ifc::*` namespace
-  - Composition building and analysis
+### IFC STEP (`.ifc`) - IFC2x3, IFC4, IFC4X3
+Parsed using the web-ifc v0.0.74 WASM library in a dedicated Web Worker.
 
-#### IFC5Composition (`src/lib/ifc5Composition.ts`)
-- **Lines**: 335
-- **Status**: ✅ Complete
-- **Features**:
-  - Composition relationship extraction
-  - Spatial structure analysis
-  - Hierarchy building from UUID paths
-  - Custom composition builders
-  - Parent-child relationship mapping
+### IFC5 JSON (`.ifcx`)
+Parsed using a three-stage pipeline (parse -> compose -> convert) based on the buildingSMART IFC5 specification.
 
-#### IFC5ToGraph (`src/lib/ifc5ToGraph.ts`)
-- **Lines**: 406
-- **Status**: ✅ Complete
-- **Features**:
-  - Converts IFC5 data to standardized graph format
-  - Normalizes relationships across formats
-  - Bidirectional edge creation
-  - Type classification
-  - Property preservation and formatting
+---
 
-### 2. IFC5-Specific UI Components
+## Core Parsing Pipeline
 
-#### IFC5TreeBrowser (`src/components/IFC5TreeBrowser.tsx`)
-- **Lines**: 340
-- **Status**: ✅ Complete
-- **Features**:
-  - IFC5-optimized tree structure rendering
-  - Real-time search across entities
-  - Expandable/collapsible hierarchy
-  - Entity selection and navigation
+### IFC STEP Parser (`src/lib/ifcParser.ts`)
+- **Status**: Active
+- Orchestrates web-ifc: `IfcAPI.Init()`, `OpenModel`, entity iteration, relationship extraction
+- Defines `GEOMETRY_TYPES` set (100+ types) for geometry exclusion
+- Classifies entities into semantic category graph nodes
+- Extracts property sets and builds relationship edges
+- `isGeometryType()` helper exported for use by graph builder
 
-#### IFC5PropertyViewer (`src/components/IFC5PropertyViewer.tsx`)
-- **Lines**: 227
-- **Status**: ✅ Complete
-- **Features**:
-  - IFC5-specific property formatting
-  - Complex property value handling
-  - Searchable entity list
-  - Schema-aware property display
-  - Responsive layout design
+### Parser Enhancements (`src/lib/ifcParserEnhancements.ts`)
+- `normalizePropertyValue()` handles wrapped values, boolean enums, and references
+- `PROPERTY_MAPPINGS` per entity type for canonical property name normalization
+- `NormalizedEntity` interface for consistent entity shape post-parsing
 
-### 3. IFC5 Viewer Hook
+### STEP Representation Generator (`src/lib/stepRepresentationGenerator.ts`)
+- `generateSTEPRepresentation()` called lazily when IFC Browser displays a STEP line
+- Priority order: raw line from `rawStepLines` Map -> geometry placeholder -> reconstructed from entity object
 
-#### useIFC5Viewer (`src/hooks/useIFC5Viewer.ts`)
-- **Lines**: 575
-- **Status**: ✅ Complete
-- **Features**:
-  - Complete IFC5 parsing workflow
-  - State management for IFC5 data
-  - Composition extraction logic
-  - Tree building algorithms
-  - Error handling and validation
-  - Performance optimization
+### Graph Builder (`src/lib/graphBuilder.ts`)
+- `createGraphDataFromEntities()`: assigns `_schemaColor` + `_ifcStep` in a single pass
+- `attachPropertySets()`: links property set data to entities via raw STEP string parsing
+- Consumes pre-computed parser edges for efficiency
 
-### 4. Type Definitions
+---
 
-#### IFC5 Types (`src/types/ifc5.ts`)
-- **Lines**: 209
-- **Status**: ✅ Complete
-- **Includes**:
-  - IFC5Entity interface
-  - IFC5Attribute definitions
-  - IFC5PropertySet structures
-  - RelationshipType enumerations
-  - CompositionData interfaces
+## IFC5 Parsing Pipeline
 
-### 5. Enhanced Core Functionality
+### IFC5 Parser Main (`src/lib/ifc5ParserMain.ts`)
+- **Status**: Active
+- `isIFC5File()` detection heuristic
+- `loadIFC5FromFile()` orchestrator: JSON parse -> compose -> convert -> validate attributes
+- `parseIFC5Tree()` validates attributes against `IFC5Schema`
+- Returns `ParsedIFCData` with both `graphData` and the `composedObject` tree
 
-#### ifcParser.ts Updates
-- Added IFC5 file extension handling
-- Improved error handling
-- Better metadata collection
-- Enhanced entity classification
+### IFC5 Composition Engine (`src/lib/ifc5Composition.ts`)
+- **Status**: Active
+- Implements the buildingSMART IFC5 inheritance/composition specification
+- Key functions: `toInputNodes()`, `flattenCompositionInput()`, `createArtificialRoot()`, `expandFirstRootInInput()`
+- Resolves the UUID-path-based inheritance graph into a `PostCompositionNode` tree
 
-#### Graph.ts Type Enhancements
-- Extended node properties
-- Additional edge metadata
-- Support for IFC5-specific attributes
-- Composition relationship types
+### IFC5 Parser (fallback) (`src/lib/ifc5Parser.ts`)
+- Alternative simpler parser that creates `GraphData` (nodes/edges) directly from IFC5 JSON
+- Extracts `bsi::ifc::class`, creates child/inherits edges
+- `classifyNodeTypeIFC5()` maps IFC5 class names to `NodeType`
 
-#### GraphVisualization.tsx Improvements
-- Better handling of large graphs
-- Improved physics simulation
-- Enhanced search functionality
-- Better label rendering
+### IFC5 To Graph (`src/lib/ifc5ToGraph.ts`)
+- Converts `PostCompositionNode` -> `ComposedObject` (for 3D rendering)
+- Extracts mesh, curve, and point cloud geometry with materials and transforms
+- `convertToGraph()` for graph data
+- `getIFC5Statistics()` for metadata
 
-#### VirtualList.tsx Updates
-- Improved virtual scrolling
-- Better performance metrics
-- Fixed edge cases
-- Enhanced accessibility
+### IFC5 Graph Visualization (`src/lib/ifc5GraphVisualization.ts`)
+- `convertIFC5ToGraph()` and `convertComposedObjectToGraph()`
+- Configurable: show/hide geometry nodes, attribute nodes, inheritance edges
+- Clustering by namespace
+- Relationship type filtering
 
-#### Index.tsx Main Integration
-- Smart file type routing
-- Support for both IFC4 and IFC5 files
-- Integrated viewer selection
-- Enhanced state management
+---
 
-#### ifcParserWorker.ts
-- IFC5 parsing support
-- Improved worker communication
-- Better error reporting
-- Performance monitoring
+## Web Workers
 
-## Geometry Processing
+### IFC Parser Worker (`src/workers/ifcParserWorker.ts`)
+- **Status**: Active
+- Receives `{ type: 'parse', fileId, file }` from main thread
+- Calls `parseIFCFile()` then `createGraphDataFromEntities()` for full parsing + graph build
+- Reports `progress` messages throughout (percentage + message string)
+- Serializes `rawStepLines` Map as **parallel arrays** for efficient transfer:
+  - `keys: Int32Array` (zero-copy ArrayBuffer Transferable)
+  - `values: string[]` (Express ID -> STEP line text)
+- Posts `complete` with full `ParsedIFCData`
 
-### ifcGeometryWorker.ts (NEW)
-- **Status**: ✅ Added
-- **Features**:
-  - WASM-based geometry processing
-  - Async geometry extraction
-  - Background processing capability
-  - Future integration point for 3D visualization
+**Key design decision**: Using parallel arrays instead of a plain Object avoids serializing 300,000+ property keys and enables zero-copy ArrayBuffer transfer for the integer keys.
 
-## 3D Viewer Integration (NEW)
+### IFC Geometry Worker (`src/workers/ifcGeometryWorker.ts`)
+- **Status**: Active (used by Viewer3D)
+- Loads web-ifc WASM, parses IFC geometry completely off-thread
+- Handles three message types:
+  - `parse`: loads model, iterates `IfcAPI.GetAllGeometry()`, extracts `MeshPayload[]`
+  - `inspect`: fetches properties for one entity by expressID
+  - `dispose`: frees the model from WASM memory
+- Type-based color mapping for 50+ IFC types (walls grey, doors brown, windows cyan, HVAC blue, structural green, pipes red, electrical orange, etc.)
+- Each `MeshPayload` contains: positions, normals, indices (as flat Float32/Uint32 arrays), transform matrix, expressID, color
+
+---
+
+## Level of Detail (LoD) System
+
+### LoD Framework (`src/lib/graphLoD.ts`)
+- **Status**: Active (complete rewrite from original)
+- `applyLoD(graphData, lodLevel)` filters nodes and edges before rendering
+- `AUXILIARY_EXCLUDE_TYPES`: 100+ non-meaningful IFC types excluded at all LoD levels
+  (geometric primitives, profile definitions, material metadata, style definitions, measurement primitives)
+- `isAuxiliaryType(ifcType)` helper
+
+### LoD Levels (4-Tier System)
+
+| Level | Name | Includes | Use Case |
+|-------|------|---------|---------|
+| LoD 1 | Spatial Hierarchy | IFCPROJECT, IFCSITE, IFCBUILDING, IFCBUILDINGSTOREY, IFCSPACE | First-pass overview of any model |
+| LoD 2 | Elements & Structure | LoD1 + walls, floors, slabs, beams, columns, doors, windows, structural members | General visualization of building geometry |
+| LoD 3 | + Properties | LoD2 + property sets, material associations, classification, type objects | Balanced performance and completeness |
+| LoD 4 | Full Semantic | All non-auxiliary entities | Comprehensive analysis; may be slow for large models |
+
+### LoD Descriptions (`src/lib/lodDescriptions.ts`)
+- `LOD_DESCRIPTIONS` map with human-readable name, description, includes/excludes, bestFor per level
+- `getLoDDescription(level)` used by GraphControls LoD dropdown
+
+### Performance Impact (approximate)
+
+| LoD | Typical Node Reduction | Render Speed vs. LoD 4 |
+|-----|----------------------|------------------------|
+| LoD 4 | Baseline | Baseline |
+| LoD 3 | ~30-40% fewer nodes | ~25-50% faster |
+| LoD 2 | ~60-70% fewer nodes | ~100-200% faster |
+| LoD 1 | ~80-90% fewer nodes | ~300%+ faster |
+
+---
+
+## IFC5 Visualization Components
+
+### IFC5 Graph Visualization (`src/components/IFC5GraphVisualization.tsx`)
+- **Status**: Active
+- Force-directed graph for `.ifcx` files
+- Converts `ComposedObject` to graph via `convertComposedObjectToGraph()`
+- Controls panel: geometry nodes toggle, attribute nodes toggle, inheritance edges toggle, relationship type filter, namespace clustering
+- Bidirectional cross-panel selection sync via `onNodeSelect` callback
+
+### IFC5 Tree Browser (`src/components/IFC5TreeBrowser.tsx`)
+- **Status**: Active
+- Hierarchical tree for IFC5 composed objects
+- Search with deep attribute matching and text highlight
+- Expand/collapse nodes, icons by IFC class, IFC class badges
+- Uses `VirtualList` for windowed rendering performance
+
+### IFC5 Property Viewer (`src/components/IFC5PropertyViewer.tsx`)
+- **Status**: Active
+- Displays composed (post-inheritance) attributes for a selected IFC5 node
+- Breadcrumb navigation, IFC class summary
+- Attributes grouped by namespace: `bsi::ifc::`, `usd::usdgeom::`, `mesh::`, etc.
+- Special rendering: 4x4 matrix display, geometry array summarization, reference links
+
+### IFC5 Source Viewer (`src/components/IFC5SourceViewer.tsx`)
+- **Status**: Active
+- Shows the raw `.ifcx` JSON content with syntax highlighting
+  - Keys: sky blue; strings: green; numbers: purple; booleans: pink
+- Inline search with match highlight and jump-to-next-match
+- Large geometry arrays (positions, normals, indices) truncated to prevent browser freeze
+- Click on a node's JSON block to cross-select it in Tree and Graph panels
+
+### IFC5 3D Viewer (`src/hooks/useIFC5Viewer.ts`)
+- **Status**: Active
+- Full Three.js 3D scene rendered **inline** from the `ComposedObject` tree — no separate geometry worker
+- **Auto-loads** when an `.ifcx` file is parsed (`setViewer3DLoaded(true)` triggered in `handleFileSelect`)
+- **Scene setup**: PerspectiveCamera (FOV 75, Z-up `camera.up.set(0,0,1)`), WebGLRenderer with antialias + `logarithmicDepthBuffer`, OrbitControls with 0.25 damping, AmbientLight (0.5) + 3 DirectionalLights (0.8 / 0.5 / 0.3), GridHelper 100×100, AxesHelper
+- **Geometry support**:
+  - `Mesh` → `THREE.Mesh` with `MeshStandardMaterial` (PBR: `baseColorFactor`, `metallicFactor`, `roughnessFactor`) or `MeshLambertMaterial` (diffuseColor fallback)
+  - `Curve` → `THREE.Line` + `LineBasicMaterial`
+  - `Points` → `THREE.Points` + `PointsMaterial`; supports base64-encoded float32 position and color buffers
+- **Visibility**: Skips nodes where `usd::usdgeom::visibility::visibility === 'invisible'`
+- **Transforms**: Column-major 4×4 matrix from `usd::usdgeom::xformop:transform`, transposed to Three.js row-major convention
+- **`loadComposedObject(root)`**: Clears scene (preserving lights/grid/axes), disposes old GPU resources, recursively renders the tree, then auto-fits camera/controls to model bounding box
+- **`selectObject(path)`**: Highlights selected mesh with emissive `0x4f46e5` (indigo) at intensity 0.3; stores original material in `_origMaterial` for restore on deselect
+- **Raycasting**: Mouse click walks `object.parent` chain until a `userData.path` is found, then fires `onObjectClick(path)` for cross-panel sync
+- Returns `{ isInitialized, selectedPath, loadComposedObject, selectObject }` to Index page
+
+---
+
+## IFC STEP Visualization Components
+
+### Graph Visualization (`src/components/GraphVisualization.tsx`)
+- **Status**: Active
+- Force-directed graph using `react-force-graph-2d`
+- `applyLoD()` applied before rendering; relationship filters applied server-side in state
+- Custom canvas rendering: colored nodes by type, directional colored edges by category, labels at zoom >= 1.5
+- Node click (select) / background click (deselect) / hover (tooltip)
+- Zoom controls, fit-to-view, center-on-selection
+- Reports `onStatsUpdate` with filtered node/edge counts for StatsPanel
+
+### Graph Controls (`src/components/GraphControls.tsx`)
+- **Status**: Active
+- Floating control bar containing:
+  - Text search input (Ctrl+F)
+  - LoD level dropdown (1-4) with `getLoDDescription()` tooltip
+  - Filter drawer (node type toggles + relationship type toggles with color swatches)
+  - Export dropdown (JSON / CSV-nodes / CSV-edges / STEP text / PNG screenshot)
+
+### IFC Browser (`src/components/IFCBrowser.tsx`)
+- **Status**: Active
+- Split-panel layout: entity list (left) + entity detail (right)
+- Left: searchable, sorted entity list; each entry renders with IFC STEP syntax highlighting
+- Right: expanded entity properties + IFC schema definition + "Referenced By" algorithm
+- Click any `#number` in STEP lines to navigate to that entity
+- Copy to clipboard, virtual scrolling, and pagination
+
+### Node Details Panel (`src/components/NodeDetailsPanel.tsx`)
+- **Status**: Active
+- Slide-in or inline panel for a selected graph node
+- IFC type badge, schema layer badge, entity definition
+- Related property sets, filtered properties
+- "Learn More" educational section
+- BuildingSMART docs link (generated by `docsLinkGenerator.ts` per entity and schema version)
+
+---
+
+## 3D Viewer
 
 ### Viewer3D Component (`src/components/Viewer3D.tsx`)
-- **Status**: ✅ Complete
-- **Lines**: 200+
-- **Features**:
-  - Three.js-based 3D visualization
-  - React Three Fiber integration
-  - Color-coded rendering by entity type
-  - Lightweight geometric representations (boxes and spheres)
-  - Interactive raycasting for entity selection
-  - OrbitControls for navigation (zoom, pan, rotate)
-  - Real-time selection highlighting (yellow emissive glow + 1.2x scale)
-  - Cross-modal selection synchronization
-  - Lazy loading (disabled by default, loads on-demand)
+- **Status**: Active
+- Three.js IFC 3D viewer using `ifcGeometryWorker` for off-thread geometry parsing
+- Upon worker `complete`: builds Three.js `BufferGeometry` + `MeshPhongMaterial` for each `MeshPayload`
+- Selection highlight: selected mesh gets emissive glow; all other meshes set to 8% opacity
+- Zoom-to-selected entity on programmatic selection; orbit controls for manual navigation
+- Depth buffer enabled for correct rendering of complex models
+
+### useIFC5Viewer Hook (`src/hooks/useIFC5Viewer.ts`)
+- **Status**: Active — see [IFC5 3D Viewer](#ifc5-3d-viewer-srchooksuseIFC5Viewerts) above for full details
+- Manages Three.js scene lifetime: creates on mount, disposes renderer/geometries/materials on unmount
+- Returns `selectObject(path)` for programmatic highlight from other panels
 
 ### useViewer3D Hook (`src/hooks/useViewer3D.ts`)
-- **Status**: ✅ Complete
-- **Features**:
-  - 3D viewer state management
-  - Geometry caching with LRU cache (max 500 geometries)
-  - Progress tracking
-  - Cross-modal selection synchronization
-  - Performance monitoring
-  - Memory-efficient lazy loading
+- **Status**: Active
+- State management: `isEnabled`, `isVisible`, `selectedNodeId`, loading progress
+- **LRU geometry cache** (max 500 items): avoids re-parsing geometry for recently-viewed entities
+- Methods: `enable3DViewer`, `disable3DViewer`, `selectNode3D`, `cacheGeometry`, `getGeometry`, `updateProgress`, `reset`
 
-### Layout Integration
-- **4-Panel Responsive Layout**:
-  - Properties (15%) - Node details
-  - Graph Visualization (40%) - Force-directed graph
-  - Tree Browser (25%) - Hierarchical structure
-  - 3D Viewer (20%) - Three.js visualization
-- All panels synchronized through centralized selection system
+---
 
-### Performance Characteristics
-- **Without 3D**: 60 FPS (Graph + Tree + Properties)
-- **With 3D loaded**: 45-55 FPS
-- **3D disabled impact**: Zero overhead
-- **Load time for 3D**: ~1.5 seconds on-demand
-- **Memory usage 3D enabled**: ~30-40 MB additional
+## Validation System
 
-## IFC Validation System (NEW)
+### Validation Page (`src/pages/Validation.tsx`)
+- **Status**: Active
+- Receives `parsedData` + `ifcFileBuffer` via `useLocation` state
+- buildingSMART API polling at the component level
+- Entity click: navigates back to Index with entity pre-highlighted
 
-### buildingSMART Validator Integration
-**Backend Module:** `bSValidate/`
-- **Status**: ✅ Active and Production-Ready
-- **Components**:
-  - `server.js` - Express.js proxy server (port 5001)
-  - `src/services/buildingsmartApi.ts` - API client
-  - `src/services/buildingsmartMapper.ts` - Result mapping
-  - `src/lib/exportValidation.ts` - Export utilities
+### buildingSMART Validator Backend (`bSValidate/server.js`)
+- **Status**: Active (Express on port 5001)
+- `POST /api/validate`: receives `.ifc` via multer, forwards to `https://dev.validate.buildingsmart.org/api/v1/validationrequest` with Bearer token from `BUILDINGSMART_TOKEN` env
+- `GET /api/results/:jobId`: fetches status + paginates all results (100 per page)
+- `DELETE /api/cancel/:jobId`: cancels a job
 
-**Frontend Integration:**
-- `src/pages/Validation.tsx` - Dedicated validation interface (NEW)
-- `src/components/ValidationReport.tsx` - Enhanced results display
-- `src/lib/ifcValidatorEnhanced.ts` - Core validation logic
+### buildingSMART API Client (`bSValidate/src/services/buildingsmartApi.ts`)
+- `submitValidation(buffer, filename)`: posts file to backend `/api/validate`
+- `pollValidationResults(jobId, onStatus, intervalMs, maxAttempts)`: polls `/api/results/:jobId`
+- `cancelValidation(jobId)`
+- `BuildingSmartApiError` class with `statusCode`
 
-**Features:**
-- ✅ Live API integration with buildingSmart validation service
-- ✅ Comprehensive checking (schema, syntax, headers)
-- ✅ Real-time polling with live status updates
-- ✅ Detailed reports with error categorization
-- ✅ Entity-level diagnostics linking issues to IFC entities
-- ✅ Export functionality (JSON, CSV, text formats)
-- ✅ Backend proxy for secure API communication
-- ✅ Integration with graph/tree for entity navigation
+### buildingSMART Result Mapper (`bSValidate/src/services/buildingsmartMapper.ts`)
+- `mapBuildingSmartToValidationResult()`: converts raw API response to internal `ValidationResult`
+- Maps numeric severity (0-4) to `error` / `warning` / `info`
+- Categorizes results into `NORMATIVE_IA`, `NORMATIVE_IP`, `INDUSTRY` task types
+- Enriches results with functional part tags from `functionalParts.ts`
 
-**Setup Requirements:**
-- buildingSmart API token (environment variable: `BUILDINGSMART_TOKEN`)
-- Backend server running on port 5001
-- Frontend API endpoint configuration
+### Functional Parts Catalog (`bSValidate/src/lib/functionalParts.ts`)
+- Complete catalog of IFC validation functional part codes:
+  - PJS = Project, GRF = Georeferencing, BLT = Built elements, SPA = Spaces, etc.
+- `mapBuildingSmartFeatureToFunctionalPart()`, `getFunctionalPart()`
 
-### Local Validator (Work in Progress)
-**Status**: 🟡 Disabled - Pending Refactoring
-- **Purpose**: Client-side validation without external API calls
-- **Location**: `src/lib/ifcValidatorEnhanced.ts`
-- **Features** (Future):
-  - Instant validation without API calls
-  - Strict GUID validation (22 chars, Base64)
-  - Schema compliance checking
-  - STEP format validation
-  - Offline capability
+### Schema Interpreter (`bSValidate/src/lib/schemaInterpreter.ts`)
+- `interpretSchemaError()` -> `InterpretedSchemaError` with human-readable summary, rule type emoji, educational context
+- Used by `SchemaResults.tsx` to provide friendly explanations alongside raw schema errors
 
-**Progress**:
-- ✅ Infrastructure in place
-- ✅ Validation types defined
-- 🔄 Refactoring in progress
-- ⏳ Planned for future release
+### Normative Interpreter (`bSValidate/src/lib/normativeInterpreter.ts`)
+- `extractNormativeEntityInfo()` parses normative rule descriptions into structured data
+- Used by `BuildingSmartResults.tsx`
 
-## Data Architecture
+### Validation Report Components
+- **`BuildingSmartResults.tsx`**: Normative validation results grouped by rule code. Collapsible groups, severity icons, STEP ID links, expected/observed columns, entity click navigation, severity checkbox filtering.
+- **`SchemaResults.tsx`**: Schema-level errors grouped by schema rule name. Shows rule logic, interpreted explanations, entity STEP ID links.
 
-### Unified Data Model
+### Validation Export (`bSValidate/src/lib/exportValidation.ts`)
+- `exportToJSON()`, `exportToCSV()`, `exportToText()`, `getDefaultExportFilename()`
+
+### Local Validator (`src/lib/ifcValidatorEnhanced.ts`)
+- **Status**: Disabled - Work in Progress
+- `ValidationError`, `ValidationResult` interfaces (still used as shared types)
+- `validateIFCData()`, `validateIFCFileSyntax()` - not called in current flow
+- Will provide offline validation when re-enabled
+
+---
+
+## Schema System
+
+### Static Schema Catalog (`src/lib/ifcSchema.ts`)
+- `IFC_SCHEMA` map: full `IfcEntityDef` for 100+ common entities
+- Each definition includes: display name, description, category, icon, color, property list, valid parent/child types, relationship definitions, validation rules
+- `getEntityDef()`, `getEntityDisplayName()`, `getEntityColor()` helpers
+
+### Dynamic Schema Loader (`src/lib/ifcSchemaLoader.ts`)
+- `loadSchemaFile()`: fetches JSON schema from `public/schemas/` with in-memory cache
+- Supports `IFC2x3`, `IFC4`, `IFC4X3` schema files
+- `loadSpecificEntities()`: loads entity + all supertypes recursively
+- `ensureSchemaLoaded()`, `getEntityFromSchemaAsync()`, `getAllAttributesAsync()`
+
+### Schema Layer Mapping (`src/lib/schema-layer-mapping.ts`)
+- `SCHEMA_LAYERS`: domain / interoperability / core / resource layers with colors
+- `ENTITY_TO_LAYER_MAP`: 200+ entities mapped to their schema layer
+- `getSchemaLayerForEntity()` used by NodeDetailsPanel for the schema layer badge
+
+---
+
+## Educational System
+
+### LearningContext (`src/contexts/LearningContext.tsx`)
+- Learning mode state machine with 5 layers
+- Progress stored in `localStorage` under `ifc-learning-progress`
+- Layer unlock progression: project -> spatial -> element -> relationship -> property
+- `startWorkedExample()`, `nextExampleStep()`, `startPractice()`, `submitPracticeAnswer()`, `unlockNextLayer()`, `resetProgress()`
+- `highlightedEntityTypes` drives graph node highlighting during learning exercises
+
+### Dynamic Learning (`src/lib/dynamicLearning.ts`)
+- `LAYER_CONFIG`: configuration for all 5 learning layers
+- `classifyEntityLayer()`: assigns entities to learning layers
+- `generateDynamicLearningPath()`: analyzes the loaded model and creates a customized path
+- `getProgressiveGraphData()`: returns graph data filtered to a subset for step-by-step exploration
+
+### Documentation Link Generator (`src/lib/docsLinkGenerator.ts`)
+- `generateDocsUrl(entityName, schemaVersion)`: generates buildingSMART documentation URLs
+- Different URL patterns for IFC4, IFC4X3, IFC2x3 documentation sites
+
+### Educational Feature Components (`src/features/educational/`)
+- **`Learn.tsx`** (page): Learning landing page with sample file cards. Loads `.ifc` files and navigates to Index with `learningMode: true`
+- **`ConsolidatedLearningPanel.tsx`**: In-page learning sidebar for Index. Layer progress, worked examples, practice exercises, dynamic model insights
+- **`SampleCard.tsx`**: Educational sample card with description, difficulty, metadata
+- **`IFCArchitectureDiagram.tsx`**: Visual SVG diagram of IFC4 architecture layers
+- **`LayerProgressMap.tsx`**: 5-step progress visualization
+- **`WorkedExamplePlayer.tsx`**: Step-by-step worked example with IFC code snippets and graph highlights
+- **`PracticePlayer.tsx`**: Interactive practice (multiple-choice, predict-verify, drag-connect)
+- **`GlossaryTerm.tsx`**: Hover tooltip glossary for IFC terms
+
+### Learning Data (`src/features/educational/data/`)
+- **`educationalSamples.ts`**: Sample definitions (id, name, description, path, difficulty, IFC version, learning objectives)
+- **`ifcConceptReference.ts`**: IFC concept definitions for the learning system
+- **`learning.ts`**: `WORKED_EXAMPLES` and `PRACTICE_EXERCISES` data arrays
+
+### Learning Types (`src/types/learning.ts`)
+- `IFCLayer` (5 layers), `LearningMode`, `LayerDefinition`
+- `WorkedExampleStep`, `WorkedExample`
+- `PracticeExercise` (predict-verify, drag-connect, multiple-choice)
+- `LayerProgress`, `LearningProgress`
+
+---
+
+## Utility Libraries
+
+### Color Scheme (`src/lib/colorScheme.ts`)
+- `NODE_COLORS: Record<NodeType, string>` - single source of truth for all graph node colors
+- `getColorForNodeType(type)` used by GraphVisualization and Legend
+
+### Export Utilities (`src/lib/exportUtils.ts`)
+- `exportToJSON(graphData)` - exports full graph as JSON file
+- `exportNodesToCSV(nodes)` - exports node table as CSV
+- `exportEdgesToCSV(edges)` - exports edge table as CSV
+- `exportToSTEP(rawStepLines)` - reconstructs and downloads STEP text
+- `exportToPNG(canvasElement)` - screenshots the force graph canvas
+
+### Logger (`src/utils/logger.ts`)
+- Dev-only (checks `import.meta.env.DEV`) - no production output
+- Scoped sub-loggers: `logger.parsing.*`, `logger.validation.*`, `logger.graph.*`
+
+### BuildingSMART Utils (`bSValidate/src/lib/buildingsmartUtils.ts`)
+- `groupByRuleCode()`, `formatStepId()` (formats as `#12345`), `formatValue()`, `getSeverityDisplay()`, `isBuildingSmartError()`, `isSchemaRule()`, `extractStepIdsFromMessage()`
+
+---
+
+## Contexts
+
+### UIStateContext (`src/contexts/UIStateContext.tsx`)
+Global UI state consumed across multiple components:
+- `highlightedTypes[]`, `searchQuery`, `showAttributes`, `showRelatedMetadata`
+- `graphLoD` (1-4), `show3DViewer`, `schemaVersion`
+- `toggleType()`, `resetFilters()`
+
+---
+
+## Types
+
+### `src/types/graph.ts`
 ```typescript
-// Works for both IFC4 and IFC5
-interface GraphNode {
-  id: string;                      // Unique identifier
-  label: string;                   // Display name
-  type: NodeType;                  // building|space|element|property
-  ifcType: string;                 // IFC entity type
-  properties: Record<string, any>; // All properties
-  source?: 'ifc4' | 'ifc5';        // Origin format
-}
+type NodeType = 'building' | 'space' | 'element' | 'property' | 'relationship' | 'geometry' | 'other' | 'Mesh' | 'Curve' | 'Points' | 'Group'
 
-interface GraphEdge {
-  id: string;              // Unique identifier
-  source: string;          // Source node
-  target: string;          // Target node
-  label: string;           // Relationship type
-  type: string;            // CONTAINS|AGGREGATES|INHERITS|etc
+interface GraphNode { id, label, type, ifcType, properties, expressId, _ifcStep, _fileFormat, _schemaColor, x, y, vx, vy }
+interface GraphEdge { id, source, target, label, type, relationshipType, category }
+interface GraphData { nodes: GraphNode[], edges: GraphEdge[] }
+interface ParsedIFCData {
+  graphData: GraphData
+  allEntities: GraphNode[]
+  geometryEntities: GraphNode[]
+  metadata: { fileName, fileSize, entityCount, parseTime, isIFC5, ifcVersion? }
+  validation?: ValidationResult
+  rawData?: { composedObject?, ifc5File?, rawStepLines?: Map<number, string> }
 }
 ```
 
-## Processing Pipeline
+### `src/types/ifc5.ts`
+Full IFC5 type system: `IFC5File`, `IFC5Header`, `IFC5Node` (path/children/inherits/attributes), `IFC5Schema`, `DataType` enum, `QuantityKind`. Composition types: `CompositionInputNode`, `PreCompositionNode`, `PostCompositionNode`. `ComposedObject` (name, type, attributes, children) for 3D rendering.
 
-### File Upload Flow
+### `src/types/ifc.ts`
+`IFCEntity`, `IFCRelationship`, `ParsedIFC`. Entity category sets: `STRUCTURAL_ENTITIES`, `RELATIONSHIP_ENTITIES`, `METADATA_ENTITIES`. `RELATIONSHIP_LABELS` map of IFC relationship names to readable labels.
+
+---
+
+## Cross-Panel Synchronization (IFC5)
+
+The Index page maintains two bidirectional Maps built from the `ComposedObject` tree:
+
 ```
-User File Upload
-    ↓
-Extension Check (.ifc vs .ifcx)
-    ├─→ .ifc → IFC4 Parser (web-ifc + WASM)
-    └─→ .ifcx → IFC5 Parser (JSON native)
-    ↓
-Graph Conversion
-    ├─→ IFC4: Direct graph creation
-    └─→ IFC5: ifc5ToGraph conversion
-    ↓
-Validation & Metadata
-    ↓
-Store in React Component State
-    ↓
-Render in Selected View Mode
+rawToComposed: Map<rawNodePath, composedObjectPath>
+composedToRaw: Map<composedObjectPath, rawNodePath>
 ```
 
-## Visualization Modes
+When a user selects a node in any IFC5 panel:
+1. The panel fires `onNodeSelect(path)`
+2. Index resolves the path through the appropriate map
+3. `selectedIFC5Node` state is updated
+4. All four IFC5 panels React to the state change and highlight the corresponding node
 
-### Graph View
-- **Status**: ✅ Enhanced
-- Force-directed graph with 1000+ nodes support
-- Type-based coloring
-- Interactive node selection
-- Physics-based layout
-### Graph Level of Detail (LoD) Optimization (NEW)
+This enables O(1) bidirectional lookup without traversing the composed tree on every selection.
 
-#### graphLoD.ts - LoD Framework
-- **Status**: ✅ Complete rewrite
-- **Lines**: 621 (framework implementation)
-- **Purpose**: Performance optimization for large graphs through hierarchical filtering
-- **Research-Based**: Based on "IfcGraphLoD" framework for graph-based IFC visualization
+---
 
-#### lodDescriptions.ts - LoD Configuration
-- **Status**: ✅ Complete
-- **Purpose**: LoD level descriptions and filtering rules
-- **Features**: Entity type classification, auxiliary vs. meaningful nodes
+## Performance Optimization Summary
 
-#### LoD Levels (4-Tier System)
+| Optimization | Location | Impact |
+|-------------|---------|--------|
+| Web Worker parsing | `ifcParserWorker.ts` | Prevents UI blocking on large files |
+| Zero-copy ArrayBuffer transfer | `ifcParserWorker.ts` | Fast rawStepLines transfer across Worker boundary |
+| Web Worker geometry | `ifcGeometryWorker.ts` | 3D geometry off main thread |
+| React.lazy() components | `Index.tsx` | Reduces initial load time |
+| Manual Vite chunks | `vite.config.ts` | Long-term vendor bundle caching |
+| LRU geometry cache | `useViewer3D.ts` | Avoids re-parsing for recent selections |
+| VirtualList | `VirtualList.tsx`, `IFC5TreeBrowser.tsx` | Handles 10,000+ node lists |
+| Virtual scrolling | `useVirtualScroll.ts`, `IFCBrowser.tsx` | Large entity lists |
+| LoD filtering | `graphLoD.ts` | Reduces graph complexity by up to 90% |
+| Geometry type exclusion | `ifcParser.ts` | Keeps semantic graph clean and fast |
+| 2-minute Worker timeout | `useIFCWorker.ts` | Prevents zombie workers |
 
-**LoD4 (Core Graph)** - Full Semantic Graph
-- All meaningful entities included
-- Full bidirectional relationships
-- Best for: Comprehensive analysis, schema understanding
-- Use case: Detailed architectural review
+---
 
-**LoD3 (Essential Graph)** - Balanced View
-- Objects + bidirectional relationship-node links
-- Excludes geometric primitives and style definitions
-- Best for: Balanced performance and completeness
-- Use case: General visualization and navigation
+## Test Files
 
-**LoD2 (Least Graph)** - Performance-Optimized
-- Unidirectional relationship-node → object links only
-- Minimal relationship representation
-- Best for: Large models (1000+ nodes)
-- Use case: Initial overview of massive IFC files
+Located in `public/testFiles/`:
 
-**LoD1 (Utility Graph)** - Minimal Application-Specific
-- Application-driven minimal subset
-- Highly compressed representation
-- Best for: Custom workflows, special purposes
-- Use case: Focused domain-specific visualization
+| File | Format | Purpose |
+|------|--------|---------|
+| `FZK Haus.ifc` | IFC STEP | Multi-storey residential building |
+| `Infra-Bridge.ifc` | IFC STEP | Infrastructure / bridge model |
+| `Solibri Building.ifc` | IFC STEP | Complex multi-discipline building |
+| `Solibri Building Structural.ifc` | IFC STEP | Structural-focused model |
+| `wall-with-opening-and-window.ifc` | IFC STEP | Minimal element example |
+| `hello-wall.ifcx` | IFC5 JSON | Minimal IFC5 example |
+| `esempio_01 edificius (1).ifcx` | IFC5 JSON | Complex IFC5 building |
 
-#### Auxiliary Node Exclusion
-Automatically filters out non-meaningful entities:
-- **Geometric Primitives**: Points, lines, curves, surfaces (mathematical helpers)
-- **Profile Definitions**: Rectangle, circle, I-beam, L-shape profiles
-- **Material Metadata**: Material layers, properties, component definitions
-- **Style Definitions**: Surface styles, hatch patterns, texture maps
-- **Window/Door Details**: Lining properties, panel arrangements, closing mechanisms
-- **Measurement Primitives**: Quantity definitions, unit assignments, measure types
+---
 
-#### Performance Impact
-| LoD Level | Typical Reduction | Memory Impact | Render Speed |
-|-----------|------------------|---------------|-------------|
-| LoD4 | Baseline (100%) | Baseline | Baseline |
-| LoD3 | ~60-70% nodes | -40% | +25-50% faster |
-| LoD2 | ~30-40% nodes | -70% | +100-200% faster |
-| LoD1 | ~10-20% nodes | -90% | +300%+ faster |
+## Implementation Status Summary
 
-#### Usage in Application
-- **Default LoD**: LoD3 (Essential Graph) for balanced performance
-- **User-Selectable**: Toggle via GraphControls component
-- **Auto-Adjustment**: Can switch based on file size and performance metrics
-- **Preservation**: Original data always retained, filtering is view-only
-
-### Tree Browser
-- **Status**: ✅ Complete
-- Hierarchical entity display
-- Full-text search
-- Inverse reference display
-- Virtual scrolling for performance
-
-### Property Viewer
-- **Status**: ✅ Complete
-- Searchable entity list
-- Detailed property inspection
-- Format-specific display
-- Schema-aware rendering
-
-## Testing & Quality
-
-### Tested Formats
-✅ IFC4 (.ifc) files with web-ifc
-✅ IFC5 (.ifcx) JSON-based files
-✅ Multiple test files provided in `public/testFiles/`
-
-### Test Files Available
-- `FZK Haus.ifc` - Building example
-- `Infra-Bridge.ifc` - Infrastructure example
-- `Solibri Building.ifc` - Complex building
-- `Solibri Building Structural.ifc` - Structural focus
-- `hello-wall.ifcx` - Simple IFC5 example
-- `esempio_01 edificius (1).ifcx` - Complex IFC5 example
-
-
-## Technical Highlights
-
-### 1. Dual Format Support
-- Automatic parser selection based on file extension
-- Unified data model for both formats
-- Format-specific optimizations
-
-### 2. Performance Optimizations
-- Web Worker offloading prevents UI blocking
-- Virtual scrolling for large lists
-- Memoized components
-- Debounced search operations
-
-### 3. Inverse References
-- Bidirectional relationship tracking
-- Automatic "Referenced By" and "References" display
-- One-click entity navigation
-
-### 4. Schema Integration
-- 40+ entity type definitions
-- Color coding by category
-- Property validation rules
-- Display information mapping
-
-## Files Modified Summary
-
-| File | Type | Status | Notes |
-|------|------|--------|-------|
-| **IFC5 Support** ||||
-| ifc5ParserMain.ts | New | ✅ | +325 lines |
-| ifc5Composition.ts | New | ✅ | +335 lines |
-| ifc5ToGraph.ts | New | ✅ | +406 lines |
-| IFC5TreeBrowser.tsx | New | ✅ | +340 lines |
-| IFC5PropertyViewer.tsx | New | ✅ | +227 lines |
-| useIFC5Viewer.ts | New | ✅ | +575 lines |
-| ifc5.ts (types) | New | ✅ | +209 lines |
-| **3D Viewer** ||||
-| Viewer3D.tsx | New | ✅ | Three.js integration |
-| useViewer3D.ts | New | ✅ | State management |
-| ifcGeometryWorker.ts | New | ✅ | +1,330 lines major expansion |
-| **Validation System** ||||
-| Validation.tsx (page) | New | ✅ | Dual validator UI |
-| ValidationReport.tsx | Modified | ✅ | +408 lines enhanced |
-| ifcValidatorEnhanced.ts | Modified | ✅ | +719 lines expanded |
-| bSValidate/server.js | New | ✅ | Express backend |
-| bSValidate/src/services/buildingsmartApi.ts | New | ✅ | API client |
-| bSValidate/src/services/buildingsmartMapper.ts | New | ✅ | Result mapping |
-| bSValidate/src/lib/exportValidation.ts | New | ✅ | Export utilities |
-| **Learning Features** ||||
-| LearningContext.tsx | New | ✅ | Learning state |
-| dynamicLearning.ts | New | ✅ | Learning system |
-| docsLinkGenerator.ts | New | ✅ | Doc links |
-| learning.ts (types) | New | ✅ | Type definitions |
-| **Core Updates** ||||
-| ifcParser.ts | Modified | ✅ | -869 lines refactored |
-| graphLoD.ts | Modified | ✅ | Complete rewrite |
-| Index.tsx | Modified | ✅ | +439 lines major refactor |
-| graph.ts | Modified | ✅ | +24 lines enhanced |
-| **UI Components** ||||
-| GraphControls.tsx | Modified | ✅ | +227 lines |
-| Header.tsx | Modified | ✅ | +82 lines |
-| IFCBrowser.tsx | Modified | ✅ | +149 lines |
-| NodeDetailsPanel.tsx | Modified | ✅ | +93 lines |
-| PropertyViewer.tsx | Modified | ✅ | +40 lines |
-
-**Total**: 4,209 insertions, 3,524 deletions (net +685 lines)
-
-## Uncommitted Work
-
-Currently in development on the IFC5-graph-sync-ui branch:
-- Further UI/UX refinements
-- Performance optimizations
-- Additional test coverage
-
-## Future Roadmap
-
-### ✅ Completed (This Release)
-- [x] 3D Viewer Integration with lazy loading
-- [x] buildingSMART Validator integration
-- [x] Educational/Learning features
-- [x] Export functionality (JSON, CSV, text)
-- [x] Geometry processing optimization
-
-### Immediate (Next Sprint)
-- [ ] Complete Local Validator refactoring
-- [ ] Advanced filtering UI improvements
-
-## Deployment Notes
-
-### Build Process
-```bash
-npm install    # Install dependencies
-npm run build  # Build for production
-npm run dev    # Start development server
-```
-
-### Required Files
-- ✅ WASM binaries in `public/ifc-wasm/`
-- ✅ Test files in `public/testFiles/`
-- ✅ Static copy plugin configured in Vite
-
-### Environment
-- No environment variables required
-- All processing happens client-side
-- No external API dependencies
-
-
+| Feature | Status | Notes |
+|---------|--------|-------|
+| IFC STEP parsing (IFC2x3/IFC4/IFC4X3) | Active | web-ifc WASM, Web Worker |
+| IFC5 JSON parsing + composition | Active | buildingSMART spec implementation |
+| Force-directed graph (IFC STEP) | Active | react-force-graph-2d, LoD 1-4 |
+| IFC5 Graph View | Active | ComposedObject-based |
+| IFC5 Tree Browser | Active | VirtualList, deep search |
+| IFC5 Property Viewer | Active | Namespace grouping |
+| IFC5 Source Viewer | Active | Syntax-highlighted JSON |
+| IFC Browser (STEP) | Active | STEP refs, inverse lookup |
+| 3D Viewer | Active | Three.js, off-thread geometry |
+| Graph LoD system (1-4) | Active | 100+ auxiliary type exclusions |
+| BuildingSMART API validation | Active | With functional parts + schema interpreter |
+| Validation export (JSON/CSV/text) | Active | All three formats |
+| Educational learning mode | Active | 5 layers, worked examples, practice |
+| Dynamic documentation links | Active | IFC2x3, IFC4, IFC4X3 patterns |
+| Keyboard shortcuts | Active | Ctrl+F, Ctrl+S, Escape, Ctrl+Shift+V, etc. |
+| Graph export (JSON/CSV/PNG) | Active | All formats |
+| Cross-panel selection sync | Active | Bidirectional Maps (IFC5) |
+| Local validator | Disabled | Pending refactoring |

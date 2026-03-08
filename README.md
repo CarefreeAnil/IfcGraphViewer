@@ -1,4 +1,4 @@
-**Proof of Concept: Developing a Unified Web-Based Platform for IFC Graph Visualization, Exploration, and Validation**
+﻿**Proof of Concept: Developing a Unified Web-Based Platform for IFC Graph Visualization, Exploration, and Validation**
 
 ## About This Thesis Work
 
@@ -7,9 +7,9 @@ The Industry Foundation Classes (IFC) schema underpins openBIM workflows, but to
 
 - **Graph Visualization** - Interactive force-directed graphs showing entity relationships
 - **Hierarchical Browsing** - Tree-based exploration of IFC structures
-- **Property Inspection** - Detailed entity property
+- **Property Inspection** - Detailed entity property display with namespace-aware formatting
 - **3D Visualization** - Spatial representation of building models
-- **Validation** - IFC standards compliance checking
+- **Validation** - IFC standards compliance checking via buildingSMART API
 
 ### Target Audience
 Learners, students, and novice BIM practitioners who struggle to understand IFC entities, relationships, and properties across versions without heavy desktop tools or steep onboarding.
@@ -18,519 +18,559 @@ Learners, students, and novice BIM practitioners who struggle to understand IFC 
 This research aims to democratize IFC education and exploration by providing a zero-install, browser-based tool that:
 - Eliminates software installation barriers
 - Provides visual, interactive learning experiences
-- Supports both IFC (STEP and JSON) formats
+- Supports both IFC STEP (`.ifc`) and IFC5 JSON (`.ifcx`) formats
 - Enables self-paced exploration of IFC concepts
-- Validates models against schema definitions in real-time
+- Validates models against official buildingSMART standards
 
-## 🎯 Key Features
+---
 
-### 📊 Four Interactive Visualization Modes
+## Key Features
 
-1. **Graph View** - Force-directed graph visualization with physics simulation
-   - Interactive node-and-link diagram
-   - Color-coded by entity type
-   - Type filtering and entity search
-   - Drag-to-explore interface with zoom/pan
-   - Optimized for 1000+ entity relationships
+### Visualization Modes
 
-2. **Tree Browser** - Hierarchical structural exploration
+**For IFC STEP files (`.ifc`)**
+
+1. **Graph View** - Force-directed graph with physics simulation
+   - Color-coded nodes by IFC entity type
+   - Level of Detail (LoD 1-4) filtering for graph complexity management
+   - Relationship type filtering with color-coded directional edge categories
+   - Node search, zoom/pan, fit-to-view, center-on-selection controls
+   - Custom canvas rendering with labels at zoom >= 1.5
+
+2. **IFC Browser (Tree)** - Hierarchical STEP file explorer
    - Expandable/collapsible entity hierarchy
-   - Full-text search across labels, types, IDs
-   - Inverse reference explorer
-   - One-click entity navigation
-   - Virtual scrolling for performance
+   - Full-text search across labels, types, and Express IDs
+   - IFC STEP syntax-highlighted entity display
+   - "Referenced By" inverse relationship algorithm
+   - One-click cross-entity navigation by clicking STEP references
+   - Virtual scrolling and pagination for large models
 
-3. **Property Viewer** - Tabular entity inspection
-   - Searchable entity list
-   - Detailed property inspection
-   - Support for complex property values
-   - IFC5-specific property formatting
-   - Schema-based value display
+3. **Property Viewer** - Grouped entity inspector
+   - Searchable entity list grouped by IFC type
+   - Full property display with IFC schema definitions
+   - Educational content and buildingSMART documentation links
 
-4. **3D Viewer** - Three-dimensional visualization
-   - Color-coded 3D representation by entity type
-   - Interactive 3D navigation (zoom, pan, rotate)
-   - Real-time entity selection and highlighting
-   - Cross-modal synchronized selection
-   - Lazy loading (loads on-demand to save resources)
+4. **3D Viewer** - Three.js geometry visualization
+   - Off-thread geometry parsing via `ifcGeometryWorker`
+   - Color-coded by IFC type (50+ type-specific colors)
+   - Orbit controls (zoom, pan, rotate)
+   - Click-to-select with emissive highlight and opacity dimming on other meshes
+   - Lazy-loaded on demand to conserve memory
 
-5. **Learning & Educational Features** (NEW)
-   - Dynamic documentation links for IFC entities
-   - Interactive learning context system
-   - Educational content generation
+**For IFC5 JSON files (`.ifcx`)**
 
-### 🌳 Advanced IFC Browser Features
+1. **Graph View (IFC5)** - Composed-object force-directed graph
+   - Converts post-composition tree to graph via `convertComposedObjectToGraph()`
+   - Configurable: show/hide geometry nodes, attribute nodes, inheritance edges, clustering by namespace
+   - Relationship type filtering and cross-panel selection sync
 
-- **Hierarchical Navigation** - Expandable/collapsible tree with parent-child relationships
-- **Smart Search** - Real-time filtering across labels, types, and IDs
-- **Entity Selection** - Instant property display on selection
-- **Inverse References** - Automatic relationship tracking
+2. **Tree Browser (IFC5)** - Hierarchical composed-object browser
+   - Deep attribute search with match highlighting
+   - IFC class badges and icons per node type
+   - VirtualList rendering for performance
 
-### 🔗 Inverse References System
+3. **Property Viewer (IFC5)** - Namespace-aware attribute inspector
+   - Attributes grouped by namespace (`bsi::ifc::`, `usd::usdgeom::`, `mesh::`, etc.)
+   - 4x4 matrix display, geometry array summarization
+   - Breadcrumb navigation and IFC class summary
 
-Automatically tracks and displays:
-- **Referenced By** - All entities that reference the selected entity
-- **References** - All entities referenced by the selected entity
-- Bidirectional relationship exploration
-- One-click navigation between related entities
-- Full property value inspection
+4. **Source Viewer (IFC5)** - Raw `.ifcx` JSON source display
+   - Syntax-highlighted JSON (keys, strings, numbers, booleans in distinct colors)
+   - Inline search with jump-to-match navigation
+   - Large geometry array truncation to prevent browser freeze
+   - Click-to-cross-select between source blocks and tree/graph
 
-### 💾 Multi-Format Support
+5. **3D Viewer (IFC5)** - Interactive Three.js 3D scene rendered directly from the `ComposedObject` tree
+   - **Auto-loads** when an `.ifcx` file is parsed — no manual trigger needed
+   - Supports `Mesh` (PBR: base color, metalness, roughness; fallback Lambert diffuse), `Curve` (line geometry), and `Points` (including base64-encoded position/color buffers)
+   - Z-up coordinate convention matching the IFC5/USD specification
+   - Camera auto-fits to model bounding box on load
+   - OrbitControls (rotate, pan, zoom) with inertia damping
+   - Click a 3D object to select it — selection syncs to all other IFC5 panels
+   - Selected object highlighted with indigo emissive glow; original material restored on deselect
 
-- **IFC4** - Traditional STEP format (.ifc files)
-- **IFC5** - JSON-based format (.ifcx files)
-- **Smart Routing** - Automatic parser selection based on file extension
-- Format-specific optimizations for each IFC version
+All five IFC5 panels are bidirectionally synchronized via `rawToComposed` / `composedToRaw` maps maintained in the Index page.
 
-### ⚡ Performance Optimizations
+---
 
-- Web Worker-based parsing (non-blocking UI)
-- Geometry worker for 3D processing
-- Virtual scrolling for large entity lists
-- Force graph physics optimization
-- Debounced search (500ms)
-- Memory-efficient geometry filtering
-- Scales to 10,000+ entities
-- Optimized Level of Detail (LoD) system
+### Graph Level of Detail (LoD) System
 
-### ✅ IFC Validation System
+Research-based 4-tier LoD framework for managing graph complexity at scale:
 
-#### **buildingSMART Validator** (Current/Active)
-A comprehensive validation system that integrates with the official **buildingSMART Validation API** to validate IFC files against official standards:
+| LoD | Name | Includes |
+|-----|------|---------|
+| LoD 1 | Spatial Hierarchy | Spatial structure only (Project, Site, Building, Storey, Space) |
+| LoD 2 | Elements & Structure | + Building elements (walls, doors, windows, slabs, beams, columns) |
+| LoD 3 | + Properties | + Property sets, material associations, classification references |
+| LoD 4 | Full Semantic | All meaningful entities; excludes only geometric/mathematical primitives |
 
-- **Live API Integration** - Submits files to buildingSmart official validation service
-- **Comprehensive Checking** - Validates against syntax, schema, Normative rules and Industry practices specifications
-- **Entity-Level Diagnostics** - Links validation issues to specific IFC entities (For Schema)
-- **Export Results** - Export validation reports in JSON, CSV, or plain text formats
-- **Real-time Polling** - Live status updates during validation processing
-- **Backend Proxy** - Express.js server in `bSValidate/` module handles API communication
+Auxiliary types (100+ geometric primitives, profile definitions, style entities, measurement helpers) are automatically filtered at all LoD levels. Original data is always preserved; filtering is view-only.
+
+---
+
+### IFC Validation System
+
+#### buildingSMART Validator (Active)
+Integrates with the official buildingSMART Validation API:
+
+- Submits files via backend proxy (`bSValidate/` module, port 5001)
+- Real-time polling for job status with live UI updates
+- Results categorized as Normative IA, Normative IP, and Schema errors
+- Entity-level diagnostics with Express ID links that navigate back to the graph/tree
+- Functional part tagging (PJS, GRF, BLT, SPA, etc.)
+- Schema error human-readable interpretation via `schemaInterpreter.ts`
+- Export validation reports as JSON, CSV, or plain text
 
 **Components:**
 - `src/pages/Validation.tsx` - Validation interface
-- `bSValidate/server.js` - Backend proxy to buildingSmart API
-- `bSValidate/src/services/buildingsmartApi.ts` - API integration
-- `bSValidate/src/services/buildingsmartMapper.ts` - Result mapping
-- `bSValidate/src/lib/exportValidation.ts` - Export functionality
+- `bSValidate/server.js` - Express proxy to buildingSMART API (port 5001)
+- `bSValidate/src/services/buildingsmartApi.ts` - API client with polling
+- `bSValidate/src/services/buildingsmartMapper.ts` - Result normalization
+- `bSValidate/src/lib/functionalParts.ts` - Functional part catalog
+- `bSValidate/src/lib/exportValidation.ts` - Export utilities
+- `bSValidate/src/components/BuildingSmartResults.tsx` - Normative results UI
+- `bSValidate/src/components/SchemaResults.tsx` - Schema results UI
 
-#### **Local Validator** (Work in Progress - Disabled)
-A planned client-side IFC validator for offline validation:
-- Currently disabled pending refactoring
-- Will provide instant validation without external API calls
-- Supports schema compliance checking
-- Integrated into `ifcValidatorEnhanced.ts` for future activation
+#### Local Validator (Work in Progress - Disabled)
+Planned client-side validation for offline use. Infrastructure exists in `src/lib/ifcValidatorEnhanced.ts` but is currently disabled pending refactoring.
 
-## 🚀 Quick Start
+---
+
+### Educational / Learning Features
+
+- **Learning Mode** - Navigate to `/learn`, select a sample file, and explore with guided content
+- **Dynamic Learning Path** - `dynamicLearning.ts` analyzes model content and generates a customized 5-layer learning path (project -> spatial -> element -> relationship -> property)
+- **Worked Examples & Practice** - Step-by-step guided examples and interactive practice exercises (multiple-choice, predict-verify, drag-connect)
+- **Layer Progress Map** - 5-layer progress visualization stored in localStorage
+- **BuildingSMART Docs Links** - `docsLinkGenerator.ts` generates context-aware documentation URLs per entity and schema version (IFC2x3, IFC4, IFC4X3)
+- **Glossary Terms** - Hover tooltips for IFC terminology throughout the UI
+- **LearningContext** - localStorage-persisted learning progress tracking across sessions
+
+---
+
+## Quick Start
 
 ### Prerequisites
-- Node.js (v16 or higher)
-- npm or yarn
-- Modern web browser (Chrome, Firefox, Safari, Edge)
+- Node.js v16 or higher
+- npm
+- A modern browser (Chrome, Firefox, Safari, Edge)
 
 ### Installation
 
 ```bash
 # Clone the repository
 git clone <YOUR_GIT_URL>
-
-# Navigate to project directory
 cd "Thesis - POC"
 
-# Install dependencies
+# Install frontend dependencies
 npm install
 
-# Start the development server
+# Start the frontend development server
 npm run dev
+# Opens at http://localhost:5173
 ```
 
-The application will open at `http://localhost:5173/`
+### Running Both Frontend and Backend Together
+
+```bash
+npm run dev:all
+```
+
+This runs concurrently:
+- **Frontend** at `http://localhost:5173` (Vite)
+- **Backend** at `http://localhost:5001` (Express proxy for buildingSMART API)
 
 ### Setting Up buildingSMART Validation (Optional)
 
-To enable the **buildingSMART Validator**, you need to set up the validation backend:
-
 ```bash
-# Navigate to validation backend
 cd bSValidate
-
-# Install backend dependencies
 npm install
 
-# Create .env file with your buildingSMART API token
+# Create environment file with your buildingSMART API token
 echo BUILDINGSMART_TOKEN=your_token_here > .env
 
-# Start the validation backend server (runs on port 5001)
+# Start the backend server
 npm start
 ```
 
-The validation backend proxies requests to `https://dev.validate.buildingsmart.org/api/v1`. You'll need a valid buildingSMART API token from their developer portal.
-
-**Note:** The frontend expects the validation backend to be running on `http://localhost:5001`. If using a different port, update the API endpoint in `src/pages/Validation.tsx`.
+The backend proxies requests to `https://dev.validate.buildingsmart.org/api/v1`. A valid buildingSMART API token is required.
 
 ### Building for Production
 
 ```bash
-# Build the application
-npm run build
-
-# Preview the production build
-npm run preview
-
-# Deploy the dist/ folder to your hosting service
+npm run build      # Outputs to dist/
+npm run preview    # Preview the production build locally
 ```
 
+Deploy the `dist/` folder to any static host (Vercel, Netlify, GitHub Pages, AWS S3, etc.).
 
-## 📋 Usage Guide
+---
+
+## Usage Guide
 
 ### Uploading an IFC File
-
 1. Open the application in your browser
-2. Click the upload area or drag-and-drop an `.ifc` or `.ifcx` file
-3. Wait for the parsing to complete (progress indicator shown)
-4. Select a visualization mode to explore the data
+2. Drag-and-drop or click to upload an `.ifc` or `.ifcx` file
+3. A progress bar shows parsing status (parsing runs in a background Web Worker)
+4. On completion, all visualization panels become available
 
-### Using Graph View
+### Using the Graph View
+- **Pan**: Click and drag the background
+- **Zoom**: Scroll wheel; use the zoom buttons or Ctrl+=/- shortcuts
+- **Select**: Click a node to open the Node Details panel
+- **Search**: Type in the search box (Ctrl+F) to highlight matching nodes
+- **LoD**: Use the LoD dropdown to reduce graph complexity (LoD 1 is most reduced)
+- **Filter**: Open the filter drawer to toggle node types and relationship categories
+- **Export**: Graph as JSON, node/edge CSVs, or PNG screenshot (Ctrl+S)
 
-1. Navigate to the **Graph** tab
-2. **Pan**: Click and drag to move around
-3. **Zoom**: Scroll wheel to zoom in/out
-4. **Select**: Click nodes to select entities
-5. **Filter**: Use "Filter by Type" to highlight specific entity types
-6. **Search**: Use the search box to find and highlight entities
-7. **Details**: Right panel shows selected entity properties and relationships
+### Using the IFC Browser
+- **Expand/Collapse**: Click the arrow icons on tree nodes
+- **Search**: Full-text search filters the entity list in real time
+- **Select**: Click any entity to view its STEP representation and properties
+- **Navigate via references**: Click any `#number` reference inside a STEP line to jump to that entity
+- **Inverse refs**: The right panel shows all entities that reference the currently selected entity
 
-### Using IFC Browser
+### Using the 3D Viewer
+1. Click **Load 3D** to initialize (geometry is parsed on demand in a background worker)
+2. **Rotate**: Left-click drag; **Pan**: Right-click drag; **Zoom**: Scroll wheel
+3. Click a 3D mesh to select its entity (selection syncs across all panels)
+4. Click **Unload 3D** to free GPU memory when done
 
-1. Navigate to the **IFC Browser** tab
-2. **Expand**: Click arrows to expand/collapse nodes
-3. **Search**: Use the search box for full-text filtering
-4. **Select**: Click entities to select them
-5. **View Relations**: Split panel shows inverse references automatically
-   - "Referenced By": Entities that reference the selected entity
-   - "References": Entities referenced by the selected entity
-6. **Navigate**: Click any reference in the split panel to jump to it
+### Using IFC5 Panels
+When an `.ifcx` file is loaded, five panels appear:
+- **Graph** - Composed-object force graph
+- **Tree** - Hierarchical browser with attribute search
+- **Properties** - Namespace-grouped attribute viewer
+- **Source** - Raw JSON source with syntax highlighting
+- **3D Viewer** - Automatically initializes and renders the model in 3D
+  - No action needed — the 3D scene loads automatically when the file is parsed
+  - Navigate with OrbitControls: left-drag to rotate, right-drag to pan, scroll to zoom
+  - Click any mesh to select it; the selected node is highlighted in indigo and the selection propagates to all other panels
+  - Handles mesh, curve, and point-cloud geometry with PBR materials derived from IFC5 attributes
 
-### Using 3D Viewer
+Selecting a node in any panel synchronizes the selection across all others.
 
-1. Navigate to the **3D** tab
-2. Click **Load 3D** to initialize the 3D visualization (loads on-demand)
-3. **Navigate**: 
-   - Scroll to zoom in/out
-   - Left-click drag to rotate
-   - Right-click drag to pan
-4. **Select**: Click on 3D objects to select entities
-5. **Sync**: Selection automatically updates in Graph, Tree, and Properties views
-6. Click **Unload 3D** to free memory when done
+### Running Validation
+1. Load an IFC file, then click **Validate** in the header
+2. On the Validation page, click **Validate with buildingSMART**
+3. The file is submitted and results appear as the API job is polled
+4. Click any entity ID in the report to navigate to it in the main viewer
+5. Export the report via the download button (JSON, CSV, or text)
 
-### Using IFC Validation
+---
 
-1. Click the **Validation** button in the toolbar after uploading a file
-2. Choose a validation method:
-   
-   **buildingSMART Validator (Recommended):**
-   - Click "Validate with buildingSMART"
-   - File is submitted to official buildingSmart validation service
-   - Wait for validation to complete (status shown in real-time)
-   - Review results categorized by severity (errors, warnings, info)
-   - **Export Results**: Click the download button to export in JSON, CSV, or text format
-   - Click on entities in the report to navigate to them in the graph/tree
-   
-   **Local Validator (Currently Disabled):**
-   - Work-in-progress validator for offline validation
-   - Will be enabled in future releases
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 .
-├── public/
-│   ├── ifc-wasm/              # WASM binaries for IFC parsing
-│   ├── testFiles/             # Sample IFC files for testing
-│   └── robots.txt
-├── src/
-│   ├── components/
-│   │   ├── GraphVisualization.tsx    # Graph rendering component
-│   │   ├── GraphControls.tsx         # Graph controls and filters (enhanced)
-│   │   ├── IFCBrowser.tsx            # IFC STEP file browser with references
-│   │   ├── IFC5TreeBrowser.tsx       # IFC5-specific tree browser
-│   │   ├── IFC5PropertyViewer.tsx    # IFC5-specific properties
-│   │   ├── PropertyViewer.tsx        # Properties table view
-│   │   ├── NodeDetailsPanel.tsx      # Entity details display (enhanced)
-│   │   ├── FileUpload.tsx            # File upload handler
-│   │   ├── Header.tsx                # Application header (enhanced)
-│   │   ├── Legend.tsx                # Entity type legend
-│   │   ├── ValidationDialog.tsx      # Validation UI
-│   │   ├── ValidationReport.tsx      # Validation results (enhanced)
-│   │   ├── Viewer3D.tsx              # 3D viewer component (significantly expanded)
-│   │   ├── ErrorBoundary.tsx         # Error handling
-│   │   ├── VirtualList.tsx           # Virtual scrolling
-│   │   └── ui/                       # shadcn/ui components
-│   ├── contexts/
-│   │   ├── LearningContext.tsx       # Learning state management (NEW)
-│   │   └── UIStateContext.tsx        # UI state management (enhanced)
-│   ├── hooks/
-│   │   ├── useIFC5Viewer.ts          # IFC5 viewer logic
-│   │   ├── useIFCWorker.ts           # Worker communication
-│   │   ├── useViewer3D.ts            # 3D viewer setup
-│   │   ├── usePagination.ts          # Pagination logic
-│   │   ├── useVirtualScroll.ts       # Virtual scrolling
-│   │   └── useKeyboardShortcuts.ts   # Keyboard navigation
-│   ├── lib/
-│   │   ├── ifcParser.ts              # IFC4 STEP format parser (refactored)
-│   │   ├── ifcParserEnhancements.ts  # Parser improvements
-│   │   ├── ifc5Parser.ts             # IFC5 JSON parser
-│   │   ├── ifc5ParserMain.ts         # IFC5 main parsing logic
-│   │   ├── ifc5Composition.ts        # IFC5 composition extraction
-│   │   ├── ifc5ToGraph.ts            # IFC5 to graph conversion
-│   │   ├── ifcValidatorEnhanced.ts   # Enhanced validation (strict GUID checks)
-│   │   ├── ifcSchema.ts              # Entity schema definitions (enhanced)
-│   │   ├── ifcSchemaLoader.ts        # Dynamic schema loading (NEW)
-│   │   ├── graphLoD.ts               # Level of Detail system (rewritten)
-│   │   ├── graphBuilder.ts           # Graph construction utilities (NEW)
-│   │   ├── treeBuilder.ts            # Tree structure building (NEW)
-│   │   ├── colorScheme.ts            # UI color scheme management (NEW)
-│   │   ├── docsLinkGenerator.ts      # Documentation link generation (NEW)
-│   │   ├── dynamicLearning.ts        # Dynamic learning system (NEW)
-│   │   ├── schema-layer-mapping.ts   # Layer mapping utilities (NEW)
-│   │   ├── stepRepresentationGenerator.ts # STEP format generation (NEW)
-│   │   ├── exportUtils.ts            # Export functionality
-│   │   └── utils.ts                  # Utility functions
-│   ├── types/
-│   │   ├── graph.ts                  # Graph data structures (enhanced with categories)
-│   │   ├── ifc.ts                    # IFC4 type definitions
-│   │   ├── ifc5.ts                   # IFC5 type definitions
-│   │   └── learning.ts               # Learning type definitions (NEW)
-│   ├── utils/
-│   │   └── logger.ts                 # Logging utilities
-│   ├── workers/
-│   │   ├── ifcParserWorker.ts        # Parser worker thread (improved)
-│   │   └── ifcGeometryWorker.ts      # Geometry processing worker (massively expanded)
-│   ├── data/
-│   │   └── ifc-schema.ts             # Schema data
-│   ├── pages/
-│   │   ├── Index.tsx                 # Main page (major refactoring)
-│   │   ├── Validation.tsx            # Dedicated validation page (NEW)
-│   │   └── NotFound.tsx              # 404 page
-│   ├── App.tsx                       # Root component
-│   ├── App.css                       # Global styles
-│   ├── main.tsx                      # Entry point
-│   └── index.css                     # CSS imports
-├── features/                         # Feature-specific modules (NEW)
-├── services/                         # Service layer modules
-├── bSValidate/                       # buildingSMART Validation Backend (NEW)
-│   ├── src/
-│   │   ├── services/
-│   │   │   ├── buildingsmartApi.ts   # API client for buildingSmart service
-│   │   │   └── buildingsmartMapper.ts # Result mapping and transformation
-│   │   └── lib/
-│   │       └── exportValidation.ts   # Export in JSON, CSV, text formats
-│   ├── server.js                     # Express proxy server
-│   ├── package.json                  # Backend dependencies
-│   └── .env                          # Environment (BUILDINGSMART_TOKEN)
-├── SYSTEM_ARCHITECTURE.md            # System architecture documentation
-├── PARSER_ARCHITECTURE.md            # Parser design details
-├── FEATURE_SUMMARY.md                # Recent features and changes
-├── README.md                         # This file
-├── package.json                      # Dependencies
-├── tsconfig.json                     # TypeScript config
-├── tailwind.config.ts                # Tailwind CSS config
-├── postcss.config.js                 # PostCSS config
-└── vite.config.ts                    # Vite build config
+ public/
+    ifc-wasm/              # web-ifc WASM binaries
+    schemas/               # IFC JSON schema files (IFC2x3, IFC4, IFC4X3)
+    testFiles/             # Sample IFC files for testing
+ src/
+    App.tsx                # Root component and router setup
+    main.tsx               # Entry point
+    pages/
+       Index.tsx          # Main viewer page (IFC STEP + IFC5)
+       Validation.tsx     # Dedicated validation page
+       NotFound.tsx       # 404 page
+    components/
+       FileUpload.tsx              # Drag-and-drop file input
+       Header.tsx                  # Top bar with file metadata and actions
+       GraphVisualization.tsx      # Force-directed graph (IFC STEP)
+       GraphControls.tsx           # Search, LoD, filter drawer, export
+       IFCBrowser.tsx              # IFC STEP entity browser with references
+       IFC5GraphVisualization.tsx  # Force-directed graph (IFC5)
+       IFC5TreeBrowser.tsx         # IFC5 hierarchical tree browser
+       IFC5PropertyViewer.tsx      # IFC5 namespace-grouped attributes
+       IFC5SourceViewer.tsx        # IFC5 raw JSON source viewer
+       NodeDetailsPanel.tsx        # Selected entity detail panel
+       PropertyViewer.tsx          # Entity property viewer (IFC STEP)
+       StatsPanel.tsx              # File statistics bar
+       ValidationDialog.tsx        # Inline validation dialog (legacy)
+       ValidationReport.tsx        # Full validation report display
+       Viewer3D.tsx                # Three.js 3D viewer component
+       Legend.tsx                  # Graph color legend
+       ErrorBoundary.tsx           # React class-based error boundary
+       PaginationControls.tsx      # Reusable pagination bar
+       VirtualList.tsx             # Windowed virtual list renderer
+       ui/                         # shadcn/ui components (Radix-based)
+    contexts/
+       UIStateContext.tsx   # Global UI state (filters, search, LoD, schema version)
+       LearningContext.tsx  # Learning mode state + localStorage persistence
+    hooks/
+       useIFC5Viewer.ts         # IFC5 Three.js scene init and geometry loading
+       useIFCWorker.ts          # IFC parser worker lifecycle management
+       useViewer3D.ts           # 3D viewer state + LRU geometry cache (max 500)
+       useKeyboardShortcuts.ts  # Global keyboard shortcut handler
+       usePagination.ts         # Generic paginated list hook
+       useVirtualScroll.ts      # Virtual scroll window calculator
+    lib/
+       ifc5ParserMain.ts           # IFC5 entry point and parsing orchestrator
+       ifc5Composition.ts          # IFC5 inheritance/composition engine
+       ifc5Parser.ts               # IFC5 direct-to-graph parser (fallback)
+       ifc5ToGraph.ts              # PostCompositionNode -> ComposedObject + graph
+       ifc5GraphVisualization.ts   # ComposedObject -> graph data conversion
+       ifcParser.ts                # IFC STEP parser using web-ifc WASM
+       ifcParserEnhancements.ts    # Property normalization + STEP type mappings
+       stepRepresentationGenerator.ts # STEP text reconstruction (lazy)
+       graphBuilder.ts             # Graph enrichment and property set linking
+       graphLoD.ts                 # Level of Detail framework (LoD 1-4)
+       treeBuilder.ts              # Entity enrichment for tree display
+       ifcSchema.ts                # Static entity schema catalog (100+ types)
+       ifcSchemaLoader.ts          # Dynamic JSON schema fetching + caching
+       ifcValidatorEnhanced.ts     # Local validator (WIP - disabled)
+       schema-layer-mapping.ts     # Entity -> schema layer mapping (200+ entities)
+       colorScheme.ts              # Canonical graph node color definitions
+       exportUtils.ts              # JSON, CSV, STEP, PNG export utilities
+       docsLinkGenerator.ts        # BuildingSMART docs URL generation per entity
+       dynamicLearning.ts          # Dynamic 5-layer learning path generation
+       lodDescriptions.ts          # LoD level human-readable descriptions
+       utils.ts                    # cn() Tailwind merge utility
+    types/
+       graph.ts      # GraphNode, GraphEdge, GraphData, ParsedIFCData
+       ifc.ts        # IFCEntity, IFCRelationship, entity category sets
+       ifc5.ts       # Full IFC5 type system (ComposedObject, composition types)
+       learning.ts   # Learning layer, progress, exercise type definitions
+    workers/
+       ifcParserWorker.ts    # Web Worker: parse IFC + build graph
+       ifcGeometryWorker.ts  # Web Worker: extract and color-code IFC geometry
+    utils/
+       logger.ts    # Dev-only scoped logger (parsing, graph, validation)
+    features/
+       educational/ # Educational mode pages and components
+    data/
+        ifc-schema.ts  # Additional schema data
+ bSValidate/                      # BuildingSMART validation backend (Express)
+    server.js                    # Express proxy server (port 5001)
+    package.json                 # Backend dependencies (express, multer, axios)
+    src/
+        services/
+           buildingsmartApi.ts      # API client with polling
+           buildingsmartMapper.ts   # API response -> ValidationResult
+        lib/
+           functionalParts.ts       # Functional part catalog (PJS, GRF, BLT...)
+           exportValidation.ts      # Export to JSON/CSV/text
+           buildingsmartUtils.ts    # Grouping and formatting helpers
+           normativeInterpreter.ts  # Normative rule description parser
+           schemaInterpreter.ts     # Schema error human-readable interpretation
+        components/
+            BuildingSmartResults.tsx # Normative results display component
+            SchemaResults.tsx        # Schema results display component
+ profile-parser.ts                # Developer performance profiling script (Node.js)
+ SYSTEM_ARCHITECTURE.md
+ PARSER_ARCHITECTURE.md
+ FEATURE_SUMMARY.md
+ README.md
+ package.json
+ tsconfig.json
+ tailwind.config.ts
+ postcss.config.js
+ vite.config.ts
 ```
 
-## 🔧 Technologies Used
+---
+
+## Technologies Used
 
 ### Core Framework
-- **React 18** - UI library with hooks and concurrent features
-- **TypeScript** - Type-safe JavaScript
-- **Vite** - Ultra-fast build tool and dev server
+| Library | Version | Purpose |
+|---------|---------|---------|
+| React | 18 | UI library with hooks and concurrent features |
+| TypeScript | latest | Static type safety |
+| Vite | 5 | Build tool and dev server |
+| @vitejs/plugin-react-swc | - | Rust-based fast SWC compilation |
 
 ### IFC Parsing
-- **web-ifc** - WASM-based IFC file parser
-- **Web Workers** - Background processing for large files
-- **JSON parsing** - Built-in for IFC5 JSON format
+| Library | Version | Purpose |
+|---------|---------|---------|
+| web-ifc | 0.0.74 | WASM-based IFC STEP parsing |
+| Web Workers (native) | - | Background parsing and geometry processing |
 
 ### Visualization
-- **react-force-graph-2d** - 2D force-directed graph rendering
-- **D3.js** - Physics simulation and utilities
-- **Framer Motion** - Smooth animations and transitions
-- **Three.js** - 3D rendering
-- **@react-three/fiber** - React integration for Three.js
-- **@react-three/drei** - Useful Three.js helpers
+| Library | Purpose |
+|---------|---------|
+| react-force-graph-2d | Force-directed graph rendering on HTML canvas |
+| Three.js + OrbitControls | 3D rendering and camera navigation |
+| framer-motion | UI animations and transitions |
 
 ### UI & Styling
-- **Tailwind CSS 4** - Utility-first CSS framework
-- **shadcn/ui** - Accessible React component library
-- **Lucide React** - Beautiful icon library
-- **Sonner** - Toast notifications
+| Library | Purpose |
+|---------|---------|
+| Tailwind CSS v3 | Utility-first CSS framework |
+| @radix-ui/* | Accessible headless UI primitives |
+| shadcn/ui | Pre-built Radix-based component library |
+| lucide-react | Icon set |
+| sonner | Toast notifications |
+| react-hook-form + zod | Form handling and schema validation |
 
-### State Management & Data
-- **React Context API** - Built-in state management
-- **React Router** - Client-side routing
-- **React Query** - Data fetching and caching
+### State & Data
+| Library | Purpose |
+|---------|---------|
+| React Context API | UIStateContext and LearningContext |
+| react-router-dom v6 | Client-side routing |
+| @tanstack/react-query v5 | Data fetching and caching |
 
-### Development
-- **ESLint** - Code quality and standards
-- **PostCSS** - CSS processing
-- **TypeScript Compiler** - Type checking
+### Backend (bSValidate)
+| Library | Purpose |
+|---------|---------|
+| Express | HTTP server and routing |
+| multer | Multipart file upload handling |
+| axios | HTTP client for buildingSMART API calls |
+| cors | Cross-origin resource sharing |
+| dotenv | Environment variable loading |
 
-## 📚 Documentation
+---
 
-### Architecture & System Design
-- **[SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md)** - Complete system architecture with diagrams
-  - Component hierarchy
-  - Data flow and state management
-  - Performance optimizations
-  - Integration patterns
+## Supported IFC Formats
 
-### Parser Implementation
-- **[PARSER_ARCHITECTURE.md](PARSER_ARCHITECTURE.md)** - Detailed parser design
-  - IFC4 (STEP format) parsing
-  - IFC5 (JSON format) parsing
-  - Graph conversion algorithms
-  - Relationship handling
+### IFC STEP (`.ifc`)
+- Traditional ISO-10303-21 text format
+- Standards supported: IFC2x3, IFC4, IFC4X3
+- Parsed with web-ifc WASM library in a dedicated Web Worker
+- 100+ geometry entity types filtered from graph view (preserved in `geometryEntities` for IFC Browser)
+- Raw STEP lines preserved in a `Map<expressId, stepLine>` and displayed in IFC Browser
 
-### Recent Changes
-- **[FEATURE_SUMMARY.md](FEATURE_SUMMARY.md)** - Latest features and enhancements
-  - IFC5 support implementation
-  - Tree browser features
-  - UI improvements
-  - Performance metrics
+### IFC5 JSON (`.ifcx`)
+- Next-generation buildingSMART JSON format
+- UUID-based path system for entity identification
+- Inheritance and composition resolved by `ifc5Composition.ts` per buildingSMART specification
+- Rendered in four specialized synchronized panels (Graph, Tree, 3D, Properties, Source)
+- Cross-panel selection synchronized via `rawToComposed` / `composedToRaw` bidirectional maps
 
-## 🎨 IFC File Parsing
+### Relationship Types
 
-### Supported Formats
+| Type | Description |
+|------|-------------|
+| CONTAINS | Parent-child spatial containment |
+| AGGREGATES | Hierarchical aggregation |
+| INHERITS | IFC5 inheritance relationships |
+| VOIDS | Openings in building elements |
+| FILLS | Fillings in openings |
+| PROPERTY_REFERENCE | Property set associations |
+| SPACE_BOUNDARY | Space boundary definitions |
 
-**IFC4 (.ifc files)**
-- STEP textual format
-- Uses web-ifc WASM library
-- Supports IFC2x3 and IFC4 standards
-- Automatic geometry filtering
+---
 
-**IFC5 (.ifcx files)**
-- JSON-based format
-- UUID-based path system
-- Composition extraction
-- Enhanced property support
-
-### Relationship Types Extracted
-
-- **CONTAINS** - Parent-child containment relationships
-- **AGGREGATES** - Hierarchical aggregation
-- **INHERITS** - Inheritance relationships
-- **SPACE_BOUNDARY** - Space boundary definitions
-- **VOIDS** - Openings in building elements
-- **FILLS** - Fillings in openings
-- **PROPERTY_REFERENCE** - Property set associations
-
-### Entity Categories
-
-- **Building** - IFCPROJECT, IFCSITE, IFCBUILDING, IFCBUILDINGSTOREY
-- **Spaces** - IFCSPACE, IFCZONE
-- **Elements** - IFCWALL, IFCDOOR, IFCWINDOW, IFCSLAB, IFCCOLUMN, IFCBEAM, IFCSTAIR, IFCROOF
-- **Properties** - IFCPROPERTYSET, properties with values
-- **Relationships** - Relationship entities between other objects
-
-## ⚙️ Configuration
-
-### TypeScript (`tsconfig.json`)
-- Strict mode for type safety
-- ES2020 target
-- Module resolution: bundler
-
-### Tailwind CSS (`tailwind.config.ts`)
-- Custom color schemes
-- Dark mode support
-- Responsive design system
-- Custom animations
+## Configuration
 
 ### Vite (`vite.config.ts`)
-- React plugin with SWC compilation
-- WASM static file copying
-- Optimized build output
+- SWC-based React compilation for fast builds
+- `viteStaticCopy` copies `web-ifc/*.wasm` to build output
+- Path alias: `@` -> `./src`
+- `optimizeDeps.exclude: ['web-ifc']` prevents Vite from pre-bundling the WASM library
+- Manual chunk splitting for optimal caching: `vendor-react`, `vendor-three`, `vendor-ifc`, `vendor-graph`, `vendor-ui`, `vendor-animation`, `vendor-utils`
 
-## 📊 Performance Characteristics
+### TypeScript (`tsconfig.json`)
+- Strict mode enabled, ES2020 target, ESNext modules, bundler module resolution
 
-### Parsing Performance
-- **IFC4 files** (1-5K entities): < 2 seconds
-- **IFC5 files** (1-10K entities): < 3 seconds
-- **Web Worker** prevents UI blocking
+### Tailwind (`tailwind.config.ts`)
+- Typography plugin and custom animation plugin
+- Custom color scheme matching IFC entity type classification
 
-### Rendering Performance
-- **Graph View** (1000+ nodes): 60 FPS
-- **Tree Browser** (10K+ entities): Virtual scrolling
-- **Search** (debounced): 500ms response time
+---
 
-### Memory Usage
-- Geometry entities filtered out (not stored)
-- Efficient node/edge representation
-- Memoization of expensive components
+## Performance Characteristics
 
-## 🐛 Troubleshooting
+### Parsing
+| Format | Entity Count | Typical Parse Time |
+|--------|-------------|-------------------|
+| IFC STEP | 1,000 entities | < 500 ms |
+| IFC STEP | 5,000 entities | 1-2 s |
+| IFC STEP | 10,000 entities | 3-5 s |
+| IFC5 JSON | 1,000 entities | < 200 ms |
+| IFC5 JSON | 5,000 entities | 500 ms - 1 s |
 
-### Common Issues
+Parsing runs in a Web Worker with a 2-minute timeout guard.
 
-**File Upload Fails**
-- Ensure file format is .ifc or .ifcx
-- Verify file integrity
-- Check browser console for errors
+### Rendering
+- **Graph View**: 60 FPS with 1,000+ nodes (at full LoD 4)
+- **IFC Browser**: Virtual scrolling handles 10,000+ entities
+- **3D Viewer (active)**: 45-55 FPS; approximately 30-40 MB additional GPU memory
+- **3D Viewer (disabled)**: Zero overhead (lazy-loaded on demand)
 
-**Slow Performance on Large Files**
-- Use Tree Browser instead of Graph View
-- Filter by entity type
-- Reduce graph physics iterations
+### Key Memory Optimizations
+- `rawStepLines` Map serialized as parallel `Int32Array` (keys) + `string[]` (values) for zero-copy ArrayBuffer transfer across the Worker boundary
+- Geometry entities kept in a separate `geometryEntities[]` array, not in the semantic graph
+- LRU geometry cache in `useViewer3D` with a maximum of 500 items
 
-**Missing Entities in Output**
-- Geometry entities are intentionally filtered
-- Check validation report for warnings
-- Verify IFC file integrity
+---
 
-**WASM Module Loading Error**
-- Ensure `public/ifc-wasm/` folder exists
-- Check browser DevTools for 404 errors
-- Verify static file serving in Vite config
+## Troubleshooting
 
-### Debug Mode
-Enable detailed logging by checking the browser console for debug information.
+### File Upload Fails
+- Confirm the file extension is `.ifc` or `.ifcx`
+- Check the browser console for detailed error messages
 
-## 🔐 Data Privacy
+### WASM Module Not Loading
+- Ensure `public/ifc-wasm/` exists and contains `web-ifc.wasm`
+- Check DevTools > Network tab for 404 errors on the `.wasm` file
+- Verify the Vite static copy plugin is configured in `vite.config.ts`
 
-- All processing happens in the browser
-- No data is sent to external servers (except when using buildingSMART Validator, which submits files to buildingSmart's official validation service)
-- Files are processed locally using Web Workers
+### Slow Performance on Large Files
+- Reduce LoD level (try LoD 2 or LoD 1 for very large files)
+- Switch to Tree Browser for navigation instead of Graph View
+- Apply entity type filters via the filter drawer to reduce visible nodes
 
-## 📈 Performance Optimization Tips
+### Validation Backend Not Responding
+- Confirm the backend is running: `cd bSValidate && npm start`
+- Verify `BUILDINGSMART_TOKEN` is set in `bSValidate/.env`
+- Check that port 5001 is not in use by another process
 
-### For Large IFC Files
-1. Use Tree Browser for navigation
-2. Filter to specific entity types
-3. Disable real-time search updates
-4. Use property viewer for inspection
+### Missing Entities in Graph
+- Geometry-only entities are intentionally excluded from the graph view
+- Use the IFC Browser tab to see all entities from the raw STEP file
 
-### For Graph Visualization
-1. Limit to < 5000 nodes for full interactivity
-2. Use type filtering to reduce complexity
-3. Adjust zoom levels for overview/detail
+---
 
-## 🚀 Deployment
+## Data Privacy
 
-### Static Hosting (Recommended)
-Deploy the `dist/` folder to any static host:
-- Vercel
-- Netlify
-- GitHub Pages
-- AWS S3 + CloudFront
-- Any web server
+All file processing happens locally in the browser via Web Workers. Files are not sent to any external server unless the user explicitly clicks **Validate with buildingSMART**, which submits the file to `dev.validate.buildingsmart.org`.
 
+---
 
-## 🔄 Roadmap
+## Sample Files
 
-### ✅ Completed
-- [x] 3D Visualization with geometry worker
-- [x] Educational/Learning features
-- [x] Building smart API validation
-- [x] Dynamic documentation linking
-- [x] Dedicated validation page
-- [x] Geometry processing optimization
-- [x] Export to Multiple Formats (JSON, CSV, OBJ)
+Located in `public/testFiles/`:
 
+| File | Format | Description |
+|------|--------|-------------|
+| `FZK Haus.ifc` | IFC STEP | Multi-storey residential building |
+| `Infra-Bridge.ifc` | IFC STEP | Infrastructure / bridge model |
+| `Solibri Building.ifc` | IFC STEP | Complex multi-discipline building |
+| `Solibri Building Structural.ifc` | IFC STEP | Structural-focused model |
+| `wall-with-opening-and-window.ifc` | IFC STEP | Minimal element example |
+| `hello-wall.ifcx` | IFC5 JSON | Minimal IFC5 example |
+| `esempio_01 edificius (1).ifcx` | IFC5 JSON | Complex IFC5 building |
 
+---
+
+## Documentation
+
+| File | Contents |
+|------|----------|
+| [README.md](README.md) | Quick start, features, setup, troubleshooting (this file) |
+| [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) | Component hierarchy, data flows, state management design |
+| [PARSER_ARCHITECTURE.md](PARSER_ARCHITECTURE.md) | Parser pipeline, IFC5 composition engine, graph conversion details |
+| [FEATURE_SUMMARY.md](FEATURE_SUMMARY.md) | File-by-file feature breakdown and implementation status |
+
+---
+
+## Roadmap
+
+### Completed
+- [x] IFC STEP parsing with web-ifc (IFC2x3, IFC4, IFC4X3)
+- [x] IFC5 JSON parsing with full composition and inheritance resolution
+- [x] Force-directed graph visualization with LoD 1-4 system
+- [x] IFC5 Graph, Tree, Property, and Source panels with bidirectional cross-panel sync
+- [x] 3D Viewer with off-thread geometry processing and type-based color coding
+- [x] BuildingSMART API validation integration with functional part tagging
+- [x] Schema error human-readable interpretation
+- [x] Educational / learning mode with worked examples and practice exercises
+- [x] Dynamic documentation links per IFC entity and schema version
+- [x] Export: graph as JSON/CSV/PNG, validation as JSON/CSV/text
+- [x] Keyboard shortcuts (Ctrl+F, Ctrl+S, Escape, Ctrl+Shift+V, etc.)
+- [x] Virtual scrolling and pagination for large entity lists
+
+### Planned / In Progress
+- [ ] Local validator (offline schema compliance checking without API)
