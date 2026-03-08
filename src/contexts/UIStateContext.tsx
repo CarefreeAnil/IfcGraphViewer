@@ -33,7 +33,7 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAttributes, setShowAttributes] = useState(false);
   const [showRelatedMetadata, setShowRelatedMetadata] = useState(false);
-  const [graphLoD, setGraphLoD] = useState(4); // Default to LoD4 (Core Graph)
+  const [graphLoD, setGraphLoD] = useState(2); // Default to LoD2 (Least Graph)
   const [show3DViewer, setShow3DViewer] = useState(false); // Lazy load 3D viewer
   const [schemaVersion, setSchemaVersion] = useState('IFC4'); // Default to IFC4
 

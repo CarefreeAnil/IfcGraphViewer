@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import ForceGraph2D, { ForceGraphMethods } from 'react-force-graph-2d';
 import { toast } from 'sonner';
+import { ZoomIn, ZoomOut, Maximize2, Crosshair } from 'lucide-react';
 import { GraphData, GraphNode, NodeType } from '@/types/graph';
 import { getEntityColor, getEntityDisplayName } from '@/lib/ifcSchema';
 import { applyLoD, LoDLevel, GraphLoD, getLoDConfig, isAuxiliaryType } from '@/lib/graphLoD';
@@ -142,6 +143,7 @@ export function GraphVisualization({
   showPathToRootButton = false,
 }: GraphVisualizationProps) {
   const graphRef = useRef<ForceGraphMethods>();
+  const currentZoomRef = useRef<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -150,7 +152,10 @@ export function GraphVisualization({
   const [showPathToRoot, setShowPathToRoot] = useState(false);
   const [pathToRootIds, setPathToRootIds] = useState<Set<string>>(new Set());
   const lastNodeClickAt = useRef<number>(0);
-  
+  const [isolationMode, setIsolationMode] = useState(false);
+  const [isolationHops, setIsolationHops] = useState<1 | 2>(2);
+  const zoomToFitOnNextStop = useRef(false);
+
   // Track selection state for animations
   const [selectionState, setSelectionState] = useState<SelectionState>({
     nodeId: null,
@@ -159,7 +164,6 @@ export function GraphVisualization({
   });
   const prevSelectedNodeIdRef = useRef<string | null>(null);
 
-  // Apply LoD filtering
   const filteredData = useMemo(() => {
     const lodResult = applyLoD(data.nodes, data.edges, graphLoD as GraphLoD, { includeAuxiliary: includeAuxiliaryLayer });
 
@@ -270,17 +274,93 @@ export function GraphVisualization({
     return { nodes, edges };
   }, [filteredData, showPathToRoot, pathToRootIds, data.nodes, data.edges]);
 
+  // Stage 3: BFS neighborhood for isolation mode
+  const isolatedNodeIds = useMemo(() => {
+    if (!isolationMode || !selectedNodeId) return null;
+    const normaliseId = (val: any): string =>
+      typeof val === 'string' ? val : String((val as any)?.id ?? val);
+    const nodeMap = new Map(finalFilteredData.nodes.map(n => [n.id, n]));
+    const adj = new Map<string, Set<string>>();
+    for (const edge of finalFilteredData.edges) {
+      const src = normaliseId(edge.source);
+      const tgt = normaliseId(edge.target);
+      if (!adj.has(src)) adj.set(src, new Set());
+      if (!adj.has(tgt)) adj.set(tgt, new Set());
+      adj.get(src)!.add(tgt);
+      adj.get(tgt)!.add(src);
+    }
+    // A node is a relationship hub if its type is 'relationship' or its ifcType starts with IfcRel
+    const isRelNode = (id: string) => {
+      const n = nodeMap.get(id);
+      return n?.type === 'relationship' || (n?.ifcType ?? '').toUpperCase().startsWith('IFCREL');
+    };
+    // A node is a physical element instance (not a type object, not the selected node)
+    // These are the "siblings" we want to exclude at hop 2 to prevent hub explosion
+    const isPhysicalElement = (id: string) => {
+      if (id === selectedNodeId) return false;
+      const n = nodeMap.get(id);
+      if (!n || n.type !== 'element') return false;
+      const ifcType = (n.ifcType ?? '').toUpperCase();
+      return !ifcType.endsWith('TYPE'); // keep IfcWallType, IfcWindowType etc.; exclude instances
+    };
+    const result = new Set<string>([selectedNodeId]);
+    // Hop 1: all direct neighbors (undirected)
+    const hop1 = new Set<string>();
+    for (const nb of adj.get(selectedNodeId) ?? []) {
+      result.add(nb);
+      hop1.add(nb);
+    }
+    // Hop 2: from hop1 nodes — skip physical element siblings when the hop1 node is a
+    // relationship hub to avoid pulling in co-contained walls, columns, slabs, etc.
+    if (isolationHops >= 2) {
+      for (const id of hop1) {
+        for (const nb of adj.get(id) ?? []) {
+          if (result.has(nb)) continue;
+          if (isRelNode(id) && isPhysicalElement(nb)) continue;
+          result.add(nb);
+        }
+      }
+    }
+    return result;
+  }, [isolationMode, selectedNodeId, isolationHops, finalFilteredData.edges, finalFilteredData.nodes]);
+
+  // Stage 3: Display data — applies isolation filter on top of finalFilteredData
+  const displayData = useMemo(() => {
+    if (!isolationMode || !isolatedNodeIds) return finalFilteredData;
+    const normaliseId = (val: any): string =>
+      typeof val === 'string' ? val : String((val as any)?.id ?? val);
+    const nodes = finalFilteredData.nodes.filter(n => isolatedNodeIds.has(n.id));
+    const nodeSet = new Set(nodes.map(n => n.id));
+    const edges = finalFilteredData.edges.filter(e =>
+      nodeSet.has(normaliseId(e.source)) && nodeSet.has(normaliseId(e.target))
+    );
+    return { nodes, edges };
+  }, [isolationMode, isolatedNodeIds, finalFilteredData]);
+
   // Update stats when data changes
   useEffect(() => {
     if (onStatsUpdate) {
       onStatsUpdate({
         totalNodes: data.nodes.length,
         totalEdges: data.edges.length,
-        filteredNodes: finalFilteredData.nodes.length,
-        filteredEdges: finalFilteredData.edges.length,
+        filteredNodes: displayData.nodes.length,
+        filteredEdges: displayData.edges.length,
       });
     }
-  }, [data.nodes.length, data.edges.length, finalFilteredData.nodes.length, finalFilteredData.edges.length, onStatsUpdate]);
+  }, [data.nodes.length, data.edges.length, displayData.nodes.length, displayData.edges.length, onStatsUpdate]);
+
+  // Auto-clear isolation when selection is removed
+  useEffect(() => {
+    if (!selectedNodeId) setIsolationMode(false);
+  }, [selectedNodeId]);
+
+  // Trigger zoom-to-fit after isolation layout settles
+  useEffect(() => {
+    if (isolationMode) {
+      zoomToFitOnNextStop.current = true;
+      graphRef.current?.resumeAnimation();
+    }
+  }, [isolationMode, selectedNodeId, isolationHops]);
 
   // Compute path to root (Site/Project) from selected node
   // NOTE: Uses FULL DATA, not filtered data, because spatial hierarchy should be traversable
@@ -395,13 +475,23 @@ export function GraphVisualization({
     setPathToRootIds(new Set());
     setFocusedNodeId(null);
     setConnectedNodeIds(new Set());
+    setIsolationMode(false);
+    setIsolationHops(2);
     onNodeClick(null);
-    
+
     // Reset graph forces
     if (graphRef.current) {
       graphRef.current.d3ReheatSimulation();
     }
   }, [onNodeClick]);
+
+  const handleIsolate = useCallback(() => {
+    setShowPathToRoot(false);
+    setPathToRootIds(new Set());
+    setFocusedNodeId(null);
+    setConnectedNodeIds(new Set());
+    setIsolationMode(true);
+  }, []);
 
   const findNearestNode = useCallback((x: number, y: number, maxDist: number) => {
     let nearest: GraphNode | null = null;
@@ -413,7 +503,7 @@ export function GraphVisualization({
     const tolerance = 1.5;
     const effectiveMaxDist = maxDist + tolerance;
 
-    for (const node of finalFilteredData.nodes) {
+    for (const node of displayData.nodes) {
       candidatesChecked++;
       const nx = node.x ?? 0;
       const ny = node.y ?? 0;
@@ -435,7 +525,7 @@ export function GraphVisualization({
 
     console.log(`[FindNearest] Checked ${candidatesChecked} nodes, ${nodesWithCoords} with coords, best dist: ${bestDist.toFixed(2)}, maxDist: ${maxDist.toFixed(2)}, effective: ${effectiveMaxDist.toFixed(2)}, found: ${nearest?.id || 'none'}`);
     return nearest;
-  }, [finalFilteredData.nodes]);
+  }, [displayData.nodes]);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -457,7 +547,14 @@ export function GraphVisualization({
       graphRef.current.d3Force('charge')?.strength(-150);
       graphRef.current.d3Force('link')?.distance(60);
     }
-  }, [finalFilteredData]);
+  }, [displayData]);
+
+  // When node-type highlight or search filters change, ensure the render loop
+  // is running so the updated nodeCanvasObject is drawn. Safe to call even if
+  // the RAF is already active (resumeAnimation is idempotent).
+  useEffect(() => {
+    graphRef.current?.resumeAnimation();
+  }, [highlightedTypes, searchQuery]);
 
   // Track selection changes and detect if selection came from external source
   useEffect(() => {
@@ -471,7 +568,7 @@ export function GraphVisualization({
       prevSelectedNodeIdRef.current = selectedNodeId;
 
       // Auto-center on selected node when selection comes from external source
-      if (isExternalChange && selectedNodeId && graphRef.current) {
+      if (isExternalChange && selectedNodeId && graphRef.current && !isolationMode) {
         const node = finalFilteredData.nodes.find(n => n.id === selectedNodeId);
         if (node && node.x !== undefined && node.y !== undefined) {
           // Center the graph on the selected node with animation
@@ -486,7 +583,7 @@ export function GraphVisualization({
         }
       }
     }
-  }, [selectedNodeId, finalFilteredData.nodes]);
+  }, [selectedNodeId, finalFilteredData.nodes, isolationMode]);
 
   useEffect(() => {
     return () => {
@@ -504,15 +601,15 @@ export function GraphVisualization({
   // CRITICAL: Memoize graphData to avoid creating 51k+ new objects on every render
   const graphData = useMemo(() => {
     console.log('[GraphViz] Graph data updated:', {
-      nodes: finalFilteredData.nodes.length,
-      edges: finalFilteredData.edges.length,
+      nodes: displayData.nodes.length,
+      edges: displayData.edges.length,
       selectedNodeId
     });
     return {
-      nodes: finalFilteredData.nodes,  // Don't shallow-copy - reuse references
-      links: finalFilteredData.edges,  // Don't shallow-copy - reuse references
+      nodes: displayData.nodes,
+      links: displayData.edges,
     };
-  }, [finalFilteredData.nodes, finalFilteredData.edges, selectedNodeId]);
+  }, [displayData.nodes, displayData.edges, selectedNodeId]);
 
   const isNodeVisible = useCallback(
     (node: GraphNode) => {
@@ -572,17 +669,18 @@ export function GraphVisualization({
       
       // Path to root highlight
       const isInPath = pathToRootIds.has(node.id);
-      
+
       // Focus mode: dim nodes that aren't focused or connected
-      const isFocusMode = focusedNodeId !== null || showPathToRoot;
+      // Suppressed in isolation mode (unrelated nodes are hidden, not dimmed)
+      const isFocusMode = (focusedNodeId !== null || showPathToRoot) && !isolationMode;
       const isFocused = node.id === focusedNodeId;
       const isConnected = connectedNodeIds.has(node.id);
       const isDimmed = isFocusMode && !isFocused && !isConnected && !isInPath;
-      
+
       // IMPORTANT: Don't skip rendering - just adjust opacity
       // This prevents the graph disappearance when filtering
       if (!isVisible && !isInPath) {
-        return; // Don't draw invisible nodes (unless they're in the path)
+        return; // Don't draw invisible nodes (unless they're in a path)
       }
       
       let size = NODE_SIZES[graphNode.type] || 8;
@@ -597,13 +695,13 @@ export function GraphVisualization({
       if (isInPath && !isSelected) {
         size = size * 1.3;
       }
-      
+
       // Use schema-based color if available, otherwise fallback to type color
       let color = (graphNode.properties?._schemaColor as string);
       if (!color || color === '' || color === '#888' || color === '#6b7280') {
         color = NODE_COLORS[graphNode.type] || '#3b82f6';
       }
-      
+
       // Metadata nodes use muted gray color
       if (isMetadataNode) {
         color = '#999999';
@@ -660,7 +758,7 @@ export function GraphVisualization({
       if (isInPath && showPathToRoot && !isSelected) {
         ctx.beginPath();
         ctx.arc(x, y, size + 3, 0, 2 * Math.PI);
-        ctx.strokeStyle = '#fb923c'; // Orange for path nodes
+        ctx.strokeStyle = '#fb923c'; // Orange for spatial path nodes
         ctx.lineWidth = 2;
         ctx.stroke();
       }
@@ -745,7 +843,7 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState]
+    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode]
   );
 
   const linkCanvasObject = useCallback(
@@ -765,15 +863,16 @@ export function GraphVisualization({
       const sourceInPath = pathToRootIds.has((link.source as any).id);
       const targetInPath = pathToRootIds.has((link.target as any).id);
       const isVisible = (sourceVisible || sourceInPath) && (targetVisible || targetInPath);
-      
+
       // Focus mode: highlight only edges connected to focused node OR edges in the path to root
-      const isFocusMode = focusedNodeId !== null || showPathToRoot;
+      // Suppressed in isolation mode (all visible edges are already within the neighborhood)
+      const isFocusMode = (focusedNodeId !== null || showPathToRoot) && !isolationMode;
       const sourceId = (link.source as any).id;
       const targetId = (link.target as any).id;
-      
+
       // For path-to-root mode, highlight edges where BOTH nodes are in the path
       const isPathEdge = showPathToRoot && pathToRootIds.has(sourceId) && pathToRootIds.has(targetId);
-      
+
       const isConnectedEdge = isFocusMode && (
         sourceId === focusedNodeId ||
         targetId === focusedNodeId ||
@@ -836,7 +935,7 @@ export function GraphVisualization({
         }
         ctx.setLineDash(isInverseEdge ? [3, 4] : [5, 5]);
       } else if (isPathEdge) {
-        // Highlight path edges with thick orange/amber line
+        // Highlight spatial path edges with thick orange/amber line
         ctx.strokeStyle = '#fb923c'; // Orange for path edges
         ctx.lineWidth = 3;
       } else if (isDimmedEdge) {
@@ -844,7 +943,7 @@ export function GraphVisualization({
       } else {
         ctx.strokeStyle = isVisible ? edgeColor : edgeColor + '33';
       }
-      
+
       if (!isPathEdge) {
         ctx.lineWidth = isAuxEdge ? 1.2 : isVisible ? 2 : 0.5;
         if (isDimmedEdge) {
@@ -876,9 +975,9 @@ export function GraphVisualization({
           arrowY - arrowLength * Math.sin(arrowAngle + Math.PI / 6)
         );
         ctx.closePath();
-         ctx.fillStyle = isPathEdge ? '#fb923c' : (isMetadataEdge || isAuxEdge ? '#a3a3a3' : edgeColor);
+        ctx.fillStyle = isPathEdge ? '#fb923c' : (isMetadataEdge || isAuxEdge ? '#a3a3a3' : edgeColor);
         ctx.fill();
-        
+
         // Draw relationship label on edge
         const relationshipType = (link as any).relationshipType || (link as any).type || (link as any).label || '';
         const showRelNodeLabels = sourceIsRel || targetIsRel;
@@ -1004,12 +1103,12 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot, pathToRootIds, selectionState.source, selectionState.timestamp]
+    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot, pathToRootIds, selectionState.source, selectionState.timestamp, isolationMode]
   );
   // Auto-zoom to selected node when selection changes externally (from other panels)
   useEffect(() => {
-    if (!selectedNodeId || !graphRef.current) {
-      console.log('[GraphViz] Skip auto-zoom:', { selectedNodeId, hasGraphRef: !!graphRef.current });
+    if (!selectedNodeId || !graphRef.current || isolationMode) {
+      console.log('[GraphViz] Skip auto-zoom:', { selectedNodeId, hasGraphRef: !!graphRef.current, isolationMode });
       return;
     }
     
@@ -1039,7 +1138,7 @@ export function GraphVisualization({
     } catch (e) {
       // Ignore zoom errors during animation
     }
-  }, [selectedNodeId, finalFilteredData.nodes]);
+  }, [selectedNodeId, finalFilteredData.nodes, isolationMode]);
   const handleNodeClick = useCallback(
     (node: any) => {
       console.log('[GraphViz] ===== NODE CLICK EVENT =====');
@@ -1113,6 +1212,7 @@ export function GraphVisualization({
     setConnectedNodeIds(new Set());
     setShowPathToRoot(false);
     setPathToRootIds(new Set());
+    setIsolationMode(false);
   }, [onNodeClick]);
 
   // CRITICAL: Setup manual canvas click detection for nodes force-graph's onNodeClick misses
@@ -1137,18 +1237,18 @@ export function GraphVisualization({
       let closestDist = Infinity;
       const HIT_RADIUS = 40; // Generous hit detection
       
-      for (const node of finalFilteredData.nodes) {
+      for (const node of displayData.nodes) {
         if (node.x === undefined || node.y === undefined) continue;
         const dx = node.x - coords.x;
         const dy = node.y - coords.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        
+
         if (dist <= HIT_RADIUS && dist < closestDist) {
           closestDist = dist;
           closestNode = node;
         }
       }
-      
+
       // Only fire our handler if force-graph's onNodeClick didn't already handle it
       // We do this by checking if a node would have been selected
       // If closestNode is found and very close (< 20 units), it was probably already handled
@@ -1157,7 +1257,7 @@ export function GraphVisualization({
         handleNodeClick(closestNode);
       }
     };
-    
+
     const canvas = containerRef.current?.querySelector('canvas');
     if (canvas) {
       // Use pointerdown to catch it before force-graph's handlers
@@ -1165,7 +1265,7 @@ export function GraphVisualization({
       canvas.addEventListener('pointerdown', handleCanvasPointerDown, true);
       return () => canvas.removeEventListener('pointerdown', handleCanvasPointerDown, true);
     }
-  }, [finalFilteredData.nodes, handleNodeClick]);
+  }, [displayData.nodes, handleNodeClick]);
 
   // Hover disabled to prevent animation instability
 
@@ -1200,19 +1300,19 @@ export function GraphVisualization({
       let closestDist = Infinity;
       const HIT_RADIUS = 30; // Fixed generous hit radius
       
-      for (const node of finalFilteredData.nodes) {
+      for (const node of displayData.nodes) {
         if (node.x === undefined || node.y === undefined) continue;
-        
+
         const dx = node.x - coords.x;
         const dy = node.y - coords.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        
+
         if (dist <= HIT_RADIUS && dist < closestDist) {
           closestDist = dist;
           closestNode = node;
         }
       }
-      
+
       if (closestNode) {
         console.log('[OverlayClick] Selected:', closestNode.id, closestNode.ifcType, 'dist:', closestDist.toFixed(1));
         handleNodeClick(closestNode);
@@ -1223,9 +1323,10 @@ export function GraphVisualization({
         setConnectedNodeIds(new Set());
         setShowPathToRoot(false);
         setPathToRootIds(new Set());
+        setIsolationMode(false);
       }
     },
-    [finalFilteredData.nodes, handleNodeClick, onNodeClick]
+    [displayData.nodes, handleNodeClick, onNodeClick]
   );
 
 
@@ -1236,9 +1337,9 @@ export function GraphVisualization({
     <div ref={containerRef} className="w-full h-full grid-pattern gradient-radial">
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      {/* Control Buttons */}
-      <div className="absolute top-4 right-4 z-20 flex gap-2">
-        {/* Reset Graph Button */}
+      {/* Control Buttons — consolidated single absolute div */}
+      <div className="absolute top-4 right-4 z-20 flex gap-2 items-center">
+        {/* Reset Graph — always visible */}
         <button
           onClick={handleResetGraph}
           className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
@@ -1246,31 +1347,109 @@ export function GraphVisualization({
         >
           Reset Graph
         </button>
-        
-        {/* Path to Root Button */}
-        {selectedNodeId && !showPathToRoot && (
-          <button
-            onClick={handleShowPathToRoot}
-            className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
-          >
-            Show Path to Root
-          </button>
+
+        {/* Isolation controls */}
+        {isolationMode && (
+          <>
+            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium shadow-lg">
+              <button
+                onClick={() => setIsolationHops(1)}
+                className={isolationHops === 1
+                  ? 'px-3 py-2 bg-primary text-primary-foreground'
+                  : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
+              >1 hop</button>
+              <button
+                onClick={() => setIsolationHops(2)}
+                className={isolationHops === 2
+                  ? 'px-3 py-2 bg-primary text-primary-foreground'
+                  : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
+              >2 hops</button>
+            </div>
+            <button
+              onClick={() => setIsolationMode(false)}
+              className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+            >
+              Exit Isolation
+            </button>
+          </>
         )}
-      </div>
-      
-      {/* Clear Path Button */}
-      {showPathToRoot && (
-        <div className="absolute top-4 right-4 z-20">
+
+        {/* Isolate + Show Path — when node selected, not in isolation, not in path mode */}
+        {!isolationMode && !showPathToRoot && selectedNodeId && (
+          <>
+            <button
+              onClick={handleIsolate}
+              className="px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors shadow-lg"
+              title="Show only this node's neighborhood"
+            >
+              Isolate
+            </button>
+            <button
+              onClick={handleShowPathToRoot}
+              className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
+            >
+              Show Path to Root
+            </button>
+          </>
+        )}
+
+        {/* Clear Path */}
+        {!isolationMode && showPathToRoot && (
           <button
             onClick={handleClearPathToRoot}
             className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shadow-lg"
           >
             Clear Path
           </button>
+        )}
+      </div>
+
+      {/* Isolation info banner */}
+      {isolationMode && displayData.nodes.length > 0 && (
+        <div className="absolute top-16 right-4 z-20 text-xs text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-sm">
+          {isolationHops}-hop neighborhood · {displayData.nodes.length} nodes · {displayData.edges.length} edges
         </div>
       )}
-      
-      
+
+      {/* Zoom Controls — bottom-left stack, above stats counter */}
+      <div className="absolute bottom-20 left-4 z-20 flex flex-col gap-1">
+        <button
+          onClick={() => graphRef.current?.zoom(currentZoomRef.current * 1.4, 200)}
+          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          title="Zoom in"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => graphRef.current?.zoom(Math.max(0.1, currentZoomRef.current * 0.7), 200)}
+          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          title="Zoom out"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => graphRef.current?.zoomToFit(400, 40)}
+          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          title="Fit all nodes in view"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+        {selectedNodeId && (
+          <button
+            onClick={() => {
+              const node = displayData.nodes.find(n => n.id === selectedNodeId);
+              if (!node || node.x === undefined || node.y === undefined) return;
+              graphRef.current?.centerAt(node.x, node.y, 300);
+              graphRef.current?.zoom(2, 300);
+            }}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-colors shadow-sm"
+            title="Center on selected node"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
       <ForceGraph2D
         ref={graphRef}
         width={dimensions.width}
@@ -1298,7 +1477,7 @@ export function GraphVisualization({
               let closestDist = Infinity;
               const HIT_RADIUS = 30;
               
-              for (const node of finalFilteredData.nodes) {
+              for (const node of displayData.nodes) {
                 if (node.x === undefined || node.y === undefined) continue;
                 const dx = node.x - coords.x;
                 const dy = node.y - coords.y;
@@ -1323,6 +1502,7 @@ export function GraphVisualization({
           setConnectedNodeIds(new Set());
           setShowPathToRoot(false);
           setPathToRootIds(new Set());
+          setIsolationMode(false);
         }}
         cooldownTicks={100}
         nodePointerAreaPaint={(node, color, ctx) => {
@@ -1347,9 +1527,14 @@ export function GraphVisualization({
         enableZoomInteraction={true}
         enablePanInteraction={true}
         warmupTicks={0}
+        onZoom={({ k }: { k: number }) => { currentZoomRef.current = k; }}
         onEngineStop={() => {
-          // Pause animation once layout stabilizes
+          // Pause the render loop once layout stabilises
           if (graphRef.current) {
+            if (zoomToFitOnNextStop.current) {
+              zoomToFitOnNextStop.current = false;
+              graphRef.current.zoomToFit(400, 40);
+            }
             graphRef.current.pauseAnimation();
           }
         }}

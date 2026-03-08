@@ -629,6 +629,7 @@ export async function parseIFCFile(
       'RelatingGroup',           // IFCRELASSIGNSTOGROUP
       'RelatingPort', 'RelatedPort', // IFCRELCONNECTSPORTS, IFCRELCONNECTSPORTTOELEMENT
       'RelatingSystem', 'RelatedBuildings', // IFCRELSERVICESBUILDINGS
+      'FlowDirection', 'FlowCondition', // IFCDISTRIBUTIONPORT MEP attributes
     ]);
 
     // OPTIMIZATION 2: Minimal properties for geometry entities (much faster extraction)
@@ -668,7 +669,7 @@ export async function parseIFCFile(
       let nodeTypeFromSchema: NodeType = 'element';
       if (schemaDef) {
         const cat = schemaDef.category;
-        if (cat === 'spatial') nodeTypeFromSchema = typeName === 'IFCSPACE' ? 'space' : 'building';
+        if (cat === 'spatial') nodeTypeFromSchema = typeName.toUpperCase() === 'IFCSPACE' ? 'space' : 'building';
         else if (cat === 'structural') nodeTypeFromSchema = 'element';
         else if (cat === 'property') nodeTypeFromSchema = 'property';
         else if (cat === 'relationship') nodeTypeFromSchema = 'relationship';

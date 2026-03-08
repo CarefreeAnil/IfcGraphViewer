@@ -11,7 +11,6 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getLoDDescription } from '@/lib/lodDescriptions';
 
@@ -40,11 +39,24 @@ interface GraphControlsProps {
 }
 
 const TYPE_FILTERS: { type: NodeType; label: string; icon: React.ReactNode; color: string }[] = [
-  { type: 'building', label: 'Building', icon: <Building className="w-4 h-4" />, color: 'bg-node-building' },
-  { type: 'space', label: 'Space', icon: <Layers className="w-4 h-4" />, color: 'bg-node-space' },
-  { type: 'element', label: 'Element', icon: <Box className="w-4 h-4" />, color: 'bg-node-element' },
-  { type: 'property', label: 'Property', icon: <Hash className="w-4 h-4" />, color: 'bg-node-property' },
-  { type: 'relationship', label: 'Relation', icon: <Link2 className="w-4 h-4" />, color: 'bg-node-relationship' },
+  { type: 'building',     label: 'Building',  icon: <Building className="w-3.5 h-3.5" />, color: 'bg-node-building' },
+  { type: 'space',        label: 'Space',     icon: <Layers className="w-3.5 h-3.5" />,   color: 'bg-node-space' },
+  { type: 'element',      label: 'Element',   icon: <Box className="w-3.5 h-3.5" />,      color: 'bg-node-element' },
+  { type: 'property',     label: 'Property',  icon: <Hash className="w-3.5 h-3.5" />,     color: 'bg-node-property' },
+  { type: 'relationship', label: 'Relation',  icon: <Link2 className="w-3.5 h-3.5" />,    color: 'bg-node-relationship' },
+];
+
+// Relationship filter metadata — colors mirror getRelationshipColor() in GraphVisualization.tsx
+type RelFilterKey = 'containment' | 'aggregation' | 'connects' | 'properties' | 'associates' | 'spaceBoundary' | 'auxiliary';
+
+const REL_FILTER_META: { key: RelFilterKey; label: string; color: string; description: string }[] = [
+  { key: 'containment',   label: 'Containment',    color: '#a78bfa', description: 'IfcRelContainedInSpatialStructure' },
+  { key: 'aggregation',   label: 'Aggregation',    color: '#22d3ee', description: 'IfcRelAggregates / Decomposes' },
+  { key: 'connects',      label: 'Connects',       color: '#f472b6', description: 'IfcRelConnects* · openings & ports' },
+  { key: 'properties',    label: 'Properties',     color: '#4ade80', description: 'IfcRelDefinesByProperties/Type' },
+  { key: 'associates',    label: 'Associates',     color: '#fb923c', description: 'Materials · classification' },
+  { key: 'spaceBoundary', label: 'Space Boundary', color: '#6b7280', description: 'IfcRelSpaceBoundary*' },
+  // 'auxiliary' intentionally omitted — geometric node visibility is controlled by the Auxiliary Layer toggle below
 ];
 
 export function GraphControls({
@@ -53,7 +65,7 @@ export function GraphControls({
   highlightedTypes,
   onTypeToggle,
   selectedNode,
-  graphLoD = 4,
+  graphLoD = 2,
   onLoDChange,
   includeAuxiliaryLayer = false,
   onIncludeAuxiliaryToggle,
@@ -70,9 +82,11 @@ export function GraphControls({
   },
   onRelationshipFilterChange,
 }: GraphControlsProps) {
-  // Drawer state
   const [showFilterDrawer, setShowFilterDrawer] = useState(false);
-  const [showNodeTypes, setShowNodeTypes] = useState(false);
+
+  // Count active filters for badge
+  const activeRelFilters = Object.values(relationshipFilters).filter(Boolean).length;
+  const activeFilterCount = highlightedTypes.length + activeRelFilters;
 
   const getLoDLabel = (lod: 1 | 2 | 3 | 4 | 5): string => {
     const labels = {
@@ -83,6 +97,19 @@ export function GraphControls({
       5: 'LoD5: Full Detail',
     };
     return labels[lod];
+  };
+
+  const getRelFilterValue = (key: RelFilterKey): boolean => {
+    const map: Record<RelFilterKey, boolean> = {
+      containment:   relationshipFilters.showContainment,
+      aggregation:   relationshipFilters.showAggregation,
+      connects:      relationshipFilters.showConnects,
+      properties:    relationshipFilters.showProperties,
+      associates:    relationshipFilters.showAssociates,
+      spaceBoundary: relationshipFilters.showSpaceBoundary,
+      auxiliary:     relationshipFilters.showAuxiliary,
+    };
+    return map[key];
   };
 
   return (
@@ -111,11 +138,7 @@ export function GraphControls({
           <TooltipProvider>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 bg-card/95 backdrop-blur-md text-xs"
-                >
+                <Button variant="outline" size="sm" className="gap-2 bg-card/95 backdrop-blur-md text-xs">
                   <Gauge className="w-3.5 h-3.5" />
                   {getLoDLabel(graphLoD)}
                 </Button>
@@ -123,12 +146,12 @@ export function GraphControls({
               <DropdownMenuContent align="start" className="w-56">
                 <DropdownMenuLabel className="text-xs">LoD Level</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                
+
                 {/* LoD4: Core Graph */}
                 <div className="px-1 py-1 mb-0.5">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div 
+                      <div
                         onClick={() => onLoDChange(4)}
                         className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
                       >
@@ -161,7 +184,7 @@ export function GraphControls({
                 <div className="px-1 py-1 mb-0.5">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div 
+                      <div
                         onClick={() => onLoDChange(3)}
                         className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
                       >
@@ -194,7 +217,7 @@ export function GraphControls({
                 <div className="px-1 py-1 mb-0.5">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div 
+                      <div
                         onClick={() => onLoDChange(2)}
                         className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
                       >
@@ -227,7 +250,7 @@ export function GraphControls({
                 <div className="px-1 py-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div 
+                      <div
                         onClick={() => onLoDChange(1)}
                         className="px-2 py-1 rounded-md cursor-pointer hover:bg-muted/50 transition-colors flex items-start justify-between group"
                       >
@@ -264,11 +287,7 @@ export function GraphControls({
         {onExport && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 bg-card/95 backdrop-blur-md text-xs"
-              >
+              <Button variant="outline" size="sm" className="gap-2 bg-card/95 backdrop-blur-md text-xs">
                 <Download className="w-3.5 h-3.5" />
                 Export
               </Button>
@@ -276,26 +295,15 @@ export function GraphControls({
             <DropdownMenuContent align="start">
               <DropdownMenuLabel>Export Format</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onExport('json')}>
-                Export as JSON
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('csv-nodes')}>
-                Export Nodes as CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('csv-edges')}>
-                Export Edges as CSV
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('step')}>
-                Export as IFC STEP
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('png')}>
-                Export Graph as PNG
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('json')}>Export as JSON</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('csv-nodes')}>Export Nodes as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('csv-edges')}>Export Edges as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onExport('png')}>Export Graph as PNG</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
 
-        {/* Filter Drawer Button */}
+        {/* Filter Button with active count badge */}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -303,119 +311,55 @@ export function GraphControls({
                 variant="outline"
                 size="sm"
                 onClick={() => setShowFilterDrawer(!showFilterDrawer)}
-                className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+                className="relative gap-2 bg-card/95 backdrop-blur-md text-xs"
               >
                 <Filter className="w-3.5 h-3.5" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                    {activeFilterCount}
+                  </span>
+                )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Open filter panel</TooltipContent>
+            <TooltipContent>
+              {activeFilterCount > 0 ? `${activeFilterCount} active filter${activeFilterCount > 1 ? 's' : ''}` : 'Open filter panel'}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </div>
 
-      {/* Filter Drawer Panel */}
+      {/* Unified Filter Panel */}
       {showFilterDrawer && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className="absolute top-16 left-0 w-96 bg-card/98 backdrop-blur-md border border-border rounded-lg p-4 space-y-4 shadow-xl z-50"
+          className="absolute top-16 left-0 w-[340px] bg-card/98 backdrop-blur-md border border-border rounded-lg shadow-xl z-50"
         >
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">Filters</h3>
+          {/* Panel Header */}
+          <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+            <h3 className="text-xs font-semibold text-foreground">Filters</h3>
+            {activeFilterCount > 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                {activeFilterCount} active
+              </span>
+            )}
             <button
               onClick={() => setShowFilterDrawer(false)}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          {/* Relationship Filters Section */}
-          {onRelationshipFilterChange && (
-            <div className="space-y-3 pb-3 border-b border-border">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Relationship Filters</h4>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showContainment}
-                    onChange={(e) => onRelationshipFilterChange('containment', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Containment</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelContainedInSpatialStructure)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showAggregation}
-                    onChange={(e) => onRelationshipFilterChange('aggregation', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Aggregation</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelAggregates / Decomposes)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showConnects}
-                    onChange={(e) => onRelationshipFilterChange('connects', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Connects</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelConnects*, ConnectionGeometry)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showProperties}
-                    onChange={(e) => onRelationshipFilterChange('properties', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Properties</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelDefinesByProperties/Type)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showAssociates}
-                    onChange={(e) => onRelationshipFilterChange('associates', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Associates</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelAssociates*, Materials/Classification)</span>
-                </label>
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={relationshipFilters.showSpaceBoundary}
-                    onChange={(e) => onRelationshipFilterChange('spaceBoundary', e.target.checked)}
-                    className="rounded border-border"
-                  />
-                  <span className="text-foreground">Space Boundary</span>
-                  <span className="text-muted-foreground text-[10px]">(IfcRelSpaceBoundary*)</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* Node Type Filters Section */}
-          <div className="space-y-3">
-            <button
-              onClick={() => setShowNodeTypes(!showNodeTypes)}
-              className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors w-full"
-            >
-              <Filter className="w-3.5 h-3.5" />
-              Node Types
-              <ChevronDown 
-                className="w-3.5 h-3.5 ml-auto transition-transform" 
-                style={{ transform: showNodeTypes ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-              />
-            </button>
-            
-            {showNodeTypes && (
-              <div className="flex flex-wrap gap-2">
+          <div className="p-3 space-y-4">
+            {/* ── Node Types ── */}
+            <div className="space-y-1.5">
+              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Node Type Highlight
+              </p>
+              <div className="flex flex-wrap gap-1.5">
                 {TYPE_FILTERS.map(({ type, label, icon, color }) => {
                   const isActive = highlightedTypes.length === 0 || highlightedTypes.includes(type);
                   return (
@@ -423,9 +367,9 @@ export function GraphControls({
                       key={type}
                       onClick={() => onTypeToggle(type)}
                       className={`
-                        flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all
-                        ${isActive 
-                          ? `${color} text-background` 
+                        flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all
+                        ${isActive
+                          ? `${color} text-background`
                           : 'bg-muted text-muted-foreground hover:bg-muted/80'
                         }
                       `}
@@ -435,6 +379,47 @@ export function GraphControls({
                     </button>
                   );
                 })}
+              </div>
+              {highlightedTypes.length > 0 && (
+                <p className="text-[9px] text-muted-foreground">
+                  Dimming all other node types. Click an active type to remove it.
+                </p>
+              )}
+            </div>
+
+            {/* ── Edge / Relationship Isolation ── */}
+            {onRelationshipFilterChange && (
+              <div className="space-y-1.5 border-t border-border pt-3">
+                <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Isolate Edge Types
+                </p>
+                {activeRelFilters === 0 && (
+                  <p className="text-[9px] text-muted-foreground">
+                    All edges visible. Check a type to isolate it.
+                  </p>
+                )}
+                <div className="space-y-1">
+                  {REL_FILTER_META.map(({ key, label, color, description }) => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer group py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={getRelFilterValue(key)}
+                        onChange={(e) => onRelationshipFilterChange(key, e.target.checked)}
+                        className="rounded border-border accent-primary"
+                      />
+                      <div
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="text-[11px] text-foreground font-medium w-[84px] shrink-0">
+                        {label}
+                      </span>
+                      <span className="text-[9px] text-muted-foreground truncate">
+                        {description}
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </div>
