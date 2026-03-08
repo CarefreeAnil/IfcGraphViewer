@@ -1,5 +1,5 @@
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
-import ForceGraph2D, { ForceGraphMethods } from 'react-force-graph-2d';
+import ForceGraph2D, { ForceGraphMethods, NodeObject } from 'react-force-graph-2d';
 import { toast } from 'sonner';
 import { ZoomIn, ZoomOut, Maximize2, Crosshair } from 'lucide-react';
 import { GraphData, GraphNode, NodeType } from '@/types/graph';
@@ -155,6 +155,21 @@ export function GraphVisualization({
   const [isolationMode, setIsolationMode] = useState(false);
   const [isolationHops, setIsolationHops] = useState<1 | 2>(2);
   const zoomToFitOnNextStop = useRef(false);
+
+  // Hover tooltip
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [tooltipClientPos, setTooltipClientPos] = useState({ x: 0, y: 0 });
+  const hoveredNodeIdRef = useRef<string | null>(null);
+  const isDraggingRef = useRef(false);
+
+  // Right-click context menu
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean; x: number; y: number; node: GraphNode | null;
+  }>({ visible: false, x: 0, y: 0, node: null });
+
+  // Minimap
+  const [minimapVisible, setMinimapVisible] = useState(true);
+  const drawMinimapRef = useRef<() => void>(() => {});
 
   // Track selection state for animations
   const [selectionState, setSelectionState] = useState<SelectionState>({
@@ -1215,6 +1230,133 @@ export function GraphVisualization({
     setIsolationMode(false);
   }, [onNodeClick]);
 
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (isDraggingRef.current || !containerRef.current || !graphRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const coords = graphRef.current.screen2GraphCoords(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+    );
+    let closestNode: GraphNode | null = null;
+    let closestDist = Infinity;
+    const threshold = 20 / (currentZoomRef.current || 1);
+    for (const n of displayData.nodes) {
+      const gn = n as GraphNode;
+      const dx = (gn.x ?? 0) - coords.x;
+      const dy = (gn.y ?? 0) - coords.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < closestDist) { closestDist = d; closestNode = gn; }
+    }
+    const found = closestDist <= threshold ? closestNode : null;
+    const foundId = found?.id ?? null;
+    if (foundId !== hoveredNodeIdRef.current) {
+      hoveredNodeIdRef.current = foundId;
+      setHoveredNode(found);
+    }
+    if (found) setTooltipClientPos({ x: e.clientX, y: e.clientY });
+  }, [displayData.nodes]);
+
+  const handleMouseLeave = useCallback(() => {
+    hoveredNodeIdRef.current = null;
+    setHoveredNode(null);
+  }, []);
+
+  // Right-click context menu
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(m => ({ ...m, visible: false }));
+  }, []);
+
+  const handleNodeRightClick = useCallback((node: NodeObject, event: MouseEvent) => {
+    event.preventDefault();
+    const graphNode = node as GraphNode;
+    handleNodeClick(graphNode);
+    setContextMenu({ visible: true, x: event.clientX, y: event.clientY, node: graphNode });
+  }, [handleNodeClick]);
+
+  // Minimap: click-to-pan
+  const handleMinimapClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    const graph = graphRef.current;
+    if (!canvas || !graph) return;
+    const bbox = graph.getGraphBbox();
+    const [xMin, xMax] = bbox.x;
+    const [yMin, yMax] = bbox.y;
+    const rect = canvas.getBoundingClientRect();
+    const pad = 8;
+    const gx = xMin + ((e.clientX - rect.left - pad) / (canvas.width  - pad * 2)) * (xMax - xMin);
+    const gy = yMin + ((e.clientY - rect.top  - pad) / (canvas.height - pad * 2)) * (yMax - yMin);
+    graph.centerAt(gx, gy, 300);
+    graph.resumeAnimation();
+    setTimeout(() => drawMinimapRef.current(), 350);
+  }, []);
+
+  // Minimap: draw onto canvasRef
+  const drawMinimap = useCallback(() => {
+    const canvas = canvasRef.current;
+    const graph = graphRef.current;
+    if (!canvas || !graph || !minimapVisible) return;
+    const bbox = graph.getGraphBbox();
+    const [xMin, xMax] = bbox.x;
+    const [yMin, yMax] = bbox.y;
+    const gW = (xMax - xMin) || 1;
+    const gH = (yMax - yMin) || 1;
+    const W = canvas.width;
+    const H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const pad = 8;
+    const mW = W - pad * 2;
+    const mH = H - pad * 2;
+    const toMX = (gx: number) => pad + ((gx - xMin) / gW) * mW;
+    const toMY = (gy: number) => pad + ((gy - yMin) / gH) * mH;
+    ctx.clearRect(0, 0, W, H);
+    // Background
+    ctx.fillStyle = 'rgba(10, 12, 22, 0.90)';
+    ctx.beginPath();
+    (ctx as any).roundRect?.(0, 0, W, H, 6);
+    ctx.fill();
+    // Build node position map for edge rendering
+    const nodePosMap = new Map<string, { x: number; y: number }>();
+    for (const n of displayData.nodes) {
+      const gn = n as GraphNode;
+      nodePosMap.set(gn.id, { x: gn.x ?? 0, y: gn.y ?? 0 });
+    }
+    // Edges as thin dim lines (drawn before nodes so nodes appear on top)
+    ctx.strokeStyle = 'rgba(120, 125, 160, 0.35)';
+    ctx.lineWidth = 0.5;
+    for (const edge of displayData.edges) {
+      const srcId = typeof edge.source === 'string' ? edge.source : (edge.source as any)?.id ?? '';
+      const tgtId = typeof edge.target === 'string' ? edge.target : (edge.target as any)?.id ?? '';
+      const src = nodePosMap.get(srcId);
+      const tgt = nodePosMap.get(tgtId);
+      if (!src || !tgt) continue;
+      ctx.beginPath();
+      ctx.moveTo(toMX(src.x), toMY(src.y));
+      ctx.lineTo(toMX(tgt.x), toMY(tgt.y));
+      ctx.stroke();
+    }
+    // Nodes as 2px dots (drawn on top of edges)
+    for (const n of displayData.nodes) {
+      const gn = n as GraphNode;
+      ctx.beginPath();
+      ctx.arc(toMX(gn.x ?? 0), toMY(gn.y ?? 0), 2, 0, Math.PI * 2);
+      ctx.fillStyle = NODE_COLORS[gn.type] ?? NODE_COLORS.other;
+      ctx.fill();
+    }
+    // Viewport rectangle
+    const { x: lx, y: ly } = graph.screen2GraphCoords(0, 0);
+    const { x: rx, y: ry } = graph.screen2GraphCoords(dimensions.width, dimensions.height);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(toMX(lx), toMY(ly), toMX(rx) - toMX(lx), toMY(ry) - toMY(ly));
+    // Border
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    (ctx as any).roundRect?.(0, 0, W, H, 6);
+    ctx.stroke();
+  }, [minimapVisible, displayData.nodes, displayData.edges, dimensions.width, dimensions.height]);
+
   // CRITICAL: Setup manual canvas click detection for nodes force-graph's onNodeClick misses
   // This is necessary because force-graph-2d has unreliable hit detection for dense graphs
   useEffect(() => {
@@ -1330,12 +1472,53 @@ export function GraphVisualization({
   );
 
 
+  // Sync drawMinimapRef so ForceGraph2D callbacks always call the latest version
+  useEffect(() => { drawMinimapRef.current = drawMinimap; }, [drawMinimap]);
+
+  // Redraw minimap when data or dimensions change (the onRenderFramePost/onZoom cover animation/pan)
+  useEffect(() => { drawMinimapRef.current(); }, [displayData, dimensions, minimapVisible]);
+
+  // Close context menu on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') closeContextMenu(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [closeContextMenu]);
+
   // Graph rendering without artificial size limitations
 
 
   return (
-    <div ref={containerRef} className="w-full h-full grid-pattern gradient-radial">
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
+    <div
+      ref={containerRef}
+      className="w-full h-full grid-pattern gradient-radial"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* Minimap — right of zoom controls (zoom controls: bottom-20 left-4, w-8 = 48px right edge) */}
+      <div className="absolute z-20" style={{ bottom: '80px', left: '56px' }}>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-medium select-none">
+            Minimap
+          </span>
+          <button
+            onClick={() => setMinimapVisible(v => !v)}
+            className="text-[9px] text-muted-foreground hover:text-foreground transition-colors ml-2"
+            title={minimapVisible ? 'Hide minimap' : 'Show minimap'}
+          >
+            {minimapVisible ? '▲' : '▼'}
+          </button>
+        </div>
+        <canvas
+          ref={canvasRef}
+          width={200}
+          height={130}
+          className="rounded-md cursor-crosshair shadow-lg border border-border/30 block"
+          style={{ display: minimapVisible ? 'block' : 'none' }}
+          onClick={handleMinimapClick}
+          title="Click to navigate to this area of the graph"
+        />
+      </div>
 
       {/* Control Buttons — consolidated single absolute div */}
       <div className="absolute top-4 right-4 z-20 flex gap-2 items-center">
@@ -1523,11 +1706,15 @@ export function GraphVisualization({
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.3}
         backgroundColor="transparent"
+        onNodeRightClick={handleNodeRightClick}
+        onBackgroundRightClick={closeContextMenu}
         enableNodeDrag={true}
+        onNodeDrag={() => { isDraggingRef.current = true; setHoveredNode(null); }}
+        onNodeDragEnd={() => { isDraggingRef.current = false; }}
         enableZoomInteraction={true}
         enablePanInteraction={true}
         warmupTicks={0}
-        onZoom={({ k }: { k: number }) => { currentZoomRef.current = k; }}
+        onZoom={({ k }: { k: number }) => { currentZoomRef.current = k; drawMinimapRef.current(); }}
         onEngineStop={() => {
           // Pause the render loop once layout stabilises
           if (graphRef.current) {
@@ -1537,8 +1724,86 @@ export function GraphVisualization({
             }
             graphRef.current.pauseAnimation();
           }
+          drawMinimapRef.current();
         }}
+        onRenderFramePost={() => drawMinimapRef.current()}
       />
+
+      {/* Hover tooltip — fixed position, pointer-events-none */}
+      {hoveredNode && hoveredNode.id !== selectedNodeId && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: tooltipClientPos.x + 14, top: tooltipClientPos.y - 70 }}
+        >
+          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl text-xs max-w-[240px]">
+            <div className="font-semibold text-foreground truncate leading-snug">
+              {nodePropertyCache.get(hoveredNode.id)?.label ?? hoveredNode.label}
+            </div>
+            {hoveredNode.ifcType && (
+              <div className="text-muted-foreground font-mono mt-0.5 truncate">
+                {hoveredNode.ifcType}
+              </div>
+            )}
+            {hoveredNode.expressId != null && (
+              <div className="text-muted-foreground mt-0.5">#{hoveredNode.expressId}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu.visible && contextMenu.node && (
+        <>
+          {/* Backdrop — closes menu on outside click */}
+          <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
+          {/* Menu panel */}
+          <div
+            className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[190px] text-xs"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            {/* Header */}
+            <div className="px-3 py-1.5 border-b border-border/60 mb-1">
+              <div className="font-semibold text-foreground truncate max-w-[200px]">
+                {contextMenu.node.label}
+              </div>
+              <div className="text-muted-foreground font-mono text-[10px] mt-0.5 truncate">
+                {contextMenu.node.ifcType}
+                {contextMenu.node.expressId != null && ` · #${contextMenu.node.expressId}`}
+              </div>
+            </div>
+
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-violet-600/10 text-violet-400 hover:text-violet-300 transition-colors"
+              onClick={() => { handleIsolate(); closeContextMenu(); }}
+            >
+              Isolate Neighborhood
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors"
+              onClick={() => { handleShowPathToRoot(); closeContextMenu(); }}
+            >
+              Show Path to Root
+            </button>
+
+            <div className="border-t border-border/60 my-1" />
+
+            {contextMenu.node.expressId != null && (
+              <button
+                className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors font-mono text-muted-foreground hover:text-foreground"
+                onClick={() => { navigator.clipboard.writeText(String(contextMenu.node?.expressId ?? '')); closeContextMenu(); }}
+              >
+                Copy Express ID
+              </button>
+            )}
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors"
+              onClick={() => { navigator.clipboard.writeText(contextMenu.node?.label ?? ''); closeContextMenu(); }}
+            >
+              Copy Label
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Info, GraduationCap, Shield, Lock, Code2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -78,6 +79,8 @@ const Index = () => {
   const ifc5ViewerContainerRef = useRef<HTMLDivElement>(null);
   const lastLoadedIFC5Ref = useRef<ComposedObject | null>(null);
   const sampleLoadedRef = useRef(false);
+
+  const [showAbout, setShowAbout] = useState(false);
 
   // Learning Mode state
   const [learningMode, setLearningMode] = useState(false);
@@ -777,6 +780,25 @@ const Index = () => {
                 progress={progress.percentage}
                 progressMessage={progress.message}
               />
+
+              {/* Hint: sample models in Learn page */}
+              <p className="text-sm text-muted-foreground text-center">
+                <GraduationCap className="inline w-4 h-4 mr-1 mb-0.5 text-primary/70" />
+                Don't have a file? Sample IFC models are available on the{' '}
+                <Link to="/learn" className="text-primary hover:underline font-medium">
+                  Learn page
+                </Link>
+                .
+              </p>
+
+              {/* About button */}
+              <button
+                onClick={() => setShowAbout(true)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mt-2"
+              >
+                <Info className="w-3.5 h-3.5" />
+                About this application
+              </button>
             </motion.div>
           ) : (
             <motion.div
@@ -1065,6 +1087,119 @@ const Index = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* About this application dialog */}
+      <Dialog open={showAbout} onOpenChange={setShowAbout}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Info className="w-5 h-5 text-primary" />
+              About this application
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-6 text-sm mt-2">
+            {/* What is this */}
+            <section className="space-y-2">
+              <h3 className="font-semibold text-foreground">What is IFC Graph Visualizer?</h3>
+              <p className="text-muted-foreground leading-relaxed">
+                This is a web-based research prototype built as part of a thesis project at the intersection of
+                openBIM and data visualization. It lets you load an IFC file, either the classic STEP format
+                (.ifc) or the next-generation JSON format (.ifcx), and explore its contents through an
+                interactive graph, a hierarchical tree browser, a 3D viewer, and a synchronized property panel.
+              </p>
+              <p className="text-muted-foreground leading-relaxed">
+                The aim is to give students, educators, and BIM practitioners a single zero-install tool for
+                understanding how IFC models are structured: which entities exist, how they relate to each other,
+                and what properties they carry.
+              </p>
+            </section>
+
+            {/* Privacy */}
+            <section className="space-y-2">
+              <h3 className="flex items-center gap-2 font-semibold text-foreground">
+                <Lock className="w-4 h-4 text-primary shrink-0" />
+                Your files stay on your device
+              </h3>
+              <p className="text-muted-foreground leading-relaxed">
+                All parsing, graph building, and 3D geometry processing happens locally inside your browser using
+                Web Workers and no data is sent to any server. When you close the tab or unload the file, every
+                byte of model data is gone. Nothing is stored, logged, or tracked.
+              </p>
+            </section>
+
+            {/* Validation caveat */}
+            <section className="space-y-2">
+              <h3 className="flex items-center gap-2 font-semibold text-foreground">
+                <Shield className="w-4 h-4 text-primary shrink-0" />
+                One exception: buildingSMART validation
+              </h3>
+              <p className="text-muted-foreground leading-relaxed">
+                The <span className="font-medium text-foreground">Validate</span> feature submits your file to
+                the official buildingSMART Validation API for normative schema checking. This is the only point
+                at which file data leaves your browser, and only when you explicitly trigger it. Processing on
+                that side is governed by buildingSMART's own terms. All other features: graph, tree, 3D,
+                property panel are fully offline.
+              </p>
+            </section>
+
+            {/* Open Source */}
+            <section className="space-y-2">
+              <h3 className="flex items-center gap-2 font-semibold text-foreground">
+                <Code2 className="w-4 h-4 text-primary shrink-0" />
+                Built on open source
+              </h3>
+              <p className="text-muted-foreground leading-relaxed mb-3">
+                This application would not exist without these projects and their communities:
+              </p>
+              <ul className="space-y-2 text-muted-foreground text-xs">
+                <li className="flex gap-2">
+                  <span className="text-primary shrink-0 mt-0.5">•</span>
+                  <span>
+                    <strong className="text-foreground">web-ifc</strong> (That Open Company) : WASM-based IFC STEP
+                    parsing running entirely in a Web Worker so the UI never freezes (MPL 2.0 / MIT)
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary shrink-0 mt-0.5">•</span>
+                  <span>
+                    <strong className="text-foreground">Three.js</strong> : 3D scene rendering with orbit controls
+                    and type-based colour coding (MIT)
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary shrink-0 mt-0.5">•</span>
+                  <span>
+                    <strong className="text-foreground">react-force-graph-2d</strong> : Canvas-based force-directed
+                    graph physics for the relationship graph view (MIT)
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary shrink-0 mt-0.5">•</span>
+                  <span>
+                    <strong className="text-foreground">React, Vite, Tailwind CSS, shadcn/ui, Framer Motion</strong> :
+                    UI framework, build tooling, styling, components, and animation (MIT)
+                  </span>
+                </li>
+              </ul>
+              <p className="text-muted-foreground text-xs mt-2">
+                Copyright to each library belongs to its original developers.
+              </p>
+            </section>
+
+            {/* Disclaimer */}
+            <section className="space-y-2 border-t border-border pt-4">
+              <h3 className="font-semibold text-foreground">Research prototype disclaimer</h3>
+              <p className="text-muted-foreground leading-relaxed">
+                This is a thesis proof-of-concept, not a production tool. Results, especially validation
+                outputs and graph-derived inferences, are provided to support learning and exploration. They
+                should not substitute for formal model quality assurance. The developer accepts no responsibility
+                for decisions made on the basis of the application's output.
+              </p>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
