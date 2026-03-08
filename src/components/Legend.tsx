@@ -3,75 +3,89 @@ import { motion } from 'framer-motion';
 import { ChevronDown, ArrowRight } from 'lucide-react';
 import { NodeType } from '@/types/graph';
 
-const LEGEND_ITEMS: { type: NodeType; label: string; description: string }[] = [
-  { type: 'building', label: 'Building', description: 'Projects, Sites, Buildings, Storeys (Cyan)' },
-  { type: 'space', label: 'Space', description: 'Rooms, Zones, Areas (Purple)' },
-  { type: 'element', label: 'Element', description: 'Walls, Doors, Windows, etc. (Amber)' },
-  { type: 'property', label: 'Property', description: 'Property Sets (Green)' },
-  { type: 'relationship', label: 'Relation', description: 'Connections between entities (Pink)' },
-  { type: 'geometry', label: 'Geometry', description: 'Geometric representations (Gray)' },
+// Colors mirror NODE_COLORS in GraphVisualization.tsx
+const NODE_LEGEND: { type: NodeType; label: string; color: string; description: string }[] = [
+  { type: 'building',      label: 'Building',  color: '#22d3ee', description: 'Project · Site · Storey' },
+  { type: 'space',         label: 'Space',     color: '#a78bfa', description: 'Room · Zone · Area' },
+  { type: 'element',       label: 'Element',   color: '#fbbf24', description: 'Wall · Door · Slab…' },
+  { type: 'property',      label: 'Property',  color: '#4ade80', description: 'PropertySet · QuantitySet' },
+  { type: 'relationship',  label: 'Relation',  color: '#f472b6', description: 'IFC relationship entity' },
 ];
 
-// Relationship types for educational legend - updated with current colors
-const RELATIONSHIP_ITEMS: { label: string; description: string; color: string }[] = [
-  { label: 'Aggregates', description: 'Hierarchy/decomposition', color: '#22d3ee' },
-  { label: 'Contains', description: 'Spatial containment', color: '#a78bfa' },
-  { label: 'Properties', description: 'Element properties', color: '#4ade80' },
-  { label: 'Voids', description: 'Openings in elements', color: '#f472b6' },
-  { label: 'Fills', description: 'Fills openings', color: '#fbbf24' },
-  { label: 'Materials', description: 'Material associations', color: '#fb923c' },
+// Colors mirror getRelationshipColor() in GraphVisualization.tsx
+const EDGE_LEGEND: { label: string; color: string; description: string }[] = [
+  { label: 'Aggregation', color: '#22d3ee', description: 'IfcRelAggregates · hierarchy' },
+  { label: 'Containment', color: '#a78bfa', description: 'IfcRelContainedInSpatialStructure' },
+  { label: 'Properties',  color: '#4ade80', description: 'IfcRelDefinesByProperties/Type' },
+  { label: 'Connects',    color: '#f472b6', description: 'Openings · voids · port links' },
+  { label: 'Associates',  color: '#fb923c', description: 'Materials · classification' },
+  { label: 'Boundary',    color: '#6b7280', description: 'IfcRelSpaceBoundary' },
 ];
 
 export function Legend() {
   const [minimized, setMinimized] = useState(true);
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="absolute bottom-4 right-4 rounded-lg bg-card/90 backdrop-blur-md border border-border"
+      className="absolute bottom-4 right-4 rounded-lg bg-card/90 backdrop-blur-md border border-border shadow-md min-w-[196px]"
     >
-      <div className="flex items-center justify-between p-2">
-        <h4 className="text-[7px] font-medium text-muted-foreground uppercase tracking-wider">
+      <button
+        onClick={() => setMinimized((m) => !m)}
+        className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg hover:bg-muted/30 transition-colors"
+        title={minimized ? 'Expand legend' : 'Collapse legend'}
+      >
+        <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
           Legend
-        </h4>
-        <button
-          onClick={() => setMinimized((m) => !m)}
-          className="ml-1 p-0.5 rounded hover:bg-muted/50 transition-colors"
-          title={minimized ? 'Expand legend' : 'Minimize legend'}
-        >
-          <ChevronDown
-            className={`w-3 h-3 transition-transform ${minimized ? '-rotate-90' : 'rotate-0'}`}
-          />
-        </button>
-      </div>
+        </span>
+        <ChevronDown
+          className={`w-3 h-3 text-muted-foreground ml-2 transition-transform ${
+            minimized ? '-rotate-90' : 'rotate-0'
+          }`}
+        />
+      </button>
+
       {!minimized && (
-        <div className="space-y-2 p-2 pt-0 border-t border-border">
+        <div className="px-2.5 pb-2.5 border-t border-border space-y-2.5">
           {/* Node Types */}
-          <div className="space-y-1">
-            {LEGEND_ITEMS.map(({ type, label, description }) => (
-              <div key={type} className="flex items-center gap-1.5">
-                <div className={`w-2 h-2 rounded-full bg-node-${type} flex-shrink-0`} />
-                <div className="min-w-0">
-                  <span className="text-[9px] font-medium text-foreground">{label}</span>
-                  <span className="text-[7px] text-muted-foreground ml-1 truncate">{description}</span>
+          <div className="pt-2">
+            <p className="text-[8px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+              Nodes
+            </p>
+            <div className="space-y-1">
+              {NODE_LEGEND.map(({ type, label, color, description }) => (
+                <div key={type} className="flex items-center gap-1.5">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-[10px] font-medium text-foreground w-[54px] shrink-0">
+                    {label}
+                  </span>
+                  <span className="text-[8px] text-muted-foreground leading-tight">
+                    {description}
+                  </span>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-          
-          {/* Relationship Types */}
-          <div className="border-t border-border pt-1">
-            <h5 className="text-[7px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
-              Relations
-            </h5>
-            <div className="space-y-0.5">
-              {RELATIONSHIP_ITEMS.map(({ label, description, color }) => (
-                <div key={label} className="flex items-center gap-1">
-                  <ArrowRight className="w-2 h-2 flex-shrink-0" style={{ color }} />
-                  <div className="min-w-0">
-                    <span className="text-[9px] font-medium text-foreground">{label}</span>
-                    <span className="text-[7px] text-muted-foreground ml-1 truncate">{description}</span>
-                  </div>
+
+          {/* Edge Types */}
+          <div className="border-t border-border pt-2">
+            <p className="text-[8px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+              Edges
+            </p>
+            <div className="space-y-1">
+              {EDGE_LEGEND.map(({ label, color, description }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <ArrowRight className="w-3 h-3 shrink-0" style={{ color }} />
+                  <span className="text-[10px] font-medium text-foreground w-[54px] shrink-0">
+                    {label}
+                  </span>
+                  <span className="text-[8px] text-muted-foreground leading-tight">
+                    {description}
+                  </span>
                 </div>
               ))}
             </div>
