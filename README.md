@@ -444,7 +444,6 @@ Selecting a node in any panel synchronizes the selection across all others.
 |------|-------------|
 | CONTAINS | Parent-child spatial containment |
 | AGGREGATES | Hierarchical aggregation |
-| INHERITS | IFC5 inheritance relationships |
 | VOIDS | Openings in building elements |
 | FILLS | Fillings in openings |
 | PROPERTY_REFERENCE | Property set associations |
@@ -467,32 +466,6 @@ Selecting a node in any panel synchronizes the selection across all others.
 ### Tailwind (`tailwind.config.ts`)
 - Typography plugin and custom animation plugin
 - Custom color scheme matching IFC entity type classification
-
----
-
-## Performance Characteristics
-
-### Parsing
-| Format | Entity Count | Typical Parse Time |
-|--------|-------------|-------------------|
-| IFC STEP | 1,000 entities | < 500 ms |
-| IFC STEP | 5,000 entities | 1-2 s |
-| IFC STEP | 10,000 entities | 3-5 s |
-| IFC5 JSON | 1,000 entities | < 200 ms |
-| IFC5 JSON | 5,000 entities | 500 ms - 1 s |
-
-Parsing runs in a Web Worker with a 2-minute timeout guard.
-
-### Rendering
-- **Graph View**: 60 FPS with 1,000+ nodes (at full LoD 4)
-- **IFC Browser**: Virtual scrolling handles 10,000+ entities
-- **3D Viewer (active)**: 45-55 FPS; approximately 30-40 MB additional GPU memory
-- **3D Viewer (disabled)**: Zero overhead (lazy-loaded on demand)
-
-### Key Memory Optimizations
-- `rawStepLines` Map serialized as parallel `Int32Array` (keys) + `string[]` (values) for zero-copy ArrayBuffer transfer across the Worker boundary
-- Geometry entities kept in a separate `geometryEntities[]` array, not in the semantic graph
-- LRU geometry cache in `useViewer3D` with a maximum of 500 items
 
 ---
 
@@ -537,11 +510,9 @@ Located in `public/testFiles/`:
 |------|--------|-------------|
 | `FZK Haus.ifc` | IFC STEP | Multi-storey residential building |
 | `Infra-Bridge.ifc` | IFC STEP | Infrastructure / bridge model |
-| `Solibri Building.ifc` | IFC STEP | Complex multi-discipline building |
 | `Solibri Building Structural.ifc` | IFC STEP | Structural-focused model |
 | `wall-with-opening-and-window.ifc` | IFC STEP | Minimal element example |
 | `hello-wall.ifcx` | IFC5 JSON | Minimal IFC5 example |
-| `esempio_01 edificius (1).ifcx` | IFC5 JSON | Complex IFC5 building |
 
 ---
 
