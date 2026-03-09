@@ -37,9 +37,8 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
   if (type === 'parse' && file && fileId) {
     try {
-      const workerStartTime = performance.now();
       let lastProgress: any = null;
-      
+
       // Progress callback
       const progressCallback: ParseProgressCallback = (progress) => {
         lastProgress = progress;  // Store final progress message
@@ -97,23 +96,141 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
           result.metadata.relationshipCount = enrichedGraph.edges.length;
       }
 
-      // Serialize rawStepLines Map as parallel arrays for efficient transfer
-      // Int32Array for keys can be Transferred (zero-copy), strings are cloned
-      // This avoids creating a 300K-property Object intermediary
-      let rawStepKeysBuffer: ArrayBuffer | undefined;
-      if (result.rawData?.rawStepLines && result.rawData.rawStepLines instanceof Map) {
-        const map = result.rawData.rawStepLines as Map<number, string>;
-        const keys = new Int32Array(map.size);
-        const values: string[] = new Array(map.size);
-        let idx = 0;
-        map.forEach((value, key) => {
-          keys[idx] = key;
-          values[idx] = value;
-          idx++;
-        });
-        result.rawData.rawStepLines = { keys, values } as any;
-        rawStepKeysBuffer = keys.buffer;
+      // -----------------------------------------------------------------
+      // Pre-filter graphData before transfer to main thread.
+      //
+      // Problem: graphData.nodes contains ALL semantic entities including
+      // property-type nodes (IFCPROPERTYSET, IFCPROPERTYSINGLEVALUE, etc.)
+      // For a 170MB building these can be 100K-300K nodes.
+      //
+      // GraphVisualization's filteredData useMemo iterates every node, and
+      // addBidirectionalEdges doubles every edge — all synchronously on mount.
+      // This is the direct cause of the "UI freezes when graph loads" issue.
+      //
+      // Solution:
+      //  • graphData.nodes  → only non-property nodes (elements, spatial, relationships)
+      //  • graphData.edges  → only edges between the above nodes
+      //  • result.allEntities → property stubs + directly-referenced geometry stubs
+      //    so IFC Browser can navigate to LocalPlacement, ProductShape, etc.
+      // -----------------------------------------------------------------
+      const nonPropertyNodes = result.graphData.nodes.filter(n => n.type !== 'property');
+      const nonPropertyIds   = new Set(nonPropertyNodes.map(n => n.id));
+
+      const normalizeId = (v: any): string =>
+        typeof v === 'string' ? v : String((v as any)?.id ?? v);
+
+      const nonPropertyEdges = result.graphData.edges.filter(e =>
+        nonPropertyIds.has(normalizeId(e.source)) && nonPropertyIds.has(normalizeId(e.target))
+      );
+
+      // Minimal stubs for property nodes — just what the IFC Browser list needs.
+      // Full property data is already embedded in element nodes via attachPropertySets.
+      const propertyStubs = result.graphData.nodes
+        .filter(n => n.type === 'property')
+        .map(n => ({
+          id: n.id,
+          expressId: n.expressId,
+          ifcType: n.ifcType,
+          label: n.label,
+          type: n.type,
+          isGraphVisible: false as const,
+          properties: {
+            _ifcStep: n.properties._ifcStep,
+            _schemaColor: n.properties._schemaColor,
+          },
+        }));
+
+      // -----------------------------------------------------------------
+      // Geometry stubs: full transitive closure of all entities reachable
+      // from semantic STEP lines via #ID references (BFS expansion).
+      //
+      // The parser skips geometry types for performance, but those entities
+      // appear as #ID references in semantic STEP lines. The IFC Browser
+      // needs them so users can click any #ID and navigate to its definition.
+      //
+      // BFS algorithm (done while rawStepLines is still available):
+      //   Seed: scan _ifcStep of every nonPropertyNode + propertyStub.
+      //   Expand: for each new #ID found, look it up in rawStepLines, emit
+      //           a stub with its full _ifcStep, then scan that line too.
+      //   Repeat until no new IDs are discovered (transitive closure).
+      //
+      // Safety cap: stop at MAX_GEOMETRY_STUBS to prevent OOM on very large
+      // files where geometry is not shared (degenerate case).
+      // -----------------------------------------------------------------
+      const MAX_GEOMETRY_STUBS = 200_000;
+      const geometryStubs: any[] = [];
+      if (result.rawData?.rawStepLines) {
+        const REF_RE = /#(\d+)/g;
+        const TYPE_LINE_RE = /^#\d+=\s*([A-Z][A-Z0-9_]*)\s*\(/;
+
+        // Mark all entities already accounted for so we never create duplicates.
+        const knownExpressIds = new Set<number>([
+          ...nonPropertyNodes.map(n => n.expressId).filter(Boolean) as number[],
+          ...propertyStubs.map(n => n.expressId).filter(Boolean) as number[],
+        ]);
+
+        const queue: number[] = [];
+
+        // Enqueue every #ID found in a STEP line that is not yet known.
+        // IDs are marked known immediately to prevent duplicates in the queue.
+        const enqueueRefs = (step: string | undefined) => {
+          if (!step) return;
+          REF_RE.lastIndex = 0;
+          let m: RegExpExecArray | null;
+          while ((m = REF_RE.exec(step)) !== null) {
+            const id = parseInt(m[1], 10);
+            if (!knownExpressIds.has(id)) {
+              knownExpressIds.add(id);
+              queue.push(id);
+            }
+          }
+        };
+
+        // Seed the BFS from all semantic nodes and property stubs.
+        for (const node of nonPropertyNodes) {
+          enqueueRefs(node.properties._ifcStep as string | undefined);
+        }
+        for (const stub of propertyStubs) {
+          enqueueRefs(stub.properties._ifcStep as string | undefined);
+        }
+
+        // BFS loop: process queue entries, expand their references in turn.
+        for (let qi = 0; qi < queue.length; qi++) {
+          if (geometryStubs.length >= MAX_GEOMETRY_STUBS) break;
+
+          const expressId = queue[qi];
+          const stepLine = result.rawData.rawStepLines.get(expressId);
+          if (!stepLine) continue;
+          const tm = TYPE_LINE_RE.exec(stepLine);
+          if (!tm) continue;
+
+          geometryStubs.push({
+            id: String(expressId),
+            expressId,
+            ifcType: tm[1],
+            label: tm[1],
+            type: 'geometry' as const,
+            isGraphVisible: false as const,
+            properties: {
+              _schemaColor: '#9ca3af',
+              _ifcStep: stepLine,
+            },
+          });
+
+          // Expand: queue any new references found in this stub's STEP line.
+          enqueueRefs(stepLine);
+        }
       }
+
+      // rawStepLines is NOT transferred to the main thread.
+      // All semantic nodes have _ifcStep embedded; geometry stubs above captured
+      // only the directly-referenced geometry entries, with their STEP text.
+      if (result.rawData) {
+        result.rawData.rawStepLines = undefined;
+      }
+
+      result.graphData = { nodes: nonPropertyNodes, edges: nonPropertyEdges };
+      result.allEntities = [...propertyStubs, ...geometryStubs] as any[];
 
       const graphBuildEnd = performance.now();
 
@@ -127,21 +244,17 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         },
       } as WorkerResponse);
 
-      // Send completion message — transfer rawStepLines keys buffer (zero-copy)
+      // Send completion message
       const response: WorkerResponse = {
         type: 'complete',
         fileId,
         data: result,
         progress: lastProgress ? {
           percentage: 100,
-          message: lastProgress.message,  // Include final timing message
+          message: lastProgress.message,
         } : undefined,
       };
-      const transferables: Transferable[] = [];
-      if (rawStepKeysBuffer) {
-        transferables.push(rawStepKeysBuffer);
-      }
-      self.postMessage(response, transferables);
+      self.postMessage(response);
 
     } catch (error) {
       // Send error message

@@ -7,6 +7,24 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AlertCircle } from 'lucide-react';
 
+// Local mirror of the worker's MeshPayload shape — kept here (not imported from the
+// worker file) to prevent the bundler from pulling web-ifc WASM into the main bundle.
+interface MeshPayload {
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+  color: number;
+  opacity: number;
+  colorRgb?: { r: number; g: number; b: number; a: number };
+  transforms: Float32Array;
+  expressIds: Int32Array;
+  ifcType: string;
+  instanceCount: number;
+  geometryId?: number;
+  colorSource?: number | null;
+  worldSpace?: boolean;
+}
+
 interface Viewer3DProps {
   selectedNodeId?: string;
   onSelectNode?: (nodeId: string) => void;
@@ -24,8 +42,12 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   const selectedMeshRef = useRef<THREE.Mesh | THREE.InstancedMesh | null>(null);
   const originalMaterialRef = useRef<THREE.Material | null>(null);
   const selectedInstanceRef = useRef<{ mesh: THREE.InstancedMesh; id: number; color: THREE.Color } | null>(null);
+  const selectedHighlightMeshRef = useRef<THREE.Mesh | null>(null);
+  const expressIdLookupRef = useRef<Map<number, { mesh: THREE.Mesh; range: { expressId: number; start: number; count: number; bbox: { min: [number,number,number]; max: [number,number,number] } } }>>(new Map());
+  // Demand rendering: only call renderer.render() when something changed.
+  // Saves GPU/CPU on idle frames; use markDirty() whenever scene or camera changes.
+  const framesRemainingRef = useRef(90);
   
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [geometryCount, setGeometryCount] = useState(0);
 
@@ -36,6 +58,7 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef<boolean>(false); // true when worker has model loaded and can inspect
   const pendingInspectsRef = useRef<number[]>([]); // queue inspect IDs requested before model load
+  const pendingGeometryRef = useRef<number | null>(null); // single queued getGeometry ID (only one selection active at a time)
 
   // Handle selection from other components or internal clicks
   useEffect(() => {
@@ -43,116 +66,147 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
     const controls = controlsRef.current;
     const scene = sceneRef.current;
 
-    if (!selectedNodeId || !meshesRef.current.length) {
-      // Reset all meshes to full opacity
-      meshesRef.current.forEach(m => {
-        if (m.material instanceof THREE.Material) {
-          m.material.transparent = false;
-          m.material.opacity = 1.0;
-          m.material.needsUpdate = true;
-        }
-      });
-
-      // Reset selection if nothing selected
-      if (selectedMeshRef.current && originalMaterialRef.current) {
-        selectedMeshRef.current.material = originalMaterialRef.current;
-        selectedMeshRef.current = null;
-        originalMaterialRef.current = null;
-      }
-      return;
+    // --- Cleanup previous highlight overlay ---
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60); // selection change = scene change
+    if (selectedHighlightMeshRef.current && scene) {
+      scene.remove(selectedHighlightMeshRef.current);
+      selectedHighlightMeshRef.current.geometry.dispose();
+      (selectedHighlightMeshRef.current.material as THREE.Material).dispose();
+      selectedHighlightMeshRef.current = null;
     }
 
-    // Reset previous selection (restore original emissive)
+    // Restore all meshes to normal opacity
+    meshesRef.current.forEach(m => {
+      if (m.material instanceof THREE.Material) {
+        const origOpacity = m.userData.originalOpacity;
+        const origTransparent = m.userData.originalTransparent;
+        if (origOpacity !== undefined) {
+          m.material.transparent = origTransparent ?? m.material.transparent;
+          m.material.opacity = origOpacity;
+          m.material.needsUpdate = true;
+          delete m.userData.originalOpacity;
+          delete m.userData.originalTransparent;
+        }
+      }
+    });
+
+    // Restore single-mesh selection state if set
     if (selectedMeshRef.current && originalMaterialRef.current && selectedMeshRef.current.material instanceof THREE.MeshStandardMaterial) {
-      const originalMaterial = originalMaterialRef.current as THREE.MeshStandardMaterial;
-      selectedMeshRef.current.material.emissive.copy(originalMaterial.emissive);
-      selectedMeshRef.current.material.emissiveIntensity = originalMaterial.emissiveIntensity;
+      const orig = originalMaterialRef.current as THREE.MeshStandardMaterial;
+      selectedMeshRef.current.material.emissive.copy(orig.emissive);
+      selectedMeshRef.current.material.emissiveIntensity = orig.emissiveIntensity;
       selectedMeshRef.current.material.needsUpdate = true;
       selectedMeshRef.current = null;
       originalMaterialRef.current = null;
     }
-    if (selectedInstanceRef.current) {
-      const { mesh, id, color } = selectedInstanceRef.current;
-      mesh.setColorAt(id, color);
-      mesh.instanceColor!.needsUpdate = true;
-      selectedInstanceRef.current = null;
+
+    if (!selectedNodeId || !meshesRef.current.length) return;
+
+    const nodeIdMatch = selectedNodeId.match(/node_(\d+)/);
+    if (!nodeIdMatch) return;
+    const expressId = parseInt(nodeIdMatch[1]);
+
+    // ── Shared helpers (used by both normal-mesh and hidden-type highlight paths) ──
+
+    const ghostOtherMeshes = () => {
+      meshesRef.current.forEach(m => {
+        if (m.material instanceof THREE.Material) {
+          if (m.userData.originalOpacity === undefined) {
+            m.userData.originalTransparent = m.material.transparent;
+            m.userData.originalOpacity = m.material.opacity;
+          }
+          m.material.transparent = true;
+          m.material.opacity = 0.06;
+          m.material.needsUpdate = true;
+        }
+      });
+    };
+
+    const animateCamera = (center: THREE.Vector3, maxDim: number) => {
+      if (!camera || !controls || maxDim <= 0) return;
+      const fov = camera.fov * (Math.PI / 180);
+      const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.5;
+      const dir = camera.position.clone().sub(controls.target).normalize();
+      const targetPos = center.clone().add(dir.multiplyScalar(dist));
+      const startPos = camera.position.clone();
+      const startTarget = controls.target.clone();
+      const duration = 800;
+      const startTime = Date.now();
+      const step = () => {
+        const t = Math.min((Date.now() - startTime) / duration, 1);
+        const e = 1 - Math.pow(1 - t, 3);
+        camera.position.lerpVectors(startPos, targetPos, e);
+        controls.target.lerpVectors(startTarget, center, e);
+        controls.update();
+        framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+        if (t < 1) requestAnimationFrame(step);
+      };
+      step();
+    };
+
+    // ── Lookup & dispatch ────────────────────────────────────────────────────────
+
+    const result = expressIdLookupRef.current.get(expressId);
+    if (!result) {
+      // Element not in streamed set (IFCSPACE etc. — skipped during streaming because
+      // their geometry computation is expensive). Request on-demand from the worker;
+      // the geometryResult handler will create the highlight mesh.
+      if (workerRef.current && workerReadyRef.current) {
+        workerRef.current.postMessage({ type: 'getGeometry', id: expressId });
+      } else {
+        pendingGeometryRef.current = expressId;
+      }
+      return;
     }
 
-    // Find and highlight the selected mesh
-    const nodeIdMatch = selectedNodeId.match(/node_(\d+)/);
-    if (nodeIdMatch) {
-      const expressId = parseInt(nodeIdMatch[1]);
-      const mesh = meshesRef.current.find(m => m.userData.ifcExpressId === expressId);
-      
-      if (mesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+    const { mesh, range } = result;
+
+    if (mesh.userData.isBatchMesh && scene) {
+      // Create highlight overlay from the element's triangle range
+      const batchGeo = mesh.geometry as THREE.BufferGeometry;
+      const highlightGeo = new THREE.BufferGeometry();
+      highlightGeo.setAttribute('position', batchGeo.getAttribute('position'));
+      highlightGeo.setAttribute('normal', batchGeo.getAttribute('normal'));
+      highlightGeo.setIndex(batchGeo.getIndex());
+      highlightGeo.setDrawRange(range.start * 3, range.count * 3);
+
+      const highlightMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(0.15, 0.45, 1.0),
+        emissive: new THREE.Color(0.05, 0.25, 0.8),
+        emissiveIntensity: 0.6,
+        side: THREE.DoubleSide,
+        transparent: false,
+      });
+
+      const highlightMesh = new THREE.Mesh(highlightGeo, highlightMat);
+      scene.add(highlightMesh);
+      selectedHighlightMeshRef.current = highlightMesh;
+
+      ghostOtherMeshes();
+
+      // Camera zoom using pre-computed bbox
+      const [minX, minY, minZ] = range.bbox.min;
+      const [maxX, maxY, maxZ] = range.bbox.max;
+      const center = new THREE.Vector3((minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2);
+      const maxDim = Math.max(maxX-minX, maxY-minY, maxZ-minZ);
+      animateCamera(center, maxDim);
+    } else {
+      // Single transparent mesh — emissive highlight
+      if (mesh.material instanceof THREE.MeshStandardMaterial) {
         originalMaterialRef.current = mesh.material.clone();
-        // Use emissive glow for selection (cleaner than color change)
         mesh.material.emissive = new THREE.Color(0x0066ff);
         mesh.material.emissiveIntensity = 0.6;
         mesh.material.needsUpdate = true;
         selectedMeshRef.current = mesh;
+      }
 
-        // Make all other meshes transparent
-        meshesRef.current.forEach(m => {
-          if (m !== mesh && m.material instanceof THREE.Material) {
-            // Store original transparency state if not already stored
-            if (!m.userData.originalTransparent) {
-              m.userData.originalTransparent = m.material.transparent;
-              m.userData.originalOpacity = m.material.opacity;
-            }
-            m.material.transparent = true;
-            m.material.opacity = 0.08; // 8% opacity - more aggressive de-emphasis
-            m.material.needsUpdate = true;
-          }
-        });
+      ghostOtherMeshes();
 
-        // Zoom to fit the selected mesh
-        if (camera && controls) {
-          const box = new THREE.Box3().setFromObject(mesh);
-          const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size.x, size.y, size.z);
-          
-          // Calculate camera position
-          const fov = camera.fov * (Math.PI / 180);
-          const cameraDistance = Math.abs(maxDim / Math.tan(fov / 2)) * 1.5;
-          
-          // Smooth camera transition
-          const direction = camera.position.clone().sub(controls.target).normalize();
-          const targetPosition = center.clone().add(direction.multiplyScalar(cameraDistance));
-          
-          // Animate camera movement
-          const startPos = camera.position.clone();
-          const startTarget = controls.target.clone();
-          const duration = 800; // ms
-          const startTime = Date.now();
-          
-          const animateCamera = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-            
-            camera.position.lerpVectors(startPos, targetPosition, eased);
-            controls.target.lerpVectors(startTarget, center, eased);
-            controls.update();
-            
-            if (progress < 1) {
-              requestAnimationFrame(animateCamera);
-            }
-          };
-          
-          animateCamera();
-        }
-      } else {
-        const instanced = meshesRef.current.find(m => Array.isArray(m.userData.instanceExpressIds) && m.userData.instanceExpressIds.includes(expressId));
-        if (instanced && instanced instanceof THREE.InstancedMesh) {
-          const instanceIndex = instanced.userData.instanceExpressIds.indexOf(expressId);
-          const currentColor = new THREE.Color();
-          instanced.getColorAt(instanceIndex, currentColor);
-          instanced.setColorAt(instanceIndex, new THREE.Color(0xffff00));
-          instanced.instanceColor!.needsUpdate = true;
-          selectedInstanceRef.current = { mesh: instanced, id: instanceIndex, color: currentColor };
-        }
+      const box = new THREE.Box3().setFromObject(mesh);
+      if (!box.isEmpty()) {
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        animateCamera(center, Math.max(size.x, size.y, size.z));
       }
     }
   }, [selectedNodeId]);
@@ -183,27 +237,22 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
         cameraRef.current = camera;
 
         // Renderer setup
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
         renderer.setSize(width, height);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // cap at 1.5× saves ~44% GPU fill vs 2×
         renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // Shadows disabled: IFC viewers don't benefit from ray-traced shadows and
+        // a 2048² shadow map wastes 16 MB of GPU VRAM with no visible quality gain.
         containerRef.current!.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
-        // Lighting - Multi-directional for even illumination (inspired by IFC3DViewer reference)
-        // Soft ambient base
+        // Lighting - Multi-directional for even illumination
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         scene.add(ambientLight);
 
-        // Primary directional light (top-right-front)
+        // Primary directional light (top-right-front) — no shadow casting
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(100, 100, 100);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.mapSize.width = 2048;
-        directionalLight.shadow.mapSize.height = 2048;
-        directionalLight.shadow.camera.far = 500;
         scene.add(directionalLight);
         
         // Secondary light (back-left, reduces harsh shadows)
@@ -239,62 +288,72 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
         };
         controlsRef.current = controls;
 
+        // Demand-based rendering: only call render() when framesRemainingRef > 0.
+        // Camera interactions, new geometry batches, and selection changes all bump the
+        // counter so the scene stays live for those events, then goes idle when quiet.
+        const markDirty = (frames = 60) => {
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, frames);
+        };
+        controls.addEventListener('change', () => markDirty(30)); // 30 frames covers damping tail
+
+        const animate = () => {
+          requestAnimationFrame(animate);
+          controls.update(); // always update for smooth damping
+          if (framesRemainingRef.current > 0) {
+            renderer.render(scene, camera);
+            framesRemainingRef.current--;
+          }
+        };
+        framesRemainingRef.current = 90; // render for 1.5 s on startup
+        animate();
+
         // Load IFC if provided
         if (ifcFileBuffer) {
           console.log('[Viewer3D] Loading IFC from buffer:', ifcFileBuffer.byteLength, 'bytes');
           meshes = await loadIFC(scene, ifcFileBuffer);
-          console.log('[Viewer3D] IFC loaded, got', meshes.length, 'meshes');
+          console.log('[Viewer3D] IFC first batch received, got', meshes.length, 'meshes so far');
           meshesRef.current = meshes;
-          
-          // Auto-fit camera to loaded geometry
-          if (meshes.length > 0) {
+
+          const fitCamera = () => {
+            const allMeshes = meshesRef.current;
+            if (allMeshes.length === 0) return;
             const box = new THREE.Box3();
-            meshes.forEach(mesh => box.expandByObject(mesh));
+            allMeshes.forEach(mesh => {
+              try { box.expandByObject(mesh); } catch { /* ignore geometry errors */ }
+            });
+            if (box.isEmpty()) return;
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
-            
-            // Update camera position
             const maxDim = Math.max(size.x, size.y, size.z);
+            if (maxDim === 0) return;
             const fov = camera.fov * (Math.PI / 180);
-            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-            
+            const cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+
             camera.position.copy(center);
             camera.position.z += cameraZ * 1.5;
             camera.lookAt(center);
             camera.updateProjectionMatrix();
-            
-            // Update controls
+
             controls.target.copy(center);
             controls.maxDistance = maxDim * 10;
             controls.minDistance = maxDim * 0.1;
             controls.update();
-            
-        
-          }
-          
-          setGeometryCount(meshes.length);
-          setIsLoading(false);
-          
-          // Colors are applied during geometry parsing by the geometry worker
+          };
+
+          // Fit on first batch, then re-fit after 1 s once more geometry has streamed in
+          fitCamera();
+          setTimeout(fitCamera, 1000);
+
           console.log('[Viewer3D] Colors loaded during geometry parsing');
         } else {
-          // Demo cube
+          // Demo cube fallback when no IFC file is provided
           const geometry = new THREE.BoxGeometry(10, 10, 10);
           const material = new THREE.MeshPhongMaterial({ color: 0xfbbf24 });
           const cube = new THREE.Mesh(geometry, material);
           scene.add(cube);
           meshes = [cube];
           setGeometryCount(1);
-          setIsLoading(false);
         }
-
-        // Continuous animation loop for smooth interaction
-        const animate = () => {
-          controls.update();
-          renderer.render(scene, camera);
-          requestAnimationFrame(animate);
-        };
-        animate();
 
         // Add click selection
         const raycaster = new THREE.Raycaster();
@@ -311,60 +370,27 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           if (intersects.length > 0) {
             const hit = intersects[0];
             const mesh = hit.object as THREE.Mesh;
-            const { ifcExpressId } = mesh.userData;
-            const instanceId = (hit as any).instanceId as number | undefined;
-            let resolvedId = ifcExpressId;
+            let resolvedId: number | undefined;
 
-            if (resolvedId === undefined && mesh instanceof THREE.InstancedMesh && typeof instanceId === 'number') {
-              const ids = mesh.userData.instanceExpressIds as number[] | undefined;
-              if (ids && ids[instanceId] !== undefined) {
-                resolvedId = ids[instanceId];
+            if (mesh.userData.isBatchMesh) {
+              // Batch mesh: binary-search triangle ranges to find the expressId
+              const faceIndex = hit.faceIndex;
+              if (typeof faceIndex === 'number') {
+                const range = findEntityByFace(mesh.userData.triangleRanges as TriangleRange[], faceIndex);
+                if (range) resolvedId = range.expressId;
               }
+            } else {
+              resolvedId = mesh.userData.ifcExpressId;
             }
 
             // Debug: when colorDebug is set, log mesh/payload material details for clicked object
             try {
               if (COLOR_DEBUG_MODE) {
-                // Basic mesh info
-                const info: any = { resolvedId };
-                info.userData = mesh.userData;
-                if (mesh instanceof THREE.InstancedMesh && typeof instanceId === 'number') {
-                  const colorAttr = mesh.instanceColor as THREE.InstancedBufferAttribute | null;
-                  const col = new THREE.Color();
-                  if (colorAttr) {
-                    const arr = colorAttr.array as Float32Array;
-                    const off = instanceId * 3;
-                    col.setRGB(arr[off], arr[off + 1], arr[off + 2]);
-                    info.instanceColor = col;
-                  }
-                } else if (mesh.material && (mesh.material as any).color) {
-                  info.materialColor = (mesh.material as any).color;
-                  info.materialEmissive = (mesh.material as any).emissive;
+                const info: Record<string, unknown> = { resolvedId, userData: mesh.userData };
+                if (mesh.material && 'color' in mesh.material) {
+                  info.materialColor = (mesh.material as THREE.MeshStandardMaterial).color;
                 }
-                // eslint-disable-next-line no-console
                 console.log('[Viewer3D] click debug', info);
-
-                // Ask the worker to inspect the IFC entities for this resolvedId
-                try {
-                  if (workerRef.current && resolvedId) {
-                    if (workerReadyRef.current) {
-                      console.log('[Viewer3D] Sending inspect for', resolvedId);
-                      workerRef.current.postMessage({ type: 'inspect', id: resolvedId });
-                    } else {
-                      // Queue the inspect request until the worker finishes parsing
-                      console.log('[Viewer3D] Queuing inspect for', resolvedId, 'worker not ready yet');
-                      pendingInspectsRef.current.push(resolvedId);
-                      // eslint-disable-next-line no-console
-                      console.log('[Viewer3D] Inspect queued until worker ready:', resolvedId);
-                    }
-                  } else {
-                    console.log('[Viewer3D] No worker or no resolvedId for inspect');
-                    // eslint-disable-next-line no-console
-                    console.warn('[Viewer3D] No worker available to inspect:', resolvedId);
-                  }
-                } catch (e) {
-                  console.error('[Viewer3D] Error sending inspect:', e);
-                }
               }
             } catch (e) {
               // ignore
@@ -392,6 +418,7 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
           renderer.setSize(w, h);
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
         };
         window.addEventListener('resize', handleResize);
 
@@ -408,6 +435,13 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
             }
           });
           meshesRef.current = [];
+          expressIdLookupRef.current.clear();
+          // Dispose any active highlight overlay
+          if (selectedHighlightMeshRef.current) {
+            selectedHighlightMeshRef.current.geometry.dispose();
+            (selectedHighlightMeshRef.current.material as THREE.Material).dispose();
+            selectedHighlightMeshRef.current = null;
+          }
           controls.dispose();
           renderer.dispose();
           if (containerRef.current?.contains(renderer.domElement)) {
@@ -416,37 +450,49 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           // Dispose worker and free web-ifc model if still loaded
           try {
             if (workerRef.current) {
-              try { workerRef.current.postMessage({ type: 'dispose' }); } catch (e) {}
-              try { workerRef.current.terminate(); } catch (e) {}
+              try { workerRef.current.postMessage({ type: 'dispose' }); } catch { /* ignore */ }
+              try { workerRef.current.terminate(); } catch { /* ignore */ }
               workerRef.current = null;
             }
-          } catch (e) {}
+          } catch { /* ignore cleanup errors */ }
         };
       } catch (err) {
         console.error('[Viewer3D] Error:', err);
         setError(err instanceof Error ? err.message : 'Failed to initialize viewer');
-        setIsLoading(false);
       }
     };
 
     init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ifcFileBuffer]);
 
-  interface MeshPayload {
-    positions: Float32Array;
-    normals: Float32Array;
-    indices: Uint32Array;
-    color: number;
-    opacity: number;
-    transforms: Float32Array;
-    expressIds: Int32Array;
-    ifcType: string;
-    instanceCount: number;
+  interface TriangleRange {
+    expressId: number;
+    start: number;
+    count: number;
+    bbox: { min: [number, number, number]; max: [number, number, number] };
+  }
+
+  function findEntityByFace(ranges: TriangleRange[], faceIndex: number): TriangleRange | undefined {
+    let lo = 0, hi = ranges.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const r = ranges[mid];
+      if (faceIndex < r.start) {
+        hi = mid - 1;
+      } else if (faceIndex >= r.start + r.count) {
+        lo = mid + 1;
+      } else {
+        return r;
+      }
+    }
+    return undefined;
   }
 
   const loadIFC = async (scene: THREE.Scene, buffer: ArrayBuffer): Promise<THREE.Mesh[]> => {
         
     const meshes: THREE.Mesh[] = [];
+    let resolved = false;
 
     return new Promise((resolve, reject) => {
       const worker = new Worker(
@@ -456,10 +502,9 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
       workerRef.current = worker;
 
       worker.onmessage = (event: MessageEvent) => {
-        const data = event.data as any;
+        const data = event.data as Record<string, unknown>;
         if (data?.type === 'debug') {
           // Log compact debug info from worker to help diagnose style/color mapping
-          // eslint-disable-next-line no-console
           console.log('[Viewer3D] IFC worker debug:', data);
           return;
         }
@@ -471,24 +516,130 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           if (pendingInspectsRef.current.length > 0) {
             console.log('[Viewer3D] Flushing', pendingInspectsRef.current.length, 'pending inspects');
             for (const pid of pendingInspectsRef.current) {
-              try { workerRef.current?.postMessage({ type: 'inspect', id: pid }); } catch (e) {}
+              try { workerRef.current?.postMessage({ type: 'inspect', id: pid }); } catch { /* ignore */ }
             }
             pendingInspectsRef.current = [];
           }
-          // eslint-disable-next-line no-console
+          // flush pending on-demand geometry request (e.g. IFCSPACE selected before model loaded)
+          if (pendingGeometryRef.current !== null) {
+            try { workerRef.current?.postMessage({ type: 'getGeometry', id: pendingGeometryRef.current }); } catch { /* ignore */ }
+            pendingGeometryRef.current = null;
+          }
           console.log('[Viewer3D] worker modelLoaded:', data.modelId);
           return;
         }
+        if (data?.type === 'disposed') {
+          // Worker self-terminated after 60s keepAlive timeout — mark it as no longer ready.
+          // Future getGeometry requests will be silently dropped (worker is gone).
+          workerReadyRef.current = false;
+          console.log('[Viewer3D] worker self-disposed after inactivity:', data.reason);
+          return;
+        }
         if (data?.type === 'inspectResult') {
-          // eslint-disable-next-line no-console
           if (data.error === 'Model not loaded' && !workerReadyRef.current) {
             console.warn('[Viewer3D] Inspect returned "Model not loaded" — the worker model is not yet ready. This may occur if you clicked before loading finished.');
           }
           console.log('[Viewer3D] inspect result:', data);
           return;
         }
+        if (data?.type === 'geometryResult') {
+          // On-demand geometry for hidden element types (IFCSPACE etc.) requested from
+          // the selectedNodeId effect when the element isn't in expressIdLookupRef.
+          const onDemandPayloads = data.payloads as MeshPayload[] | null;
+          if (!onDemandPayloads || onDemandPayloads.length === 0) return;
+          if (!sceneRef.current) return;
+
+          // Clean up any previous highlight first
+          if (selectedHighlightMeshRef.current) {
+            sceneRef.current.remove(selectedHighlightMeshRef.current);
+            selectedHighlightMeshRef.current.geometry.dispose();
+            (selectedHighlightMeshRef.current.material as THREE.Material).dispose();
+            selectedHighlightMeshRef.current = null;
+          }
+
+          // Merge geometry parts into one highlight mesh
+          let totalVerts = 0;
+          for (const p of onDemandPayloads) totalVerts += p.positions.length / 3;
+          if (totalVerts === 0) return;
+
+          const allPos = new Float32Array(totalVerts * 3);
+          const allNor = new Float32Array(totalVerts * 3);
+          const idxParts: number[] = [];
+          let vOff = 0;
+          for (const p of onDemandPayloads) {
+            const vc = p.positions.length / 3;
+            allPos.set(p.positions, vOff * 3);
+            allNor.set(p.normals, vOff * 3);
+            for (let i = 0; i < p.indices.length; i++) idxParts.push(p.indices[i] + vOff);
+            vOff += vc;
+          }
+          const allIdx = new Uint32Array(idxParts);
+
+          const isSpace = onDemandPayloads[0].ifcType === 'IFCSPACE' || onDemandPayloads[0].ifcType === 'IFCSPACESTANDARDCASE';
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(allPos, 3));
+          geo.setAttribute('normal',   new THREE.BufferAttribute(allNor, 3));
+          geo.setIndex(new THREE.BufferAttribute(allIdx, 1));
+
+          const mat = new THREE.MeshStandardMaterial({
+            color: isSpace ? new THREE.Color(0.6, 0.85, 1.0) : new THREE.Color(0.15, 0.45, 1.0),
+            emissive: new THREE.Color(0.05, 0.2, 0.6),
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: isSpace ? 0.3 : 0.8,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          });
+
+          const onDemandMesh = new THREE.Mesh(geo, mat);
+          sceneRef.current.add(onDemandMesh);
+          selectedHighlightMeshRef.current = onDemandMesh;
+
+          // Ghost all streaming meshes
+          meshesRef.current.forEach(m => {
+            if (m.material instanceof THREE.Material) {
+              if (m.userData.originalOpacity === undefined) {
+                m.userData.originalTransparent = m.material.transparent;
+                m.userData.originalOpacity = m.material.opacity;
+              }
+              m.material.transparent = true;
+              m.material.opacity = 0.06;
+              m.material.needsUpdate = true;
+            }
+          });
+
+          // Camera zoom to the on-demand geometry's bounding box
+          geo.computeBoundingBox();
+          const box = geo.boundingBox;
+          if (box && !box.isEmpty() && cameraRef.current && controlsRef.current) {
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            if (maxDim > 0) {
+              const fov = cameraRef.current.fov * (Math.PI / 180);
+              const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.5;
+              const dir  = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize();
+              const targetPos = center.clone().add(dir.multiplyScalar(dist));
+              const startPos   = cameraRef.current.position.clone();
+              const startTarget = controlsRef.current.target.clone();
+              const dur = 800, t0 = Date.now();
+              const step = () => {
+                const t = Math.min((Date.now() - t0) / dur, 1);
+                const e = 1 - Math.pow(1 - t, 3);
+                cameraRef.current!.position.lerpVectors(startPos, targetPos, e);
+                controlsRef.current!.target.lerpVectors(startTarget, center, e);
+                controlsRef.current!.update();
+                framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+                if (t < 1) requestAnimationFrame(step);
+              };
+              step();
+            }
+          }
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+          return;
+        }
         const { type, meshes: payloads, error } = data as {
-          type: 'complete' | 'error';
+          type: 'batch' | 'complete' | 'error';
           meshes?: MeshPayload[];
           error?: string;
         };
@@ -500,222 +651,175 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           return;
         }
 
-        if (type === 'complete' && payloads) {
-          console.log('[Viewer3D] IFC payloads loaded:', payloads.length, 'meshes');
+        const appendPayloadsToScene = (batch: MeshPayload[]) => {
+          if (!batch || batch.length === 0) return;
 
-          // Optional visual debug toggle: append ?colorDebug=1 for emissive debug, ?colorDebug=2 for flat unlit colors
+          const HIDDEN_TYPES = new Set(['IFCOPENINGELEMENT', 'IFCSPACE', 'IFCSPACESTANDARDCASE', 'IFCVIRTUALELEMENT']);
+          const visible = batch.filter(p => !HIDDEN_TYPES.has(p.ifcType));
 
-          payloads.forEach((payload) => {
-            const bufferGeometry = new THREE.BufferGeometry();
-            bufferGeometry.setAttribute(
-              'position',
-              new THREE.Float32BufferAttribute(payload.positions, 3)
-            );
-            bufferGeometry.setAttribute(
-              'normal',
-              new THREE.Float32BufferAttribute(payload.normals, 3)
-            );
-            if (payload.indices && payload.indices.length > 0) {
-              bufferGeometry.setIndex(new THREE.BufferAttribute(payload.indices, 1));
+          // Separate opaque from transparent — opaque gets merged into a single batch
+          // mesh (drastically fewer draw calls), transparent stays as individual meshes
+          // so blend order and material settings can vary per element.
+          const opaque      = visible.filter(p => p.opacity >= 0.85);
+          const transparent = visible.filter(p => p.opacity < 0.85);
+
+          // ── Opaque batch mesh (vertex-colour merged geometry) ───────────────────
+          if (opaque.length > 0) {
+            let totalVerts = 0, totalTris = 0;
+            for (const p of opaque) {
+              totalVerts += p.positions.length / 3;
+              totalTris  += p.indices.length / 3;
             }
 
-            // Use normalized RGBA from payload when available
-            const rgb = (payload as any).colorRgb;
-            const baseColorRaw = rgb ? new THREE.Color(rgb.r, rgb.g, rgb.b) : new THREE.Color(payload.color);
-            const baseColorLinear = baseColorRaw.clone().convertSRGBToLinear();
-            const opacity = rgb && typeof rgb.a === 'number' ? rgb.a : (typeof payload.opacity === 'number' ? payload.opacity : 1.0);
+            const allPos = new Float32Array(totalVerts * 3);
+            const allNor = new Float32Array(totalVerts * 3);
+            const allCol = new Float32Array(totalVerts * 3);
+            const allIdx = new Uint32Array(totalTris * 3);
+            const ranges: TriangleRange[] = [];
 
-            // Debug mode 4: use raw (sRGB) colors directly (no convertSRGBToLinear)
-            const useRawColor = COLOR_DEBUG_MODE === '4';
-            const colorForMaterial = useRawColor ? baseColorRaw : baseColorLinear;
+            let vOff = 0, iOff = 0, triOff = 0;
+            for (const p of opaque) {
+              const vc = p.positions.length / 3;
+              const tc = p.indices.length / 3;
 
-            let material: THREE.Material;
-            if (COLOR_DEBUG_MODE === '2') {
-              // Flat unlit material for precise color verification
-              material = new THREE.MeshBasicMaterial({ color: colorForMaterial, side: THREE.DoubleSide, transparent: opacity < 1.0, opacity });
-            } else {
-              // Default PBR material tuned to favor vivid IFC colors (match professional viewer look)
-              material = new THREE.MeshStandardMaterial({
-                color: colorForMaterial,
-                side: THREE.DoubleSide,
-                metalness: opacity < 0.7 ? 0.3 : 0.0,  // Slight metalness for transparent/glass materials
-                roughness: opacity < 0.7 ? 0.1 : 0.18, // Smoother for glass, slightly rough for opaque
-                flatShading: false,
-                envMapIntensity: 1.0,
-                vertexColors: false,
-                transparent: opacity < 1.0,
-                opacity: opacity,
+              allPos.set(p.positions, vOff * 3);
+              allNor.set(p.normals,   vOff * 3);
+
+              // Per-vertex colour (linear) from payload colorRgb
+              const raw = p.colorRgb;
+              const c = raw
+                ? new THREE.Color(raw.r, raw.g, raw.b).convertSRGBToLinear()
+                : new THREE.Color(p.color).convertSRGBToLinear();
+              for (let v = 0; v < vc; v++) {
+                const off3 = (vOff + v) * 3;
+                allCol[off3]     = c.r;
+                allCol[off3 + 1] = c.g;
+                allCol[off3 + 2] = c.b;
+              }
+
+              // Compute AABB for camera zoom
+              let minX = Infinity, minY = Infinity, minZ = Infinity;
+              let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+              for (let v = 0; v < vc; v++) {
+                const x = p.positions[v*3], y = p.positions[v*3+1], z = p.positions[v*3+2];
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+              }
+
+              ranges.push({
+                expressId: p.expressIds[0],
+                start: triOff,
+                count: tc,
+                bbox: { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] },
               });
 
-              // If the payload contains an IFC-derived color, bias the material with an emissive component
-              // so colors remain bright under scene lighting similar to the professional viewer.
-              try {
-                if ((payload as any).colorRgb) {
-                  (material as THREE.MeshStandardMaterial).emissive = colorForMaterial.clone();
-                  // Adjust emissive intensity based on opacity:
-                  // Transparent materials (glass/windows) need less emissive to avoid washing out
-                  // Opaque materials get full emissive for vivid colors
-                  if (opacity < 0.7) {
-                    (material as any).emissiveIntensity = 0.5; // Lower for transparency
-                  } else {
-                    (material as any).emissiveIntensity = 0.95; // Full for opaque
-                  }
-                }
-              } catch (e) {}
-
-              if (COLOR_DEBUG_MODE === '1') {
-                (material as THREE.MeshStandardMaterial).emissive = colorForMaterial.clone();
-                (material as any).emissiveIntensity = 0.95;
+              for (let i = 0; i < p.indices.length; i++) {
+                allIdx[iOff + i] = p.indices[i] + vOff;
               }
+              vOff  += vc;
+              iOff  += p.indices.length;
+              triOff += tc;
             }
-            if (payload.instanceCount > 1) {
-              let instancedMaterial = material.clone();
-              // For flat basic debug mode, clone may be a MeshBasicMaterial - ensure vertexColors behavior
-              if (instancedMaterial instanceof THREE.MeshBasicMaterial) {
-                // MeshBasicMaterial doesn't use vertex colors with instanced.setColorAt unless vertexColors true
-                instancedMaterial.vertexColors = true;
-              } else {
-                (instancedMaterial as THREE.MeshStandardMaterial).vertexColors = true;
-              }
-              instancedMaterial.color = new THREE.Color(0xffffff);
-              const instanced = new THREE.InstancedMesh(
-                bufferGeometry,
-                instancedMaterial,
-                payload.instanceCount
-              );
-              instanced.frustumCulled = true;
-              instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-              instanced.instanceColor = new THREE.InstancedBufferAttribute(
-                new Float32Array(payload.instanceCount * 3),
-                3
-              );
 
-              const matrix = new THREE.Matrix4();
-              const rgb = (payload as any).colorRgb;
-              const baseColorRaw = rgb ? new THREE.Color(rgb.r, rgb.g, rgb.b) : new THREE.Color(payload.color);
-              const baseColorLinear = baseColorRaw.clone().convertSRGBToLinear();
-              const instOpacity = rgb && typeof rgb.a === 'number' ? rgb.a : (typeof payload.opacity === 'number' ? payload.opacity : 1.0);
-              instancedMaterial.transparent = instOpacity < 1.0;
-              instancedMaterial.opacity = instOpacity;
+            const bGeo = new THREE.BufferGeometry();
+            bGeo.setAttribute('position', new THREE.BufferAttribute(allPos, 3));
+            bGeo.setAttribute('normal',   new THREE.BufferAttribute(allNor, 3));
+            bGeo.setAttribute('color',    new THREE.BufferAttribute(allCol, 3));
+            bGeo.setIndex(new THREE.BufferAttribute(allIdx, 1));
 
-              // Adjust material properties for transparency
-              if (instOpacity < 0.7) {
-                (instancedMaterial as THREE.MeshStandardMaterial).metalness = 0.3;
-                (instancedMaterial as THREE.MeshStandardMaterial).roughness = 0.1;
-              } else {
-                (instancedMaterial as THREE.MeshStandardMaterial).metalness = 0.0;
-                (instancedMaterial as THREE.MeshStandardMaterial).roughness = 0.18;
-              }
+            const bMat = new THREE.MeshStandardMaterial({
+              vertexColors: true,
+              side: THREE.DoubleSide,
+              metalness: 0.0,
+              roughness: 0.5,
+            });
 
-              // Choose whether to set instance color as raw sRGB or linear (debug mode 4)
-              const useRawInstanceColor = COLOR_DEBUG_MODE === '4';
-              const colorForInstance = useRawInstanceColor ? baseColorRaw : baseColorLinear;
+            const batchMesh = new THREE.Mesh(bGeo, bMat);
+            batchMesh.frustumCulled = true;
+            batchMesh.userData.triangleRanges = ranges;
+            batchMesh.userData.isBatchMesh = true;
+            bGeo.computeBoundingSphere(); // compute once eagerly — Three.js caches it
+            scene.add(batchMesh);
+            meshes.push(batchMesh);
 
-              if (COLOR_DEBUG_MODE === '1') {
-                instancedMaterial.emissive = colorForInstance.clone();
-                (instancedMaterial as any).emissiveIntensity = 0.6;
-              }
-
-              // If the payload contains an IFC-derived color, bias emissive for better visibility and parity with other viewers.
-              try {
-                if ((payload as any).colorRgb) {
-                  instancedMaterial.emissive = colorForInstance.clone();
-                  // Adjust emissive intensity based on opacity for transparent materials
-                  if (instOpacity < 0.7) {
-                    (instancedMaterial as any).emissiveIntensity = 0.5;
-                  } else {
-                    (instancedMaterial as any).emissiveIntensity = 0.95;
-                  }
-                }
-              } catch (e) {}
-
-              const instanceMatrices = [] as THREE.Matrix4[];
-              for (let i = 0; i < payload.instanceCount; i++) {
-                const offset = i * 16;
-                matrix.fromArray(payload.transforms.subarray(offset, offset + 16));
-                instanced.setMatrixAt(i, matrix);
-                instanced.setColorAt(i, colorForInstance);
-                // remember matrices for optional wire overlay
-                instanceMatrices.push(matrix.clone());
-              }
-
-              instanced.instanceMatrix.needsUpdate = true;
-              instanced.instanceColor.needsUpdate = true;
-
-              // lighten the instance material a bit for more pleasing contrast
-              try {
-                (instanced.material as THREE.Material).needsUpdate = true;
-              } catch (e) {}
-              instanced.userData = {
-                ifcType: payload.ifcType,
-                instanceExpressIds: Array.from(payload.expressIds),
-              };
-
-              scene.add(instanced);
-              meshes.push(instanced as unknown as THREE.Mesh);
-
-              // OPTIMIZATION: Skip wireframe overlay for context-only view (saves 100-150 MB)
-              // For context views, skip the wireframe overlay that doubles geometry memory
-              if (!isContextOnly) {
-                // Add subtle instanced wireframe overlay (thin dark wireframe to improve edge definition)
-                try {
-                  const wireMat = instanced.material.clone();
-                  wireMat.color = new THREE.Color(0x0b0b0b);
-                  wireMat.wireframe = true;
-                  wireMat.transparent = true;
-                  wireMat.opacity = 0.06;
-                  wireMat.depthWrite = false;
-
-                  const wireInst = new THREE.InstancedMesh(
-                    bufferGeometry,
-                    wireMat,
-                    payload.instanceCount
-                  );
-                  wireInst.frustumCulled = true;
-
-                  for (let i = 0; i < payload.instanceCount; i++) {
-                    wireInst.setMatrixAt(i, instanceMatrices[i]);
-                  }
-                  wireInst.instanceMatrix.needsUpdate = true;
-                  scene.add(wireInst);
-                  meshes.push(wireInst as unknown as THREE.Mesh);
-                } catch (e) {
-                  // non-critical if instanced wireframe overlay fails on some platforms
-                }
-              }
-            } else {
-              const mesh = new THREE.Mesh(bufferGeometry, material);
-              mesh.frustumCulled = true;
-
-              const matrix = new THREE.Matrix4();
-              matrix.fromArray(payload.transforms.subarray(0, 16));
-              mesh.matrix.copy(matrix);
-              mesh.matrixAutoUpdate = false;
-
-              mesh.userData = {
-                ifcType: payload.ifcType,
-                ifcExpressId: payload.expressIds[0],
-              };
-
-              scene.add(mesh);
-              meshes.push(mesh);
-
-              // OPTIMIZATION: Skip edge overlay for context-only view (saves memory)
-              if (!isContextOnly) {
-                // subtle edges overlay for single meshes (improves visual definition)
-                try {
-                  const edges = new THREE.EdgesGeometry(bufferGeometry);
-                  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x0b0b0b, transparent: true, opacity: 0.08 }));
-                  line.matrix.copy(mesh.matrix);
-                  line.matrixAutoUpdate = false;
-                  scene.add(line);
-                  meshes.push(line as unknown as THREE.Mesh);
-                } catch (e) {
-                  // non critical
-                }
-              }
+            // Register all elements for O(log n) selection lookup
+            for (const r of ranges) {
+              expressIdLookupRef.current.set(r.expressId, { mesh: batchMesh, range: r });
             }
-          });
+          }
+
+          // ── Transparent elements (glass, windows) — individual meshes ───────────
+          for (const payload of transparent) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(payload.positions, 3));
+            geo.setAttribute('normal',   new THREE.Float32BufferAttribute(payload.normals,   3));
+            if (payload.indices.length > 0) geo.setIndex(new THREE.BufferAttribute(payload.indices, 1));
+
+            const rgb = payload.colorRgb;
+            const baseRaw    = rgb ? new THREE.Color(rgb.r, rgb.g, rgb.b) : new THREE.Color(payload.color);
+            const baseLinear = baseRaw.clone().convertSRGBToLinear();
+            const opacity    = rgb?.a ?? payload.opacity;
+
+            const mat = new THREE.MeshPhysicalMaterial({
+              color: baseLinear,
+              side: THREE.DoubleSide,
+              metalness: 0.0,
+              roughness: 0.05,
+              transparent: true,
+              opacity: Math.max(0.15, opacity),
+              depthWrite: false,
+              envMapIntensity: 0.6,
+              emissive: baseLinear.clone(),
+              emissiveIntensity: 0.15,
+            });
+
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.frustumCulled = true;
+            mesh.userData.ifcExpressId = payload.expressIds[0];
+            mesh.userData.ifcType      = payload.ifcType;
+            scene.add(mesh);
+            meshes.push(mesh);
+
+            // Register for selection lookup
+            expressIdLookupRef.current.set(payload.expressIds[0], {
+              mesh,
+              range: {
+                expressId: payload.expressIds[0],
+                start: 0,
+                count: payload.indices.length / 3,
+                bbox: { min: [0,0,0], max: [0,0,0] },
+              },
+            });
+          }
+
+          setGeometryCount(meshes.length);
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 30); // ensure new geometry renders
+        };
+
+        if (type === 'batch' && payloads) {
+          appendPayloadsToScene(payloads);
+          // Resolve the promise on first batch so init() can continue (camera fit, etc.)
+          // while geometry keeps streaming in the background
+          if (!resolved) {
+            resolved = true;
+            resolve(meshes);
+          }
+          return;
+        }
+
+        if (type === 'complete') {
+          // Backward compatibility: support old worker behavior where all payloads
+          // arrive in the final complete event.
+          if (payloads && payloads.length > 0) {
+            appendPayloadsToScene(payloads);
+          }
+
+          // Resolve if not already resolved (no batch events were emitted)
+          if (!resolved) {
+            resolved = true;
+            resolve(meshes);
+          }
 
           // OPTIMIZATION: For context-only view, dispose worker immediately after loading (saves 200-300 MB)
           // For interactive inspection mode, keep worker alive for 60 seconds
@@ -723,11 +827,11 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
             try {
               worker.postMessage({ type: 'dispose' });
               worker.terminate();
-            } catch (e) {}
+            } catch { /* ignore */ }
           }
 
-          resolve(meshes);
-          // Note: For interactive mode, worker stays running; disposed on unmount or after 60s inactivity.
+          // Update geometry count with final total
+          setGeometryCount(meshes.length);
         }
       };
 
@@ -737,7 +841,10 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
       };
 
       const transferBuffer = buffer.slice(0);
-      worker.postMessage({ type: 'parse', buffer: transferBuffer }, [transferBuffer]);
+      // keepModel: true (when not context-only) keeps _ifcApiGlobal alive after streaming
+      // so on-demand getGeometry requests (e.g. IFCSPACE) can be served.
+      // The worker auto-terminates after 60s idle via scheduleKeepAlive → self.close().
+      worker.postMessage({ type: 'parse', buffer: transferBuffer, keepModel: !isContextOnly }, [transferBuffer]);
     });
   };
 
@@ -757,16 +864,10 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
 
   return (
     <div className="w-full h-full flex flex-col">
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 z-10">
-          <div className="text-slate-400">Initializing 3D Viewer...</div>
-        </div>
-      )}
-      
       <div className="px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="text-sm text-slate-400">
-            {geometryCount > 0 ? `${geometryCount} objects loaded` : 'Ready'}
+            {geometryCount > 0 ? `${geometryCount} objects loaded` : 'Initializing...'}
           </div>
         </div>
         <button
@@ -780,7 +881,7 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           Fullscreen
         </button>
       </div>
-      
+
       <div ref={containerRef} className="flex-1 bg-slate-900" />
     </div>
   );

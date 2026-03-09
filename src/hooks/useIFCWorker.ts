@@ -15,8 +15,8 @@ interface ParseProgress {
   totalEntities?: number;
 }
 
-// Worker timeout: 2 minutes for parsing large files
-const WORKER_TIMEOUT_MS = 120000;
+// Worker timeout: 10 minutes for parsing large files
+const WORKER_TIMEOUT_MS = 600000;
 
 export function useIFCWorker() {
   const [isLoading, setIsLoading] = useState(false);
@@ -109,26 +109,9 @@ export function useIFCWorker() {
             worker.terminate();
             workerRef.current = null;
 
-            // Convert rawStepLines parallel arrays back to Map
-            // Worker serializes as { keys: Int32Array, values: string[] } for efficient transfer
-            if (data?.rawData?.rawStepLines && !(data.rawData.rawStepLines instanceof Map)) {
-              const raw = data.rawData.rawStepLines as any;
-              const stepsMap = new Map<number, string>();
-              if (raw.keys instanceof Int32Array && Array.isArray(raw.values)) {
-                // Parallel array format (optimized)
-                const keys = raw.keys;
-                const values = raw.values;
-                for (let i = 0; i < keys.length; i++) {
-                  stepsMap.set(keys[i], values[i]);
-                }
-              } else if (typeof raw === 'object') {
-                // Legacy Object format (fallback)
-                Object.entries(raw).forEach(([key, value]) => {
-                  stepsMap.set(parseInt(key, 10), value as string);
-                });
-              }
-              data.rawData.rawStepLines = stepsMap;
-            }
+            // rawStepLines is intentionally not transferred from the worker.
+            // All graph nodes have _ifcStep embedded; decoding a large Map here
+            // would block the main thread and waste ~400 MB of heap.
 
             resolve(data);
           } else if (type === 'error') {

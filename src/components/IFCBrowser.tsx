@@ -384,10 +384,11 @@ function buildReferenceIndexWithContext(nodes: GraphNode[]): Map<string, Map<num
     '_schemacolor', '_entitytype', '_expressid',  // Internal properties added during parsing
   ]);
 
-  // OPTIMIZATION: Only index semantic entities (skip geometry for faster reference index)
-  // Geometry entities don't have meaningful references in the semantic graph
+  // OPTIMIZATION: Skip geometry types when building the reverse-reference index.
+  // Geometry stubs are present in the entity list (built via BFS in the worker),
+  // but indexing their _ifcStep references would flood the index with cross-geometry
+  // edges (e.g. CartesianPoint → CartesianPoint) that serve no browsing purpose.
   for (const node of nodes) {
-    // Skip geometry types - no need to index their references
     if (node.ifcType && isGeometryType(node.ifcType)) continue;
 
     const refs = new Map<number, string[]>();
