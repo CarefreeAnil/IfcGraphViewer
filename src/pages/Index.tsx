@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo, startTransition } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Info, GraduationCap, Shield, Lock, Code2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,6 +25,8 @@ import { ParsedIFCData, GraphNode, NodeType } from '@/types/graph';
 import { ComposedObject } from '@/types/ifc5';
 import { EducationalSample } from '@/features/educational/data/educationalSamples';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { PanelTaskbar } from '@/components/PanelTaskbar';
+import type { PanelId, PanelVisibility } from '@/components/PanelTaskbar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS } from '@/hooks/useKeyboardShortcuts';
 import { useIFCWorker } from '@/hooks/useIFCWorker';
@@ -81,6 +83,19 @@ const Index = () => {
   const sampleLoadedRef = useRef(false);
 
   const [showAbout, setShowAbout] = useState(false);
+
+  // Panel visibility for the taskbar
+  const [panelVisibility, setPanelVisibility] = useState<PanelVisibility>({
+    properties: true,
+    graph: true,
+    tree: true,
+    viewer3d: true,
+    source: true,
+  });
+
+  const togglePanel = useCallback((panelId: PanelId) => {
+    setPanelVisibility(prev => ({ ...prev, [panelId]: !prev[panelId] }));
+  }, []);
 
   // Learning Mode state
   const [learningMode, setLearningMode] = useState(false);
@@ -382,9 +397,10 @@ const Index = () => {
       setSchemaVersion(detectedVersion);
       setParsedData(data);
 
-      // Auto-load 3D viewer for IFC5 files
+      // Keep 3D viewer unloaded until user explicitly requests it.
+      // Auto-loading caused the viewer's 20s WASM init to appear as "parsing taking 26s".
+      setViewer3DLoaded(false);
       if (data.metadata?.isIFC5) {
-        setViewer3DLoaded(true);
         // Reset IFC5-specific UI state for the new file
         setSelectedIFC5Node(null);
         setSelectedIFC5ComposedPath(null);
@@ -686,37 +702,26 @@ const Index = () => {
 
   }, [parsedData]);
 
-  // OPTIMIZATION: Create minimal enrichment for IFC Browser (just add _ifcStep, no _schemaColor)
-  // IFC Browser shows ALL entities (including geometry), graph shows filtered only
+  // OPTIMIZATION: Create enriched entity list for IFC Browser.
+  // graphData.nodes  = non-property semantic nodes (elements, spatial, relationships)
+  //                    with full embedded data from graphBuilder/attachPropertySets.
+  // parsedData.allEntities = property-node stubs (IFCPROPERTYSET etc.) +
+  //                    geometry stubs (IFCLOCALPLACEMENT, IFCSHAPEREPRESENTATION, etc.)
+  //                    built in the worker via BFS from semantic STEP references.
+  // Both are combined here and sorted by expressId for 1:1 IFC Browser representation.
   const enrichedEntities = useMemo(() => {
-    if (!parsedData?.allEntities) return [];
+    if (!parsedData) return [];
     if (import.meta.env.DEV) {
       logger.debug('Creating enrichedEntities for IFCBrowser');
     }
 
-    // graphData.nodes already have _ifcStep and _schemaColor from graphBuilder (via worker)
-    // so we can use them directly. Only geometry entities need enrichment.
-    const graphNodes = parsedData.graphData?.nodes || [];
+    const graphNodes   = parsedData.graphData?.nodes || [];
+    const entityStubs  = (parsedData.allEntities || []) as typeof graphNodes;
 
-    // Enrich geometry entities with STEP lines (these weren't processed through graphBuilder)
-    const geometryEntities = parsedData.geometryEntities || [];
-    const rawStepLines = parsedData.rawData?.rawStepLines;
-
-    const enrichedGeometry = geometryEntities.map(entity => ({
-      ...entity,
-      properties: {
-        ...entity.properties,
-        _ifcStep: rawStepLines?.get(entity.expressId) ||
-          `#${entity.expressId}= ${entity.ifcType}(...);`
-      }
-    }));
-
-    // Combine and sort by expressId for 1:1 IFC file representation (no gaps)
-    const combined = [...graphNodes, ...enrichedGeometry];
+    const combined = [...graphNodes, ...entityStubs];
     combined.sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
-
     return combined;
-  }, [parsedData?.graphData?.nodes, parsedData?.geometryEntities, parsedData?.rawData?.rawStepLines]);
+  }, [parsedData?.graphData?.nodes, parsedData?.allEntities]);
 
   // Memoize filtered graph data for progressive learning
   // Only apply progressive filtering for guided learning samples
@@ -806,12 +811,21 @@ const Index = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full flex flex-col"
+              className="h-full flex"
             >
+              {/* Vertical panel taskbar — only when a file is loaded */}
+              <PanelTaskbar
+                panelVisibility={panelVisibility}
+                onTogglePanel={togglePanel}
+                isIFC5={isIFC5}
+              />
+
               {/* Layout: Properties | Graph | Tree | 3D Viewer | Source (IFC5 only) */}
+              <div className="flex-1 h-full min-w-0">
               <ResizablePanelGroup direction="horizontal" className="h-full">
-                {/* Properties Panel - 12% (Left) */}
-                <ResizablePanel id="properties" order={1} defaultSize={12} minSize={8} maxSize={25}>
+                {/* Properties Panel */}
+                {panelVisibility.properties && (
+                <ResizablePanel id="properties" order={1} defaultSize={12} minSize={8}>
                   <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
                     {isIFC5 ? (
                       <IFC5PropertyViewer
@@ -839,11 +853,13 @@ const Index = () => {
                     )}
                   </div>
                 </ResizablePanel>
+                )}
 
-                <ResizableHandle />
+                {panelVisibility.properties && panelVisibility.graph && <ResizableHandle />}
 
-                {/* Graph Panel - 28% (Middle-Left) */}
-                <ResizablePanel id="graph" order={2} defaultSize={28} minSize={20} maxSize={50}>
+                {/* Graph Panel */}
+                {panelVisibility.graph && (
+                <ResizablePanel id="graph" order={2} defaultSize={28} minSize={20}>
                   {isIFC5 ? (
                     !ifc5GraphLoaded ? (
                       <div className="h-full w-full bg-background/50 flex items-center justify-center">
@@ -881,7 +897,7 @@ const Index = () => {
                       <div className="text-center space-y-4">
                         <p className="text-muted-foreground text-sm">Graph visualization not loaded</p>
                         <button
-                          onClick={() => setGraphLoaded(true)}
+                          onClick={() => startTransition(() => setGraphLoaded(true))}
                           className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
                         >
                           Load Graph
@@ -972,11 +988,13 @@ const Index = () => {
                     </div>
                   )}
                 </ResizablePanel>
+                )}
 
-                <ResizableHandle />
+                {(panelVisibility.properties || panelVisibility.graph) && panelVisibility.tree && <ResizableHandle />}
 
-                {/* Tree Browser Panel - 20% (Middle-Right) */}
-                <ResizablePanel id="tree" order={3} defaultSize={20} minSize={12} maxSize={35}>
+                {/* Tree / IFC Browser Panel */}
+                {panelVisibility.tree && (
+                <ResizablePanel id="tree" order={3} defaultSize={20} minSize={12}>
                   <div className="h-full overflow-hidden border-r border-border">
                     {isIFC5 ? (
                       <IFC5TreeBrowser
@@ -995,17 +1013,19 @@ const Index = () => {
                     )}
                   </div>
                 </ResizablePanel>
+                )}
 
-                <ResizableHandle />
+                {(panelVisibility.properties || panelVisibility.graph || panelVisibility.tree) && panelVisibility.viewer3d && <ResizableHandle />}
 
-                {/* 3D Viewer Panel - 20% (Right) */}
-                <ResizablePanel id="viewer3d" order={4} defaultSize={20} minSize={10} maxSize={35}>
+                {/* 3D Viewer Panel */}
+                {panelVisibility.viewer3d && (
+                <ResizablePanel id="viewer3d" order={4} defaultSize={20} minSize={10}>
                   {!viewer3DLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center border-l border-border">
                       <div className="text-center space-y-4">
                         <p className="text-muted-foreground text-sm">3D Viewer not loaded</p>
                         <button
-                          onClick={() => setViewer3DLoaded(true)}
+                          onClick={() => startTransition(() => setViewer3DLoaded(true))}
                           className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
                         >
                           Load 3D Viewer
@@ -1027,6 +1047,7 @@ const Index = () => {
                               }
                             }}
                             ifcFileBuffer={ifcFileBufferRef.current}
+                            isContextOnly={false}
                           />
                         </Suspense>
                       )}
@@ -1043,12 +1064,12 @@ const Index = () => {
                     </div>
                   )}
                 </ResizablePanel>
+                )}
 
                 {/* Source Viewer Panel — only rendered for IFC5 (.ifcx) files */}
-                {isIFC5 && parsedData.rawData?.ifc5File && (
-                  <>
-                    <ResizableHandle />
-                    <ResizablePanel id="source" order={5} defaultSize={20} minSize={12} maxSize={35}>
+                {isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (panelVisibility.properties || panelVisibility.graph || panelVisibility.tree || panelVisibility.viewer3d) && <ResizableHandle />}
+                {isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (
+                    <ResizablePanel id="source" order={5} defaultSize={20} minSize={12}>
                       <div className="h-full overflow-hidden border-l border-border">
                         <Suspense fallback={
                           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -1064,9 +1085,9 @@ const Index = () => {
                         </Suspense>
                       </div>
                     </ResizablePanel>
-                  </>
                 )}
               </ResizablePanelGroup>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

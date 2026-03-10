@@ -6,19 +6,21 @@
 import * as WebIFC from 'web-ifc';
 
 export interface GeometryWorkerMessage {
-  type: 'parse' | 'cancel' | 'inspect' | 'dispose';
+  type: 'parse' | 'cancel' | 'inspect' | 'dispose' | 'getGeometry';
   buffer?: ArrayBuffer;
   // parse options
   keepModel?: boolean;
   keepAliveMs?: number;
-  // inspect message
+  // inspect / getGeometry message
   id?: number;
 }
 
 export interface GeometryWorkerResponse {
-  type: 'complete' | 'error';
+  type: 'batch' | 'complete' | 'error' | 'geometryResult';
   error?: string;
   meshes?: MeshPayload[];
+  processedGroups?: number;
+  totalGroups?: number;
 }
 
 export interface MeshPayload {
@@ -34,6 +36,7 @@ export interface MeshPayload {
   instanceCount: number;
   geometryId: number;
   colorSource?: number | null; // expressID which provided the color
+  worldSpace?: boolean;        // true when positions/normals are already world-space
 }
 
 const typeColors: Record<string, number> = {
@@ -989,9 +992,11 @@ function scheduleKeepAlive(timeoutMs?: number) {
   try {
     _keepAliveTimer = setTimeout(() => {
       try {
-        // Auto-close due to inactivity
+        // Auto-close model and terminate the worker process due to inactivity.
+        // This frees the full WASM heap (~200-500 MB) so the OS can reclaim it.
         closeCurrentModel();
         try { (self as any).postMessage({ type: 'disposed', reason: 'keepalive_timeout' }); } catch (_) {}
+        try { (self as any).close(); } catch (_) {} // terminate worker thread
       } catch (e) {
         try { console.debug('[ifcWorker] keepalive close failed', e); } catch (_) {}
       }
@@ -1197,6 +1202,128 @@ self.onmessage = async (event: MessageEvent<GeometryWorkerMessage>) => {
     return;
   }
 
+  // On-demand single-element geometry fetch (used for IFCSPACE and other hidden types
+  // that aren't streamed but may be selected from the graph).
+  if (type === 'getGeometry' && id !== undefined) {
+    try {
+      if (!_ifcApiGlobal || _modelIdGlobal == null) {
+        (self as any).postMessage({ type: 'geometryResult', id, payloads: null });
+        return;
+      }
+
+      let typeName = 'default';
+      try {
+        const lineData = _ifcApiGlobal.GetLine(_modelIdGlobal, id as number);
+        if (lineData) typeName = _ifcApiGlobal.GetNameFromTypeCode(lineData.type)?.toUpperCase() || 'default';
+      } catch { /* ignore */ }
+
+      const flatMesh = _ifcApiGlobal.GetFlatMesh(_modelIdGlobal, id as number);
+      if (!flatMesh || flatMesh.geometries.size() === 0) {
+        (self as any).postMessage({ type: 'geometryResult', id, payloads: null });
+        return;
+      }
+
+      const payloads: MeshPayload[] = [];
+      const transfers: ArrayBuffer[] = [];
+
+      for (let gi = 0; gi < flatMesh.geometries.size(); gi++) {
+        const geometry = flatMesh.geometries.get(gi);
+        const geometryData = _ifcApiGlobal.GetGeometry(_modelIdGlobal, geometry.geometryExpressID);
+        if (!geometryData) continue;
+
+        const vertexData = _ifcApiGlobal.GetVertexArray(
+          geometryData.GetVertexData(), geometryData.GetVertexDataSize()
+        );
+        const rawIdx = _ifcApiGlobal.GetIndexArray(
+          geometryData.GetIndexData(), geometryData.GetIndexDataSize()
+        );
+        geometryData.delete();
+
+        if (!vertexData || vertexData.length === 0) continue;
+
+        const positions = new Float32Array((vertexData.length / 6) * 3);
+        const normals   = new Float32Array((vertexData.length / 6) * 3);
+        for (let v = 0, p = 0; v < vertexData.length; v += 6, p += 3) {
+          positions[p] = vertexData[v]; positions[p+1] = vertexData[v+1]; positions[p+2] = vertexData[v+2];
+          normals[p]   = vertexData[v+3]; normals[p+1]   = vertexData[v+4]; normals[p+2]   = vertexData[v+5];
+        }
+        const indices = rawIdx.slice();
+
+        // Build and apply world-space transform (same logic as StreamAllMeshes)
+        const transform = new Float32Array(16);
+        for (let j = 0; j < 16; j++) {
+          const val = Array.isArray(geometry.flatTransformation)
+            ? geometry.flatTransformation[j]
+            : (geometry.flatTransformation as any)?.get?.(j) ?? 0;
+          transform[j] = typeof val === 'number' ? val : 0;
+        }
+        {
+          const m = transform;
+          for (let p = 0; p < positions.length; p += 3) {
+            const x = positions[p], y = positions[p+1], z = positions[p+2];
+            positions[p]   = m[0]*x + m[4]*y + m[8]*z  + m[12];
+            positions[p+1] = m[1]*x + m[5]*y + m[9]*z  + m[13];
+            positions[p+2] = m[2]*x + m[6]*y + m[10]*z + m[14];
+          }
+          for (let p = 0; p < normals.length; p += 3) {
+            const nx = normals[p], ny = normals[p+1], nz = normals[p+2];
+            let rx = m[0]*nx + m[4]*ny + m[8]*nz;
+            let ry = m[1]*nx + m[5]*ny + m[9]*nz;
+            let rz = m[2]*nx + m[6]*ny + m[10]*nz;
+            const len = Math.sqrt(rx*rx + ry*ry + rz*rz);
+            if (len > 1e-6) { rx /= len; ry /= len; rz /= len; }
+            normals[p] = rx; normals[p+1] = ry; normals[p+2] = rz;
+          }
+        }
+
+        // Color (same priority as StreamAllMeshes)
+        let usedColor = typeColors[typeName] ?? 0xb3b3b3;
+        let usedOpacity = 1.0;
+        let colorRgbObj: { r: number; g: number; b: number; a: number } | null = null;
+        try {
+          const mc = geometry.color;
+          if (mc && typeof mc.x === 'number') {
+            const r = Math.min(1, Math.max(0, mc.x));
+            const g = Math.min(1, Math.max(0, mc.y));
+            const b = Math.min(1, Math.max(0, mc.z));
+            const a = typeof mc.w === 'number' ? Math.min(1, Math.max(0, mc.w)) : 1.0;
+            usedColor = (Math.round(r*255) << 16) | (Math.round(g*255) << 8) | Math.round(b*255);
+            usedOpacity = a;
+            colorRgbObj = { r, g, b, a };
+          }
+        } catch { /* ignore */ }
+        if (!colorRgbObj) {
+          const hex = usedColor >>> 0;
+          colorRgbObj = { r: ((hex>>16)&0xff)/255, g: ((hex>>8)&0xff)/255, b: (hex&0xff)/255, a: 1.0 };
+        }
+
+        // Force IFCSPACE to semi-transparent so the volume is legible
+        if (typeName === 'IFCSPACE' || typeName === 'IFCSPACESTANDARDCASE') {
+          usedOpacity = 0.25;
+          colorRgbObj = { ...colorRgbObj, a: 0.25 };
+        }
+
+        const expressIds = new Int32Array([id as number]);
+        payloads.push({
+          positions, normals, indices, color: usedColor, opacity: usedOpacity,
+          colorRgb: colorRgbObj, transforms: transform, expressIds,
+          ifcType: typeName, instanceCount: 1,
+          geometryId: geometry.geometryExpressID, worldSpace: true,
+        });
+        transfers.push(positions.buffer, normals.buffer, indices.buffer, transform.buffer, expressIds.buffer);
+      }
+
+      (self as any).postMessage(
+        { type: 'geometryResult', id, payloads: payloads.length > 0 ? payloads : null },
+        transfers
+      );
+      scheduleKeepAlive(keepAliveMs);
+    } catch (e) {
+      (self as any).postMessage({ type: 'geometryResult', id, payloads: null, error: String(e) });
+    }
+    return;
+  }
+
   if (type === 'parse' && buffer) {
     try {
       const ifcApi = new WebIFC.IfcAPI();
@@ -1243,10 +1370,6 @@ self.onmessage = async (event: MessageEvent<GeometryWorkerMessage>) => {
         }
       }
 
-      const meshes: MeshPayload[] = [];
-      const transfers: Transferable[] = [];
-      const transferSet = new Set<ArrayBuffer>();
-
       // Cache for IFC lines to avoid redundant GetLine calls
       const lineCache = new Map<number, any>();
 
@@ -1258,39 +1381,45 @@ self.onmessage = async (event: MessageEvent<GeometryWorkerMessage>) => {
         return line;
       };
 
-      // Build element color map from styled items before processing geometries
-      console.log('[Worker] Building element color map from styled items...');
-      try {
-        const colorMapResult = buildElementColorMap(ifcApi, modelId, lineCache);
-        _elementColorMapGlobal = colorMapResult.colorMap;
-        _geometryToProductGlobal = colorMapResult.geometryToProduct;
-        if (_elementColorMapGlobal && _elementColorMapGlobal.size > 0) {
-          console.log(`[Worker] Color map built with ${_elementColorMapGlobal.size} entries`);
-        } else {
-          console.log('[Worker] Color map empty or no styled items found - will use type colors');
-        }
-      } catch (e) {
-        console.warn('[Worker] Error building color map:', e);
-        _elementColorMapGlobal = null;
-        _geometryToProductGlobal = null;
-      }
+      // Skip manual IfcStyledItem scan — geometry.color from web-ifc is already fully
+      // resolved. buildElementColorMap
+      // was the primary loading bottleneck: it scanned every product entity before
+      // StreamAllMeshes could start, causing a 2–10 s blank screen. Removing it lets
+      // geometry stream appear within the first render frame.
+      _elementColorMapGlobal = null;
+      _geometryToProductGlobal = null;
 
+      // Types to skip during streaming — openings are boolean-subtraction voids, spaces
+      // have expensive boolean topology (adds 10-15s for a typical model) and are handled
+      // on-demand via getGeometry when a space node is selected in the graph.
+      const SKIP_TYPES = new Set(['IFCOPENINGELEMENT', 'IFCSPACE', 'IFCSPACESTANDARDCASE', 'IFCVIRTUALELEMENT']);
+
+      // Geometry cache: reuse extracted vertex data when the same geometry shape appears on multiple products
       const geometryCache = new Map<number, { positions: Float32Array; normals: Float32Array; indices: Uint32Array }>();
-      const groups = new Map<string, {
-        geometryId: number;
-        positions: Float32Array;
-        normals: Float32Array;
-        indices: Uint32Array;
-        color: number;
-        opacity: number;
-        ifcType: string;
-        transforms: number[];
-        expressIds: number[];
-        colorSource?: number | null;
-        colorRgbObj?: any;
-      }>();
 
+      // Progressive streaming: emit payloads INSIDE StreamAllMeshes callback so the viewer
+      // starts rendering immediately rather than waiting for the entire model to be parsed.
+      const BATCH_GROUP_SIZE = 5;  // tiny first batch — first content on screen fast
+      const BATCH_BYTE_SIZE = 8 * 1024 * 1024; // 8 MB per message
+      let processedGroupCount = 0;
+      let batchBytes = 0;
+      let batchMeshes: MeshPayload[] = [];
+      let batchTransfers: ArrayBuffer[] = [];
+      let dynamicBatchSize = BATCH_GROUP_SIZE;
 
+      const flushBatch = () => {
+        if (batchMeshes.length === 0) return;
+        const response: GeometryWorkerResponse = {
+          type: 'batch',
+          meshes: batchMeshes,
+          processedGroups: processedGroupCount,
+          totalGroups: 0,
+        };
+        (self as any).postMessage(response, batchTransfers);
+        batchMeshes = [];
+        batchTransfers = [];
+        batchBytes = 0;
+      };
 
       ifcApi.StreamAllMeshes(modelId, (flatMesh: WebIFC.FlatMesh) => {
         const expressId = flatMesh.expressID;
@@ -1305,7 +1434,8 @@ self.onmessage = async (event: MessageEvent<GeometryWorkerMessage>) => {
           // ignore
         }
 
-        // We'll lookup parentId per-geometry below when available; prefer color attached via styled items
+        // Skip void/space elements that should not be rendered
+        if (SKIP_TYPES.has(typeName)) return;
 
         for (let i = 0; i < flatMesh.geometries.size(); i++) {
           const geometry = flatMesh.geometries.get(i);
@@ -1345,154 +1475,169 @@ self.onmessage = async (event: MessageEvent<GeometryWorkerMessage>) => {
             geometryData.delete();
           }
 
-          const transform = Array.from({ length: 16 }, (_, j) => {
+          // Build column-major transform matrix for this instance
+          const transform = new Float32Array(16);
+          for (let j = 0; j < 16; j++) {
             const val = Array.isArray(geometry.flatTransformation)
               ? geometry.flatTransformation[j]
               : (geometry.flatTransformation as any)?.get?.(j) ?? 0;
-            return typeof val === 'number' ? val : 0;
-          });
+            transform[j] = typeof val === 'number' ? val : 0;
+          }
 
-          // Color extraction priority: StyledItem > IFC Material > Type Color
-          let usedColor = 0xcccccc; // Start with neutral gray
+          // ── Color extraction ──────────────────────────────────────────────────
+          // PRIORITY 1: web-ifc's built-in geometry.color — most reliable because
+          //             web-ifc already resolves all IfcSurfaceStyle associations
+          //             internally when building PlacedGeometry.
+          let usedColor = 0xcccccc;
           let usedOpacity = 1.0;
-          let colorSource: number | null = null;
           let colorRgbObj: any = null;
           let colorExtractedFrom = 'fallback';
 
-          // PRIORITY 1: Try to get styled color (most specific)
           try {
-            const styledColor = getEffectiveSurfaceColor(ifcApi, modelId, expressId);
-            if (styledColor && styledColor.colorRgb) {
-              const rgb = styledColor.colorRgb;
-              // Convert back to hex for grouping consistency
-              const r = Math.round(rgb.r * 255);
-              const g = Math.round(rgb.g * 255);
-              const b = Math.round(rgb.b * 255);
-              usedColor = (r << 16) | (g << 8) | b;
-              usedOpacity = rgb.a ?? 1.0;
-              colorRgbObj = rgb;
-              colorSource = styledColor.appliesTo;
-              colorExtractedFrom = 'IfcStyledItem';
+            const mc = geometry.color;
+            if (mc && typeof mc.x === 'number' && typeof mc.y === 'number' && typeof mc.z === 'number') {
+              const r = Math.min(1, Math.max(0, mc.x));
+              const g = Math.min(1, Math.max(0, mc.y));
+              const b = Math.min(1, Math.max(0, mc.z));
+              const a = typeof mc.w === 'number' ? Math.min(1, Math.max(0, mc.w)) : 1.0;
+              usedColor = (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+              usedOpacity = a;
+              colorRgbObj = { r, g, b, a };
+              colorExtractedFrom = 'geometry.color';
             }
-          } catch (e) {
-            // Continue to next priority
+          } catch {
+            // ignore
           }
 
-          // PRIORITY 2: If no styled color, try comprehensive IFC material extraction
-          if (colorExtractedFrom === 'fallback' || usedOpacity === 1.0) {
-            try {
-              const ifcMaterialData = extractColorAndTransparencyFromIFC(ifcApi, modelId, expressId, lineCache);
-              
-              // Use color if we didn't find a styled color
-              if (colorExtractedFrom === 'fallback' && ifcMaterialData.color !== null) {
-                usedColor = ifcMaterialData.color;
-                colorExtractedFrom = ifcMaterialData.source;
-              }
-              
-              // Use transparency if found (overrides default opacity of 1.0)
-              if (ifcMaterialData.transparency > 0) {
-                usedOpacity = 1.0 - ifcMaterialData.transparency;
-              }
-            } catch (e) {
-              // Continue to fallback
-            }
-          }
-
-          // PRIORITY 3: Fall back to type color ONLY if nothing found in IFC data
+          // PRIORITY 2: per-type hardcoded fallback
           if (colorExtractedFrom === 'fallback') {
             usedColor = typeColors[typeName] ?? 0xb3b3b3;
-          }
-
-          const key = `${geometry.geometryExpressID}`;
-          let group = groups.get(key);
-          if (!group) {
-            group = {
-              geometryId: geometry.geometryExpressID,
-              positions: cached.positions,
-              normals: cached.normals,
-              indices: cached.indices,
-              color: usedColor,
-              opacity: usedOpacity,
-              ifcType: typeName,
-              transforms: [],
-              expressIds: [],
-              colorSource,
-              colorRgbObj: colorRgbObj,
+            const hex = usedColor >>> 0;
+            colorRgbObj = {
+              r: ((hex >> 16) & 0xff) / 255,
+              g: ((hex >> 8) & 0xff) / 255,
+              b: (hex & 0xff) / 255,
+              a: 1.0,
             };
-            groups.set(key, group);
+          }
+          // ─────────────────────────────────────────────────────────────────────
+
+          // ── Post-extraction overrides ─────────────────────────────────────────
+          // 1. Window glass: many IFC files set alpha=1 on window glass geometries
+          //    even though they should be translucent. Enforce a sensible default so
+          //    the viewer treats them as glass (opacity < 0.85 triggers glass path).
+          if (
+            (typeName === 'IFCWINDOW' || typeName === 'IFCWINDOWSTANDARDCASE') &&
+            usedOpacity >= 0.85
+          ) {
+            usedOpacity = 0.35;
+            if (colorRgbObj) colorRgbObj = { ...colorRgbObj, a: 0.35 };
           }
 
-          group.transforms.push(...transform);
-          group.expressIds.push(expressId);
+          // 2. Luminance floor: geometry.color can return near-black for elements
+          //    whose IFC surface style defaults to black (common for door/MEP families).
+          //    When nearly invisible, fall back to the per-type palette so the element
+          //    at least gets a recognisable colour.
+          if (colorExtractedFrom === 'geometry.color' && colorRgbObj) {
+            const lum = colorRgbObj.r * 0.299 + colorRgbObj.g * 0.587 + colorRgbObj.b * 0.114;
+            if (lum < 0.04) {
+              usedColor = typeColors[typeName] ?? 0xb3b3b3;
+              const hex = usedColor >>> 0;
+              colorRgbObj = {
+                r: ((hex >> 16) & 0xff) / 255,
+                g: ((hex >> 8) & 0xff) / 255,
+                b: (hex & 0xff) / 255,
+                a: usedOpacity,
+              };
+            }
+          }
+          // ─────────────────────────────────────────────────────────────────────
+
+          // Emit one payload per geometry occurrence (instanceCount=1).
+          // Cloning ensures the buffer can be transferred without detaching the cache entry.
+          const positions = cached.positions.slice();
+          const normals   = cached.normals.slice();
+          const indices   = cached.indices.slice();
+
+          // Pre-apply world-space transform so the viewer can merge payloads without
+          // per-mesh matrix multiplication.
+          // transform is column-major 4×4: column j starts at index j*4.
+          {
+            const m = transform;
+            // Transform positions: P' = M * [x, y, z, 1]
+            for (let p = 0; p < positions.length; p += 3) {
+              const x = positions[p], y = positions[p + 1], z = positions[p + 2];
+              positions[p]     = m[0]*x + m[4]*y + m[8]*z  + m[12];
+              positions[p + 1] = m[1]*x + m[5]*y + m[9]*z  + m[13];
+              positions[p + 2] = m[2]*x + m[6]*y + m[10]*z + m[14];
+            }
+            // Transform normals: N' = upper-left 3×3 of M, then renormalize
+            for (let p = 0; p < normals.length; p += 3) {
+              const nx = normals[p], ny = normals[p + 1], nz = normals[p + 2];
+              let rx = m[0]*nx + m[4]*ny + m[8]*nz;
+              let ry = m[1]*nx + m[5]*ny + m[9]*nz;
+              let rz = m[2]*nx + m[6]*ny + m[10]*nz;
+              const len = Math.sqrt(rx*rx + ry*ry + rz*rz);
+              if (len > 1e-6) { rx /= len; ry /= len; rz /= len; }
+              normals[p] = rx; normals[p + 1] = ry; normals[p + 2] = rz;
+            }
+          }
+          const expressIds = new Int32Array([expressId]);
+
+          const payload: MeshPayload = {
+            positions,
+            normals,
+            indices,
+            color:         usedColor,
+            opacity:       usedOpacity,
+            colorRgb:      colorRgbObj,
+            transforms:    transform,
+            expressIds,
+            ifcType:       typeName,
+            instanceCount: 1,
+            geometryId:    geometry.geometryExpressID,
+            colorSource:   colorExtractedFrom !== 'fallback' ? expressId : null,
+            worldSpace:    true,
+          };
+
+          batchMeshes.push(payload);
+          batchTransfers.push(
+            positions.buffer  as ArrayBuffer,
+            normals.buffer    as ArrayBuffer,
+            indices.buffer    as ArrayBuffer,
+            transform.buffer  as ArrayBuffer,
+            expressIds.buffer as ArrayBuffer,
+          );
+          batchBytes += positions.byteLength + normals.byteLength + indices.byteLength +
+                        transform.byteLength + expressIds.byteLength;
+          processedGroupCount++;
+
+          // Flush when the batch reaches size or byte limits; ramp up batch size
+          // progressively to reduce IPC overhead on large models.
+          if (batchMeshes.length >= dynamicBatchSize || batchBytes >= BATCH_BYTE_SIZE) {
+            flushBatch();
+            if (processedGroupCount > 100) dynamicBatchSize = 100;
+            if (processedGroupCount > 500) dynamicBatchSize = 300;
+          }
         }
       });
 
-      groups.forEach((group: any) => {
-        const transforms = new Float32Array(group.transforms);
-        const expressIds = new Int32Array(group.expressIds);
+      // Final flush of any payloads accumulated at the end of StreamAllMeshes
+      flushBatch();
 
-        // Use the extracted colorRgbObj if available, otherwise derive from hex color
-        let finalColorRgb = group.colorRgbObj;
-        if (!finalColorRgb) {
-          const hex = group.color >>> 0;
-          const rr = ((hex >> 16) & 0xff) / 255;
-          const gg = ((hex >> 8) & 0xff) / 255;
-          const bb = (hex & 0xff) / 255;
-          const aa = typeof group.opacity === 'number' ? group.opacity : 1.0;
-          finalColorRgb = { r: rr, g: gg, b: bb, a: aa };
-        }
+      console.log(`[Worker] Processed ${processedGroupCount} geometry instances (streaming)`);
 
-        meshes.push({
-          positions: group.positions,
-          normals: group.normals,
-          indices: group.indices,
-          color: group.color,
-          opacity: group.opacity,
-          colorRgb: finalColorRgb,
-          transforms,
-          expressIds,
-          ifcType: group.ifcType,
-          instanceCount: expressIds.length,
-          geometryId: group.geometryId,
-          colorSource: group.colorSource ?? null,
-        });
-
-        transfers.push(
-          group.positions.buffer as ArrayBuffer,
-          group.normals.buffer as ArrayBuffer,
-          group.indices.buffer as ArrayBuffer,
-          transforms.buffer as ArrayBuffer,
-          expressIds.buffer as ArrayBuffer
-        );
-
-        // Ensure unique buffers for transfer
-        transferSet.add(group.positions.buffer as ArrayBuffer);
-        transferSet.add(group.normals.buffer as ArrayBuffer);
-        transferSet.add(group.indices.buffer as ArrayBuffer);
-        transferSet.add(transforms.buffer as ArrayBuffer);
-        transferSet.add(expressIds.buffer as ArrayBuffer);
-      });
-
-      let styledColorsFound = 0;
-      groups.forEach(g => { if (g.colorSource) styledColorsFound++; });
-      console.log(`[Worker] Processed ${groups.size} unique geometry groups, ${meshes.length} mesh payloads (${styledColorsFound} with styled colors)`);
-
-      // Clear intermediate data structures to reduce memory
+      // Release cached vertex data to free memory
       geometryCache.clear();
       lineCache.clear();
-      groups.clear();
-      transferSet.clear();
 
       const response: GeometryWorkerResponse = {
         type: 'complete',
-        meshes,
+        processedGroups: processedGroupCount,
+        totalGroups: processedGroupCount,
       };
 
-      // Use unique buffers for transfer
-      transfers.length = 0;
-      transfers.push(...transferSet);
-
-      (self as any).postMessage(response, transfers);
+      (self as any).postMessage(response);
 
       // If the caller didn't request to keep the model loaded for interactive inspection,
       // free web-ifc resources now to prevent memory growth in long-running sessions.

@@ -233,6 +233,8 @@ export type ParseProgressCallback = (progress: {
   stage: 'loading' | 'parsing' | 'processing' | 'validating' | 'complete';
   percentage: number;
   message: string;
+  entitiesProcessed?: number;
+  totalEntities?: number;
 }) => void;
 
 /**
@@ -600,12 +602,11 @@ export async function parseIFCFile(
   const entityLoopStart = performance.now();
 
   try {
-    // Parse ALL entity types to get complete 1:1 representation of IFC file
-    // Geometry filtering happens in graph building, not in the parser
-    // This ensures IFC Browser shows all entities exactly as in the file
+    // Parse semantic entity types only; geometry stubs are rebuilt from rawStepLines
+    // (avoids hundreds of thousands of WASM GetLine() calls for geometry primitives)
     const relevantTypes = allTypes;
 
-    console.log(`[Parser] Processing: ${allTypes.length} types (including geometry for IFC Browser)`);
+    console.log(`[Parser] Processing: ${allTypes.length} types (geometry skipped — stubs built via BFS in worker)`);
 
     // OPTIMIZATION 1: Use Set for O(1) property lookup instead of O(n) array iteration
     const ESSENTIAL_PROPERTIES_SET = new Set([
@@ -632,11 +633,6 @@ export async function parseIFCFile(
       'FlowDirection', 'FlowCondition', // IFCDISTRIBUTIONPORT MEP attributes
     ]);
 
-    // OPTIMIZATION 2: Minimal properties for geometry entities (much faster extraction)
-    const GEOMETRY_MINIMAL_PROPERTIES_SET = new Set([
-      'Name', 'name', 'type', 'expressID'
-    ]);
-
     const typeCount = relevantTypes.length;
 
     for (let typeIdx = 0; typeIdx < typeCount; typeIdx++) {
@@ -646,6 +642,15 @@ export async function parseIFCFile(
 
       // NOTE: IFCREL* types are parsed to create LPG relationship nodes in the graph.
       // The GraphBuilder uses these as intermediate nodes for edge creation.
+
+      // FAST PATH: Skip geometry types entirely — their expressIDs and STEP text
+      // are already available in rawStepLines. Calling GetLine() for hundreds of
+      // thousands of geometry primitives (cartesian points, faces, extrusions, etc.)
+      // is the dominant cost for large files. We reconstruct minimal stubs after
+      // the semantic loop using the already-extracted rawStepLines map.
+      if (isGeometryType(typeName)) {
+        continue;
+      }
 
       // Report progress — yield every 20 types (balance between GC opportunity and delay)
       if (typeIdx % 20 === 0) {
@@ -663,8 +668,6 @@ export async function parseIFCFile(
 
       // OPTIMIZATION: Hoist per-type computations out of inner entity loop
       // These are constant for all entities of the same type
-      const isGeometry = isGeometryType(typeName);
-      const propertiesSet = isGeometry ? GEOMETRY_MINIMAL_PROPERTIES_SET : ESSENTIAL_PROPERTIES_SET;
       const schemaDef = getEntityDef(typeName);
       let nodeTypeFromSchema: NodeType = 'element';
       if (schemaDef) {
@@ -690,7 +693,7 @@ export async function parseIFCFile(
           // --- PROPERTY EXTRACTION START ---
           const properties: Record<string, any> = {};
 
-          for (const key of propertiesSet) {
+          for (const key of ESSENTIAL_PROPERTIES_SET) {
             const value = entity[key as keyof typeof entity];
             if (value === null || value === undefined) continue;
 
@@ -724,12 +727,7 @@ export async function parseIFCFile(
             expressId,
           };
 
-          // Separate geometry entities from semantic entities
-          if (isGeometry) {
-            geometryEntities.push(node);
-          } else {
-            allEntities.push(node);
-          }
+          allEntities.push(node);
           nodeMap.set(expressId, node);
         } catch (e) { /* skip */ }
       }
@@ -740,6 +738,12 @@ export async function parseIFCFile(
         lineCache.clear();
       }
     }
+
+    // NOTE: geometryEntities are NOT reconstructed here.
+    // The parser intentionally skips geometry types to avoid O(N) WASM GetLine()
+    // calls for hundreds-of-thousands of math primitives (CartesianPoint, Face, etc.).
+    // Geometry stubs are built in ifcParserWorker via BFS over rawStepLines,
+    // covering all entities transitively reachable from semantic STEP lines.
   } catch (err) {
     console.error('Fatal error in entity loop:', err);
   }

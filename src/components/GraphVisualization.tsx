@@ -345,12 +345,28 @@ export function GraphVisualization({
     const normaliseId = (val: any): string =>
       typeof val === 'string' ? val : String((val as any)?.id ?? val);
     const nodes = finalFilteredData.nodes.filter(n => isolatedNodeIds.has(n.id));
+    // Guard: if the selected node is not in the current graph view (e.g. a geometry or
+    // property stub was clicked in the IFC Browser while isolation was already active),
+    // the subgraph would be empty and d3 would receive 0 nodes — causing a null crash.
+    // Fall back to the full filtered graph; the cleanup effect below will exit isolation.
+    if (nodes.length === 0) return finalFilteredData;
     const nodeSet = new Set(nodes.map(n => n.id));
     const edges = finalFilteredData.edges.filter(e =>
       nodeSet.has(normaliseId(e.source)) && nodeSet.has(normaliseId(e.target))
     );
     return { nodes, edges };
   }, [isolationMode, isolatedNodeIds, finalFilteredData]);
+
+  // Exit isolation mode when the newly-selected node is not part of the graph view.
+  // This happens when the user clicks a geometry/property stub in the IFC Browser
+  // while isolation is already active — the subgraph would be empty otherwise.
+  useEffect(() => {
+    if (!isolationMode || !selectedNodeId) return;
+    const nodeInGraph = finalFilteredData.nodes.some(n => n.id === selectedNodeId);
+    if (!nodeInGraph) {
+      setIsolationMode(false);
+    }
+  }, [isolationMode, selectedNodeId, finalFilteredData.nodes]);
 
   // Update stats when data changes
   useEffect(() => {
@@ -500,13 +516,31 @@ export function GraphVisualization({
     }
   }, [onNodeClick]);
 
+  const canIsolate = useMemo(() => {
+    if (!selectedNodeId) return false;
+    // Node must be in the current graph view (geometry/property stubs are in IFC Browser
+    // but not in graphData.nodes, so isolation would produce an empty subgraph)
+    if (!finalFilteredData.nodes.some(n => n.id === selectedNodeId)) return false;
+    // Node must have at least one edge; an isolated node produces a 0-edge subgraph
+    // that destabilises the d3 simulation and causes a null-reference crash
+    const normalise = (v: any): string =>
+      typeof v === 'string' ? v : String((v as any)?.id ?? v);
+    return finalFilteredData.edges.some(
+      e => normalise(e.source) === selectedNodeId || normalise(e.target) === selectedNodeId
+    );
+  }, [selectedNodeId, finalFilteredData.nodes, finalFilteredData.edges]);
+
   const handleIsolate = useCallback(() => {
+    if (!canIsolate) {
+      toast.info('This node has no connections in the graph — nothing to isolate');
+      return;
+    }
     setShowPathToRoot(false);
     setPathToRootIds(new Set());
     setFocusedNodeId(null);
     setConnectedNodeIds(new Set());
     setIsolationMode(true);
-  }, []);
+  }, [canIsolate]);
 
   const findNearestNode = useCallback((x: number, y: number, maxDist: number) => {
     let nearest: GraphNode | null = null;
@@ -895,10 +929,12 @@ export function GraphVisualization({
       );
       const isDimmedEdge = isFocusMode && !isConnectedEdge;
 
-      const sourceX = (link.source as any).x || 0;
-      const sourceY = (link.source as any).y || 0;
-      const targetX = (link.target as any).x || 0;
-      const targetY = (link.target as any).y || 0;
+      // Guard: d3 can transiently null source/target during graph data transitions
+      if (!link.source || !link.target) return;
+      const sourceX = (link.source as any).x ?? 0;
+      const sourceY = (link.source as any).y ?? 0;
+      const targetX = (link.target as any).x ?? 0;
+      const targetY = (link.target as any).y ?? 0;
 
       // Check if edge involves metadata
       const isMetadataEdge = (sourceNode.isMetadata || targetNode.isMetadata) || false;
@@ -1562,8 +1598,15 @@ export function GraphVisualization({
           <>
             <button
               onClick={handleIsolate}
-              className="px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors shadow-lg"
-              title="Show only this node's neighborhood"
+              disabled={!canIsolate}
+              className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors shadow-lg ${
+                canIsolate
+                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  : 'bg-violet-600/40 text-white/50 cursor-not-allowed'
+              }`}
+              title={canIsolate
+                ? "Show only this node's neighborhood"
+                : "Node has no connections in this graph view"}
             >
               Isolate
             </button>
@@ -1773,7 +1816,11 @@ export function GraphVisualization({
             </div>
 
             <button
-              className="w-full text-left px-3 py-1.5 hover:bg-violet-600/10 text-violet-400 hover:text-violet-300 transition-colors"
+              className={`w-full text-left px-3 py-1.5 transition-colors ${
+                canIsolate
+                  ? 'hover:bg-violet-600/10 text-violet-400 hover:text-violet-300'
+                  : 'text-muted-foreground/40 cursor-not-allowed'
+              }`}
               onClick={() => { handleIsolate(); closeContextMenu(); }}
             >
               Isolate Neighborhood

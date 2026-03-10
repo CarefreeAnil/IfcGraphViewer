@@ -78,6 +78,13 @@ export interface ParsedIFCData {
     isIFC5?: boolean; // Flag to indicate IFC5 format
   };
   validation?: ValidationResult;
+  /**
+   * PROJECT UNIT MAP: SI unit symbols keyed by IFC unit type.
+   * Parsed from IFCSIUNIT entries in the project's IFCUNITASSIGNMENT.
+   * Example: { LENGTHUNIT: 'mm', AREAUNIT: 'm²', VOLUMEUNIT: 'm³' }
+   * Available to any consumer that needs to display dimensioned values.
+   */
+  projectUnits?: Record<string, string>;
   rawData?: {
     composedObject?: ComposedObject; // IFC5 composed object for 3D rendering
     ifc5File?: IFC5File; // IFC5 file structure
