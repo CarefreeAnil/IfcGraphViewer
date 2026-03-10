@@ -37,7 +37,8 @@ import { isGeometryType } from '@/lib/ifcParser';
 export function createGraphDataFromEntities(
   allEntities: GraphNode[],
   parsedEdges: GraphEdge[] = [],
-  rawStepLines?: Map<number, string>
+  rawStepLines?: Map<number, string>,
+  projectUnits: Record<string, string> = {}
 ): { nodes: GraphNode[], edges: GraphEdge[] } {
   console.log('[GraphBuilder] Creating graph data:', {
     entitiesCount: allEntities.length,
@@ -73,7 +74,7 @@ export function createGraphDataFromEntities(
 
   // Attach Property Sets using raw string parsing (Lightning fast, ~5ms for 2.5MB)
   if (rawStepLines) {
-    attachPropertySets(graphNodes, rawStepLines);
+    attachPropertySets(graphNodes, rawStepLines, projectUnits);
   }
 
   // Use pre-computed edges from parser if available, otherwise extract from properties
@@ -446,7 +447,22 @@ export function createGraphDataFromEntities(
  * Extracts property sets directly from raw STEP lines and attaches them natively to node.properties.
  * This runs in O(N) using raw string parsing, preventing memory bloat from instantiating WebIFC objects.
  */
-function attachPropertySets(nodes: GraphNode[], rawStepLines: Map<number, string>) {
+
+// Maps IFCQUANTITY* entity type → unit type key from projectUnits.
+// Static — does not depend on any specific IFC file.
+const QUANTITY_UNIT_TYPE: Record<string, string> = {
+  IFCQUANTITYLENGTH: 'LENGTHUNIT',
+  IFCQUANTITYAREA:   'AREAUNIT',
+  IFCQUANTITYVOLUME: 'VOLUMEUNIT',
+  IFCQUANTITYWEIGHT: 'MASSUNIT',
+  IFCQUANTITYTIME:   'TIMEUNIT',
+};
+
+function attachPropertySets(
+  nodes: GraphNode[],
+  rawStepLines: Map<number, string>,
+  projectUnits: Record<string, string> = {}
+) {
   console.log('[GraphBuilder] Extracting property sets from raw strings...');
   const start = performance.now();
 
@@ -568,6 +584,18 @@ function attachPropertySets(nodes: GraphNode[], rawStepLines: Map<number, string
           }
 
           propertiesObj[propName] = val;
+
+          // Annotate numeric quantity values with the project unit symbol.
+          // IFCPROPERTYSINGLEVALUE values are unitless here; only IFCQUANTITY*
+          // types map to the project's IFCUNITASSIGNMENT (provided as projectUnits).
+          if (typeof val === 'number' && propLine.includes('IFCQUANTITY')) {
+            const qtypeMatch = propLine.match(/IFCQUANTITY([A-Z]+)/);
+            if (qtypeMatch) {
+              const unitKey = QUANTITY_UNIT_TYPE[`IFCQUANTITY${qtypeMatch[1]}`];
+              const symbol  = unitKey ? projectUnits[unitKey] : undefined;
+              if (symbol) propertiesObj[propName] = `${val} ${symbol}`;
+            }
+          }
         }
       }
     }
