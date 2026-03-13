@@ -26,7 +26,7 @@ export interface IfcEntityDef {
   category: 'spatial' | 'element' | 'structural' | 'property' | 'relationship' | 'other';
   icon: string;
   color: string;
-  properties: IfcPropertyDef[];
+  properties?: IfcPropertyDef[];
   validChildren?: string[];
   validParents?: string[];
   relationships?: IfcRelationshipDef[];
@@ -74,7 +74,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
       {
         name: 'REQUIRED_PROJECT_CONTEXT',
         description: 'Project must have at least one representation context',
-        check: (entity: any, allEntities: any[]) => {
+        check: (entity: any, _allEntities: any[]) => {
           return entity.properties?.RepresentationContexts?.length > 0 || !entity.properties?.RepresentationContexts;
         },
       },
@@ -153,7 +153,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
       {
         name: 'BUILDING_HAS_STOREYS',
         description: 'Building should contain at least one storey (warning if missing)',
-        check: (entity: any, allEntities: any[]) => true, // Checked separately in validator
+        check: (_entity: any, _allEntities: any[]) => true, // Checked separately in validator
       },
     ],
   },
@@ -192,7 +192,7 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
       {
         name: 'STOREY_ELEVATION_ORDER',
         description: 'Storey elevations should be in logical order',
-        check: (entity: any, allEntities: any[]) => true,
+        check: (_entity: any, _allEntities: any[]) => true,
       },
     ],
   },
@@ -841,6 +841,470 @@ export const IFC_SCHEMA: Record<string, IfcEntityDef> = {
       { name: 'LayerThickness', type: 'number', required: true, description: 'Layer thickness' },
       { name: 'IsVentilated', type: 'boolean', required: false, description: 'Is ventilated' },
     ],
+  },
+
+  // === OWNERSHIP / ACTOR ENTITIES ===
+
+  IFCOWNERHISTORY: {
+    type: 'IFCOWNERHISTORY',
+    displayName: 'Owner History',
+    description: 'Tracks the ownership and change history of an IFC entity',
+    category: 'other',
+    icon: 'clock',
+    color: '#6b7280',
+  },
+
+  IFCPERSON: {
+    type: 'IFCPERSON',
+    displayName: 'Person',
+    description: 'Represents an individual person involved with the project',
+    category: 'other',
+    icon: 'user',
+    color: '#6b7280',
+  },
+
+  IFCORGANIZATION: {
+    type: 'IFCORGANIZATION',
+    displayName: 'Organization',
+    description: 'Represents a company or organisation involved with the project',
+    category: 'other',
+    icon: 'building',
+    color: '#6b7280',
+  },
+
+  IFCPERSONANDORGANIZATION: {
+    type: 'IFCPERSONANDORGANIZATION',
+    displayName: 'Person And Organization',
+    description: 'Combines a person and the organisation they act for',
+    category: 'other',
+    icon: 'users',
+    color: '#6b7280',
+  },
+
+  IFCAPPLICATION: {
+    type: 'IFCAPPLICATION',
+    displayName: 'Application',
+    description: 'Identifies the software application used to create or modify IFC data',
+    category: 'other',
+    icon: 'cpu',
+    color: '#6b7280',
+  },
+
+  IFCACTORROLE: {
+    type: 'IFCACTORROLE',
+    displayName: 'Actor Role',
+    description: 'Defines the role of a person or organisation in the project',
+    category: 'other',
+    icon: 'tag',
+    color: '#6b7280',
+  },
+
+  IFCPOSTALADDRESS: {
+    type: 'IFCPOSTALADDRESS',
+    displayName: 'Postal Address',
+    description: 'Physical mailing address of a person or organisation',
+    category: 'other',
+    icon: 'map-pin',
+    color: '#6b7280',
+  },
+
+  IFCTELECOMADDRESS: {
+    type: 'IFCTELECOMADDRESS',
+    displayName: 'Telecom Address',
+    description: 'Electronic / telecommunications contact details',
+    category: 'other',
+    icon: 'phone',
+    color: '#6b7280',
+  },
+
+  // === GEOMETRY ENTITIES ===
+
+  IFCCARTESIANPOINT: {
+    type: 'IFCCARTESIANPOINT',
+    displayName: 'Cartesian Point',
+    description: 'A point defined by coordinates in a Cartesian coordinate system',
+    category: 'other',
+    icon: 'crosshair',
+    color: '#10b981',
+  },
+
+  IFCDIRECTION: {
+    type: 'IFCDIRECTION',
+    displayName: 'Direction',
+    description: 'A unit vector defined by direction ratios',
+    category: 'other',
+    icon: 'arrow-up-right',
+    color: '#10b981',
+  },
+
+  IFCAXIS2PLACEMENT3D: {
+    type: 'IFCAXIS2PLACEMENT3D',
+    displayName: 'Axis2Placement3D',
+    description: '3-D coordinate system defined by an origin and two orthogonal axes',
+    category: 'other',
+    icon: 'axes-3d',
+    color: '#10b981',
+  },
+
+  IFCAXIS2PLACEMENT2D: {
+    type: 'IFCAXIS2PLACEMENT2D',
+    displayName: 'Axis2Placement2D',
+    description: '2-D coordinate system defined by an origin and a reference direction',
+    category: 'other',
+    icon: 'crosshair',
+    color: '#10b981',
+  },
+
+  IFCLOCALPLACEMENT: {
+    type: 'IFCLOCALPLACEMENT',
+    displayName: 'Local Placement',
+    description: 'Defines a local object coordinate system relative to a parent placement',
+    category: 'other',
+    icon: 'locate',
+    color: '#10b981',
+  },
+
+  IFCGEOMETRICREPRESENTATIONCONTEXT: {
+    type: 'IFCGEOMETRICREPRESENTATIONCONTEXT',
+    displayName: 'Geometric Representation Context',
+    description: 'Defines the coordinate system and precision for geometric representations',
+    category: 'other',
+    icon: 'globe',
+    color: '#10b981',
+  },
+
+  IFCGEOMETRICREPRESENTATIONSUBCONTEXT: {
+    type: 'IFCGEOMETRICREPRESENTATIONSUBCONTEXT',
+    displayName: 'Geometric Representation Subcontext',
+    description: 'A sub-context of a geometric representation context for a specific view or scale',
+    category: 'other',
+    icon: 'globe',
+    color: '#10b981',
+  },
+
+  IFCPRODUCTDEFINITIONSHAPE: {
+    type: 'IFCPRODUCTDEFINITIONSHAPE',
+    displayName: 'Product Definition Shape',
+    description: 'Container holding all geometric representations of a product',
+    category: 'other',
+    icon: 'box',
+    color: '#10b981',
+  },
+
+  IFCSHAPEREPRESENTATION: {
+    type: 'IFCSHAPEREPRESENTATION',
+    displayName: 'Shape Representation',
+    description: 'A specific geometric representation of a product within a context',
+    category: 'other',
+    icon: 'box',
+    color: '#10b981',
+  },
+
+  // === PROFILE / SOLID GEOMETRY ===
+
+  IFCRECTANGLEPROFILEDEF: {
+    type: 'IFCRECTANGLEPROFILEDEF',
+    displayName: 'Rectangle Profile Def',
+    description: 'Defines a rectangular cross-section profile',
+    category: 'other',
+    icon: 'square',
+    color: '#10b981',
+  },
+
+  IFCCIRCLEPROFILEDEF: {
+    type: 'IFCCIRCLEPROFILEDEF',
+    displayName: 'Circle Profile Def',
+    description: 'Defines a circular cross-section profile',
+    category: 'other',
+    icon: 'circle',
+    color: '#10b981',
+  },
+
+  IFCISHAPEPROFILEDEF: {
+    type: 'IFCISHAPEPROFILEDEF',
+    displayName: 'I-Shape Profile Def',
+    description: 'Defines an I-shape (H-beam) structural cross-section profile',
+    category: 'other',
+    icon: 'minus',
+    color: '#10b981',
+  },
+
+  IFCEXTRUDEDAREASOLID: {
+    type: 'IFCEXTRUDEDAREASOLID',
+    displayName: 'Extruded Area Solid',
+    description: 'A solid created by extruding a profile along a direction',
+    category: 'other',
+    icon: 'box',
+    color: '#10b981',
+  },
+
+  IFCREVOLVEAREASOLID: {
+    type: 'IFCREVOLVEAREASOLID',
+    displayName: 'Revolve Area Solid',
+    description: 'A solid created by revolving a profile around an axis',
+    category: 'other',
+    icon: 'refresh-cw',
+    color: '#10b981',
+  },
+
+  IFCBOOLEANCLIPPINGRESULT: {
+    type: 'IFCBOOLEANCLIPPINGRESULT',
+    displayName: 'Boolean Clipping Result',
+    description: 'Solid resulting from a Boolean clipping operation (e.g. cutting a wall with an opening)',
+    category: 'other',
+    icon: 'scissors',
+    color: '#10b981',
+  },
+
+  IFCHALFSPACESOLID: {
+    type: 'IFCHALFSPACESOLID',
+    displayName: 'Half Space Solid',
+    description: 'An infinite solid bounded by a plane (used in Boolean clipping)',
+    category: 'other',
+    icon: 'divide',
+    color: '#10b981',
+  },
+
+  IFCPOLYLINE: {
+    type: 'IFCPOLYLINE',
+    displayName: 'Polyline',
+    description: 'A curve defined by a sequence of connected straight line segments',
+    category: 'other',
+    icon: 'git-commit-horizontal',
+    color: '#10b981',
+  },
+
+  IFCCOMPOSITECURVE: {
+    type: 'IFCCOMPOSITECURVE',
+    displayName: 'Composite Curve',
+    description: 'A curve composed of one or more connected curve segments',
+    category: 'other',
+    icon: 'git-commit-horizontal',
+    color: '#10b981',
+  },
+
+  IFCMAPPEDITEM: {
+    type: 'IFCMAPPEDITEM',
+    displayName: 'Mapped Item',
+    description: 'Reuses a representation map with a transformation (instancing)',
+    category: 'other',
+    icon: 'copy',
+    color: '#10b981',
+  },
+
+  IFCREPRESENTATIONMAP: {
+    type: 'IFCREPRESENTATIONMAP',
+    displayName: 'Representation Map',
+    description: 'Defines a reusable master representation with a mapping origin',
+    category: 'other',
+    icon: 'copy',
+    color: '#10b981',
+  },
+
+  IFCCARTESIANTRANSFORMATIONOPERATOR3D: {
+    type: 'IFCCARTESIANTRANSFORMATIONOPERATOR3D',
+    displayName: 'Cartesian Transformation Operator 3D',
+    description: '3-D geometric transformation: translation, rotation and uniform scaling',
+    category: 'other',
+    icon: 'move-3d',
+    color: '#10b981',
+  },
+
+  // === UNITS ===
+
+  IFCUNITASSIGNMENT: {
+    type: 'IFCUNITASSIGNMENT',
+    displayName: 'Unit Assignment',
+    description: 'Assigns the unit system used for all measurements in the project',
+    category: 'other',
+    icon: 'ruler',
+    color: '#6b7280',
+  },
+
+  IFCSIUNIT: {
+    type: 'IFCSIUNIT',
+    displayName: 'SI Unit',
+    description: 'An SI unit (or a named unit from the SI system) used for measurement',
+    category: 'other',
+    icon: 'ruler',
+    color: '#6b7280',
+  },
+
+  IFCCONVERSIONBASEDUNIT: {
+    type: 'IFCCONVERSIONBASEDUNIT',
+    displayName: 'Conversion Based Unit',
+    description: 'A unit defined by conversion from an SI reference unit (e.g. inch, foot)',
+    category: 'other',
+    icon: 'ruler',
+    color: '#6b7280',
+  },
+
+  IFCDIMENSIONALEXPONENTS: {
+    type: 'IFCDIMENSIONALEXPONENTS',
+    displayName: 'Dimensional Exponents',
+    description: 'Defines the physical dimension of a unit using SI base exponents',
+    category: 'other',
+    icon: 'superscript',
+    color: '#6b7280',
+  },
+
+  IFCMEASUREWITHUNIT: {
+    type: 'IFCMEASUREWITHUNIT',
+    displayName: 'Measure With Unit',
+    description: 'A measurement value paired with its unit',
+    category: 'other',
+    icon: 'ruler',
+    color: '#6b7280',
+  },
+
+  // === CLASSIFICATION ===
+
+  IFCCLASSIFICATION: {
+    type: 'IFCCLASSIFICATION',
+    displayName: 'Classification',
+    description: 'Identifies a classification system (e.g. Uniclass, OmniClass)',
+    category: 'other',
+    icon: 'list-tree',
+    color: '#6b7280',
+  },
+
+  IFCCLASSIFICATIONREFERENCE: {
+    type: 'IFCCLASSIFICATIONREFERENCE',
+    displayName: 'Classification Reference',
+    description: 'References a specific entry within a classification system',
+    category: 'other',
+    icon: 'tag',
+    color: '#6b7280',
+  },
+
+  // === ELEMENT TYPES ===
+
+  IFCWALLTYPE: {
+    type: 'IFCWALLTYPE',
+    displayName: 'Wall Type',
+    description: 'Type definition shared by all wall instances of this type',
+    category: 'element',
+    icon: 'square',
+    color: '#64748b',
+  },
+
+  IFCDOORTYPE: {
+    type: 'IFCDOORTYPE',
+    displayName: 'Door Type',
+    description: 'Type definition shared by all door instances of this type (IFC4)',
+    category: 'element',
+    icon: 'door-open',
+    color: '#78716c',
+  },
+
+  IFCWINDOWTYPE: {
+    type: 'IFCWINDOWTYPE',
+    displayName: 'Window Type',
+    description: 'Type definition shared by all window instances of this type (IFC4)',
+    category: 'element',
+    icon: 'app-window',
+    color: '#7dd3fc',
+  },
+
+  IFCBEAMTYPE: {
+    type: 'IFCBEAMTYPE',
+    displayName: 'Beam Type',
+    description: 'Type definition for beam elements',
+    category: 'structural',
+    icon: 'minus',
+    color: '#78716c',
+  },
+
+  IFCCOLUMNTYPE: {
+    type: 'IFCCOLUMNTYPE',
+    displayName: 'Column Type',
+    description: 'Type definition for column elements',
+    category: 'structural',
+    icon: 'pilcrow',
+    color: '#78716c',
+  },
+
+  IFCSLABTYPE: {
+    type: 'IFCSLABTYPE',
+    displayName: 'Slab Type',
+    description: 'Type definition for slab elements',
+    category: 'element',
+    icon: 'square',
+    color: '#64748b',
+  },
+
+  // === OTHER BUILDING ELEMENTS ===
+
+  IFCBUILDINGENTITYPROXY: {
+    type: 'IFCBUILDINGENTITYPROXY',
+    displayName: 'Building Element Proxy',
+    description: 'A generic building element used when no specific IFC type matches',
+    category: 'element',
+    icon: 'box',
+    color: '#94a3b8',
+  },
+
+  IFCBUILDINGELEMENTPROXY: {
+    type: 'IFCBUILDINGELEMENTPROXY',
+    displayName: 'Building Element Proxy',
+    description: 'A generic building element used when no specific IFC type matches',
+    category: 'element',
+    icon: 'box',
+    color: '#94a3b8',
+  },
+
+  IFCMEMBER: {
+    type: 'IFCMEMBER',
+    displayName: 'Member',
+    description: 'A structural linear or curvilinear element (e.g. purlin, strut, tie)',
+    category: 'structural',
+    icon: 'minus',
+    color: '#78716c',
+  },
+
+  IFCPLATE: {
+    type: 'IFCPLATE',
+    displayName: 'Plate',
+    description: 'A flat structural plate element',
+    category: 'structural',
+    icon: 'square',
+    color: '#78716c',
+  },
+
+  IFCSTAIRFLIGHT: {
+    type: 'IFCSTAIRFLIGHT',
+    displayName: 'Stair Flight',
+    description: 'A single flight of stairs between two landings',
+    category: 'element',
+    icon: 'chevrons-up',
+    color: '#a78bfa',
+  },
+
+  IFCCURTAINWALL: {
+    type: 'IFCCURTAINWALL',
+    displayName: 'Curtain Wall',
+    description: 'A non-load-bearing external wall system',
+    category: 'element',
+    icon: 'square',
+    color: '#7dd3fc',
+  },
+
+  IFCWINDOWLININGPROPERTIES: {
+    type: 'IFCWINDOWLININGPROPERTIES',
+    displayName: 'Window Lining Properties',
+    description: 'Geometric parameters of the window lining (frame)',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
+  },
+
+  IFCDOORLININGPROPERTIES: {
+    type: 'IFCDOORLININGPROPERTIES',
+    displayName: 'Door Lining Properties',
+    description: 'Geometric parameters of the door lining (frame)',
+    category: 'property',
+    icon: 'grid',
+    color: '#9333ea',
   },
 };
 

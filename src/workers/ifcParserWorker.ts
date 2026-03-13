@@ -208,13 +208,27 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       //    so IFC Browser can navigate to all entities
       // -----------------------------------------------------------------
       // WebIFC returns PascalCase type names (e.g. 'IfcPropertySet'), so normalise
-      // to uppercase before comparing against the container type list.
-      const PROPERTY_CONTAINER_TYPES = new Set(['IFCPROPERTYSET', 'IFCELEMENTQUANTITY']);
-      const isPropertyContainer = (n: { ifcType?: string }) =>
-        PROPERTY_CONTAINER_TYPES.has((n.ifcType ?? '').toUpperCase());
+      // to uppercase before comparing against the keep-in-graph type list.
+      const PROPERTY_KEEP_IN_GRAPH_TYPES = new Set([
+        'IFCPROPERTYSET',
+        'IFCELEMENTQUANTITY',
+        // Keep the core material-select chain visible in graph:
+        // IfcRelAssociatesMaterial -> IfcMaterialLayerSetUsage -> IfcMaterialLayerSet
+        // -> IfcMaterialLayer -> IfcMaterial
+        'IFCMATERIAL',
+        'IFCMATERIALLAYER',
+        'IFCMATERIALLAYERSET',
+        'IFCMATERIALLAYERSETUSAGE',
+        // Support profile-based material assignment too.
+        'IFCMATERIALPROFILE',
+        'IFCMATERIALPROFILESET',
+        'IFCMATERIALPROFILESETUSAGE',
+      ]);
+      const isPropertyKeptInGraph = (n: { ifcType?: string }) =>
+        PROPERTY_KEEP_IN_GRAPH_TYPES.has((n.ifcType ?? '').toUpperCase());
 
       const nonPropertyNodes = result.graphData.nodes.filter(
-        n => n.type !== 'property' || isPropertyContainer(n)
+        n => n.type !== 'property' || isPropertyKeptInGraph(n)
       );
       const nonPropertyIds   = new Set(nonPropertyNodes.map(n => n.id));
 
@@ -227,9 +241,9 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
       // Minimal stubs for leaf property-value nodes — just what the IFC Browser list needs.
       // Full property data is already embedded in element nodes via attachPropertySets.
-      // Container nodes (IFCPROPERTYSET, IFCELEMENTQUANTITY) stay in graphData above.
+      // Container/material-chain nodes stay in graphData above.
       const propertyStubs = result.graphData.nodes
-        .filter(n => n.type === 'property' && !isPropertyContainer(n))
+        .filter(n => n.type === 'property' && !isPropertyKeptInGraph(n))
         .map(n => ({
           id: n.id,
           expressId: n.expressId,

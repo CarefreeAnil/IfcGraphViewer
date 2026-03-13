@@ -50,10 +50,11 @@ export const AUXILIARY_EXCLUDE_TYPES = new Set<string>([
   'IFCDOORSTYLEARRANGEMENT', 'IFCDOORPANELPROPERTIES', 'IFCDOORSTYLELININGPROPERTIES', 'IFCSHAPEASPECT',
   'IFCSHELLBASEDSURFACEMODEL', 'IFCTESSELLATEDFACESET', 'IFCSHAPEMODEL',
 
-  // Material-related metadata
-  'IFCMATERIALLAYER', 'IFCMATERIAL', 'IFCMATERIALLAYERSET', 'IFCMATERIALLAYERUSAGEPUTATIVE', 'IFCMATERIALLAYERWITHOFFFSETS',
+  // Material-related metadata (keep core material chain nodes visible)
+  'IFCMATERIALLAYERWITHOFFSETS',
+  'IFCMATERIALCONSTITUENT', 'IFCMATERIALCONSTITUENTSET',
   'IFCMATERIALCOMPONENT', 'IFCMATERIALDEFINITIONREPRESENTATION', 'IFCMATERIALPROPERTIES', 'IFCMECHANICALCONCRETEMATERIALPROPERTIES',
-  'IFCMECHANICALMATERIALPROPERTIES', 'IFCTHERMALMAATERIALPROPERTIES', 'IFCWOODFINISHINGPROPERTIES',
+  'IFCMECHANICALMATERIALPROPERTIES', 'IFCTHERMALMAATERIALPROPERTIES',
 
   // Unit and measure definitions
   'IFCSIUNIT', 'IFCUNITASSIGNMENT', 'IFCCONVERSIONBASEDUNIT', 'IFCDERIVEDUNIT', 'IFCDERIVEDUNITELEMENT', 'IFCDIMENSIONALEXPONENTS',
@@ -78,7 +79,7 @@ export const AUXILIARY_EXCLUDE_TYPES = new Set<string>([
   'IFCTHERMALTRANSMITTANCEMEASURE', 'IFCTIME MEASURE', 'IFCTIMESERIOS', 'IFCTIMESERIES', 'IFCTIMESTEP', 'IFCTORQUEMEASURE',
   'IFCTORSIONALST IFFNESSMEASURE', 'IFCTORSIONALSTRAININMEASURE', 'IFCTORSIONALSTRAIN MEASURE', 'IFCTOXICITYMEASURE', 'IFCTRANSMITTANCEMEASURE',
   'IFCVAPOURPERMEABILITYMEASURE', 'IFCVOLUMETR ICFLOWRATE', 'IFCVOLUMETRICFLOWRATE', 'IFCVOLUMEMEASURE', 'IFCWARPINGCONSTANTMEASURE',
-  'IFCWARPINGTORSIONALCONSTANTMEASURE', 'IFCWASTEATERVOLUME', 'IFCWASTERSVOLUME', 'IFCWASTVOLUMETEMPERATURE', 'IFCWARPINGCONSTANTMEASURE',
+  'IFCWARPINGTORSIONALCONSTANTMEASURE', 'IFCWARPINGCONSTANTMEASURE',
 ]);
 
 export const isAuxiliaryType = (ifcType: string): boolean => {
@@ -225,9 +226,8 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
     'IFCDOORSTYLELININGPROPERTIES', 'IFCSHAPEASPECT',
     'IFCSHELLBASEDSURFACEMODEL', 'IFCTESSELLATEDFACESET', 'IFCSHAPEMODEL',
 
-    // Material layer details
-    'IFCMATERIALLAYER', 'IFCMATERIALLAYERSET', 'IFCMATERIALLAYERSETUSAGE',
-    'IFCMATERIALLAYERWITHOFFFSETS', 'IFCMATERIALCOMPONENT',
+    // Material layer details (keep core material chain nodes visible)
+    'IFCMATERIALLAYERWITHOFFSETS', 'IFCMATERIALCOMPONENT',
     'IFCMATERIALDEFINITIONREPRESENTATION', 'IFCMATERIALPROPERTIES',
 
     // Unit and measure definitions - schema metadata
@@ -303,7 +303,8 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
           if (ADMIN_EXCLUDE_TYPES.has(type)) return false;
           if (shouldExcludeAux && AUXILIARY_EXCLUDE_TYPES.has(type)) return false;
 
-          // Type definitions are not meaningful without their instances
+          // Type definitions are not meaningful without their instances at this LoD.
+          // They are only shown at LoD4 where the full schema is visible.
           const typeDefinitions = new Set([
             'IFCWALLTYPE', 'IFCDOORTYPE', 'IFCWINDOWTYPE', 'IFCCOLUMNTYPE',
             'IFCSLABTYPE', 'IFCBEAMTYPE', 'IFCRAMPTYPE', 'IFCSTAIRTYPE',
@@ -387,6 +388,7 @@ export function getLoDConfig(lod: GraphLoD, includeAuxiliary: boolean = false): 
 
           // ✅ Only spatial relationships in LoD1
           if (type === 'IFCRELAGGREGATES') return true;
+          if (type === 'IFCRELNESTS') return true;
           if (type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE') return true;
 
           return false;
@@ -552,6 +554,7 @@ export function applyLoD(
 
       // Only spatial and containment relationships
       if (type.includes('AGGREGATES')) return true;
+      if (type.includes('NESTS')) return true;
       if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
       return false;
     }

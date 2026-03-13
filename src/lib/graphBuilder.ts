@@ -107,6 +107,44 @@ export function createGraphDataFromEntities(
     const toNodeId = (id: number | string) =>
       typeof id === 'string' && id.startsWith('node_') ? id : `node_${id}`;
 
+    const ensureMaterialNodeFromStep = (refId: number | string): string => {
+      const nodeId = toNodeId(refId);
+      if (nodeById.has(nodeId)) return nodeId;
+      if (!rawStepLines) return nodeId;
+
+      const numericId = typeof refId === 'number' ? refId : parseInt(String(refId).replace(/^node_/, ''), 10);
+      if (!Number.isFinite(numericId)) return nodeId;
+
+      const stepLine = rawStepLines.get(numericId);
+      if (!stepLine) return nodeId;
+
+      const typeMatch = stepLine.match(/^#\d+=\s*([A-Z0-9_]+)\s*\(/i);
+      const ifcType = (typeMatch?.[1] || '').toUpperCase();
+      if (!ifcType.startsWith('IFCMATERIAL')) return nodeId;
+
+      const nameMatch = stepLine.match(/'([^']+)'/);
+      const label = nameMatch?.[1] || ifcType;
+
+      const syntheticNode: GraphNode = {
+        id: nodeId,
+        label,
+        type: 'element',
+        ifcType,
+        isGraphVisible: true,
+        expressId: numericId,
+        properties: {
+          Name: label,
+          _ifcStep: stepLine,
+          _schemaColor: NODE_COLORS.element || '#f59e0b',
+          _syntheticFromStep: true,
+        },
+      };
+
+      graphNodes.push(syntheticNode);
+      nodeById.set(nodeId, syntheticNode);
+      return nodeId;
+    };
+
     const addEdgeThroughRelationshipNode = (
       source: number | string,
       target: number | string,
@@ -118,6 +156,14 @@ export function createGraphDataFromEntities(
 
       const sId = toNodeId(source);
       const tId = toNodeId(target);
+
+      // Some models reference material resources in IfcRelAssociatesMaterial
+      // even when those material entities are not emitted in semantic parsing.
+      // Recover such nodes from raw STEP so the material chain is navigable.
+      if (String(relationshipType).toUpperCase() === 'IFCRELASSOCIATESMATERIAL') {
+        ensureMaterialNodeFromStep(source);
+        ensureMaterialNodeFromStep(target);
+      }
 
       // Only add valid edges where all nodes exist
       if (!nodeById.has(sId) || !nodeById.has(tId) || !nodeById.has(relationshipNodeId)) {
@@ -373,27 +419,141 @@ export function createGraphDataFromEntities(
             allRefs.push(parseInt(match[1], 10));
           }
 
-          // Remove the entity's own ID and OwnerHistory (first ref after self)
+          // Remove the entity's own ID
           const otherRefs = allRefs.filter(r => r !== entity.expressId);
           if (otherRefs.length >= 2) {
-            // Skip OwnerHistory (index 0)
+            if (relType.toUpperCase() === 'IFCRELASSOCIATESMATERIAL') {
+              // IFCRELASSOCIATESMATERIAL STEP order is:
+              // RelatedObjects..., RelatingMaterial
+              // Do NOT assume OwnerHistory appears as a #ref (it is often '$').
+              // Use all relationship refs and let addEdgeThroughRelationshipNode
+              // discard non-node refs safely.
+              const source = otherRefs[otherRefs.length - 1];
+              ensureMaterialNodeFromStep(source);
+              const targets = otherRefs.slice(0, -1);
+              for (const target of targets) {
+                addEdgeThroughRelationshipNode(source, target, relNodeId, relType);
+              }
+              continue;
+            }
+
+            // For non-material relationships, keep legacy assumption that the
+            // first ref after self is OwnerHistory.
             const relRefs = otherRefs.slice(1);
 
             // Filter to only refs that exist as graph nodes (skips geometry/null refs)
             const validRefs = relRefs.filter(r => nodeById.has(toNodeId(r)));
 
             if (validRefs.length >= 2) {
+              {
               // First valid ref = relating (source), remaining = related (targets)
-              const source = validRefs[0];
-              const targets = validRefs.slice(1);
-              for (const target of targets) {
-                addEdgeThroughRelationshipNode(source, target, relNodeId, relType);
+                const source = validRefs[0];
+                const targets = validRefs.slice(1);
+                for (const target of targets) {
+                  addEdgeThroughRelationshipNode(source, target, relNodeId, relType);
+                }
               }
             }
           }
         }
       }
     }
+
+    // Robust reconciliation for IfcRelAssociatesMaterial:
+    // Some files expose RelatedObjects but not a usable RelatingMaterial property via WebIFC.
+    // Ensure material resources are still reachable in the graph by parsing STEP refs directly.
+    if (rawStepLines) {
+      const materialRelNodes = graphNodes.filter(n => (n.ifcType || '').toUpperCase() === 'IFCRELASSOCIATESMATERIAL');
+      for (const relNode of materialRelNodes) {
+        const stepLine = rawStepLines.get(relNode.expressId);
+        if (!stepLine) continue;
+
+        const allRefs: number[] = [];
+        const refRegex = /#(\d+)/g;
+        let match;
+        while ((match = refRegex.exec(stepLine)) !== null) {
+          allRefs.push(parseInt(match[1], 10));
+        }
+
+        const otherRefs = allRefs.filter(r => r !== relNode.expressId);
+        if (otherRefs.length < 2) continue;
+
+        // Do NOT assume OwnerHistory is present as a #ref; use full refs list.
+        const sourceMaterialRef = otherRefs[otherRefs.length - 1];
+        const targetObjectRefs = otherRefs.slice(0, -1);
+        const sourceMaterialNodeId = ensureMaterialNodeFromStep(sourceMaterialRef);
+
+        if (!nodeById.has(sourceMaterialNodeId)) continue;
+
+        for (const targetRef of targetObjectRefs) {
+          const targetNodeId = toNodeId(targetRef);
+          if (!nodeById.has(targetNodeId)) continue;
+
+          const edgeKey1 = `${sourceMaterialNodeId}-relating-${relNode.id}`;
+          if (!edgeSet.has(edgeKey1)) {
+            edgeSet.add(edgeKey1);
+            edges.push({
+              id: `edge_${edges.length}`,
+              source: sourceMaterialNodeId,
+              target: relNode.id,
+              label: 'relating',
+              type: 'relationship_role',
+              relationshipType: 'IFCRELASSOCIATESMATERIAL',
+            });
+          }
+
+          const edgeKey2 = `${relNode.id}-related-${targetNodeId}`;
+          if (!edgeSet.has(edgeKey2)) {
+            edgeSet.add(edgeKey2);
+            edges.push({
+              id: `edge_${edges.length}`,
+              source: relNode.id,
+              target: targetNodeId,
+              label: 'related',
+              type: 'relationship_role',
+              relationshipType: 'IFCRELASSOCIATESMATERIAL',
+            });
+          }
+        }
+      }
+
+      // Build explicit material-reference links so material-select chains are visible:
+      // IfcMaterialLayerSetUsage -> IfcMaterialLayerSet -> IfcMaterialLayer -> IfcMaterial
+      const materialNodes = graphNodes.filter(n => (n.ifcType || '').toUpperCase().startsWith('IFCMATERIAL'));
+      for (const matNode of materialNodes) {
+        const stepLine = rawStepLines.get(matNode.expressId);
+        if (!stepLine) continue;
+
+        const allRefs: number[] = [];
+        const refRegex = /#(\d+)/g;
+        let match;
+        while ((match = refRegex.exec(stepLine)) !== null) {
+          allRefs.push(parseInt(match[1], 10));
+        }
+
+        const childRefs = allRefs.filter(r => r !== matNode.expressId);
+        for (const childRef of childRefs) {
+          const childNodeId = ensureMaterialNodeFromStep(childRef);
+          const childNode = nodeById.get(childNodeId);
+          if (!childNode) continue;
+          if (!((childNode.ifcType || '').toUpperCase().startsWith('IFCMATERIAL'))) continue;
+
+          const edgeKey = `${matNode.id}-materialRef-${childNodeId}`;
+          if (!edgeSet.has(edgeKey)) {
+            edgeSet.add(edgeKey);
+            edges.push({
+              id: `edge_${edges.length}`,
+              source: matNode.id,
+              target: childNodeId,
+              label: 'materialRef',
+              type: 'material_ref',
+              relationshipType: 'IFCMATERIALREFERENCE',
+            });
+          }
+        }
+      }
+    }
+
     console.log(`[GraphBuilder] Created ${edges.length} edges through relationship nodes (LPG model).`);
     console.log('[GraphBuilder] Relationship types processed:', relationshipDebug);
 
