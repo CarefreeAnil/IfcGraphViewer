@@ -7,7 +7,7 @@ The IFC Graph Viewer is a thesis proof-of-concept web application that transform
 - **IFC STEP** (`.ifc`) - Traditional ISO-10303-21 text format (IFC2x3, IFC4, IFC4X3)
 - **IFC5 JSON** (`.ifcx`) - Next-generation buildingSMART JSON-based format
 
-The application routes each format through a dedicated parsing pipeline and presents data through four synchronized visualization panels.
+The application routes each format through a dedicated parsing pipeline and presents data in a multi-panel workspace (STEP: graph/tree/properties/3D, IFC5: properties/graph/tree/3D/source) with on-demand panel loading.
 
 ---
 
