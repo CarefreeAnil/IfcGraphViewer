@@ -36,6 +36,8 @@ import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportT
 import { logger } from '@/utils/logger';
 import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
 import { useUIState } from '@/contexts/UIStateContext';
+// Type-only import (erased at compile time) — the topology code itself stays in its lazy chunk
+import type { TopologyPathStep } from '@/lib/topology/tgraph';
 
 // Lazy load heavy components
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
@@ -59,6 +61,7 @@ const Index = () => {
   const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
   const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
   const [viewer3DLoaded, setViewer3DLoaded] = useState(false); // 3D viewer unloaded by default
+  const [topologyPath, setTopologyPath] = useState<TopologyPathStep[] | null>(null); // route from the Topology panel, rendered in 3D
   const [ifc5GraphLoaded, setIfc5GraphLoaded] = useState(false); // IFC5 graph unloaded by default
   const [isValidating, setIsValidating] = useState(false); // Validation in progress
   const [relationshipFilters, setRelationshipFilters] = useState({
@@ -1066,6 +1069,7 @@ const Index = () => {
                             }}
                             ifcFileBuffer={ifcFileBufferRef.current}
                             isContextOnly={false}
+                            pathHighlight={topologyPath}
                           />
                         </Suspense>
                       )}
@@ -1119,6 +1123,7 @@ const Index = () => {
                           data={parsedData.graphData}
                           selectedNodeId={selectedNode?.id || null}
                           onNodeSelect={handleNodeClick}
+                          onPathHighlight={setTopologyPath}
                         />
                       </Suspense>
                     </div>

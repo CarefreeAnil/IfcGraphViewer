@@ -82,6 +82,18 @@ export interface TGraph {
 
 export const EXTERIOR_NODE_ID = 'tgraph_exterior';
 
+/**
+ * One hop of a computed route, exported for 3D visualization: the Viewer3D
+ * panel renders each step's element with its hop color (spaces translucent,
+ * portals solid). Kept here (not in Viewer3D) so the type can be shared
+ * without coupling the lazy chunks.
+ */
+export interface TopologyPathStep {
+  expressId: number;
+  color: string;
+  kind: 'space' | 'portal';
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // IFC class sets (comparisons are always done in UPPERCASE — WebIFC returns
 // PascalCase names like 'IfcRelSpaceBoundary')

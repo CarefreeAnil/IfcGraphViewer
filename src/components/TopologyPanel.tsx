@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { GraphData, GraphNode } from '@/types/graph';
 import {
-  buildTGraph, TGraphNode, TGraphEdge, EXTERIOR_NODE_ID,
+  buildTGraph, TGraphNode, TGraphEdge, TopologyPathStep, EXTERIOR_NODE_ID,
 } from '@/lib/topology/tgraph';
 import {
   buildGraphIndex, shortestPath, betweennessCentrality, closenessCentrality,
@@ -43,6 +43,8 @@ interface TopologyPanelProps {
   data: GraphData;                                // raw parsedData.graphData (unfiltered!)
   selectedNodeId: string | null;
   onNodeSelect: (node: GraphNode | null) => void; // same handler as the other panels
+  /** Route steps for the 3D viewer (hop-colored); null clears the 3D route. */
+  onPathHighlight?: (steps: TopologyPathStep[] | null) => void;
 }
 
 type AnalysisMode = 'network' | 'centrality' | 'path' | 'areas';
@@ -64,6 +66,18 @@ const PORTAL_COLORS: Record<string, string> = {
 
 const EXTERIOR_COLOR = '#10b981';
 const DIM_COLOR = 'rgba(100, 116, 139, 0.25)';
+
+// Node radii in graph units — same scale family as GraphVisualization's
+// NODE_SIZES (space: 10, element: 8) so both canvases read consistently.
+const NODE_SIZES: Record<TGraphNode['kind'], number> = {
+  space: 10,
+  portal: 7,
+  exterior: 12,
+};
+
+// Route color — GraphVisualization's path-to-root convention (#fb923c orange,
+// 3px edges, size+3 rings) reused verbatim so "a path" looks the same everywhere.
+const PATH_COLOR = '#fb923c';
 
 const MODES: Array<{ id: AnalysisMode; label: string; Icon: React.ComponentType<{ className?: string }> }> = [
   { id: 'network', label: 'Network', Icon: Waypoints },
@@ -91,7 +105,7 @@ function hopColor(step: number, totalHops: number): string {
 
 type FGNode = NodeObject & TGraphNode;
 
-export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPanelProps) {
+export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighlight }: TopologyPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods>();
   const hasAutoFittedRef = useRef(false);
@@ -238,26 +252,116 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPa
     return STOREY_COLORS[idx % STOREY_COLORS.length];
   }, [mode, pathStart, pathEnd, pathSteps, pathResult, areaOfNode, selectedArea, centralityValues, maxCentrality, storeyIndex]);
 
-  const linkColor = useCallback((link: { kind?: string; passable?: boolean; vertical?: boolean; crossStorey?: boolean; id?: string }): string => {
-    if (mode === 'path') {
-      return link.id && pathEdgeIds.has(link.id) ? '#eab308' : 'rgba(100, 116, 139, 0.12)';
+  // ── Link painting — GraphVisualization's line grammar ─────────────────────
+  // Solid 2px primary edges, dashed [5,5] 1.2px secondary (adjacency), orange
+  // 3px route edges, and rotated JetBrains Mono kind-labels at zoom.
+  type FGLink = {
+    kind?: string; passable?: boolean; vertical?: boolean; crossStorey?: boolean; id?: string;
+    source?: { x?: number; y?: number }; target?: { x?: number; y?: number };
+  };
+
+  const paintLink = useCallback((link: FGLink, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // d3 can transiently keep string ids during graph data transitions
+    if (typeof link.source !== 'object' || typeof link.target !== 'object' || !link.source || !link.target) return;
+    const sx = link.source.x ?? 0;
+    const sy = link.source.y ?? 0;
+    const tx = link.target.x ?? 0;
+    const ty = link.target.y ?? 0;
+
+    const isPathEdge = mode === 'path' && !!link.id && pathEdgeIds.has(link.id);
+    const isAdjacent = link.kind === 'adjacent';
+
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+
+    if (isPathEdge) {
+      ctx.strokeStyle = PATH_COLOR;
+      ctx.lineWidth = 3;
+    } else if (mode === 'path') {
+      ctx.strokeStyle = 'rgba(100, 116, 139, 0.12)';
+      ctx.lineWidth = isAdjacent ? 1.2 : 2;
+    } else {
+      let color: string;
+      if (link.crossStorey) color = '#ef4444';
+      else if (link.vertical) color = '#a855f7';
+      else if (isAdjacent) color = link.passable ? 'rgba(34, 197, 94, 0.55)' : 'rgba(100, 116, 139, 0.35)';
+      else color = 'rgba(148, 163, 184, 0.65)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = isAdjacent ? 1.2 : 2;
     }
-    if (link.crossStorey) return '#ef4444';
-    if (link.vertical) return '#a855f7';
-    if (link.kind === 'adjacent') {
-      return link.passable ? 'rgba(34, 197, 94, 0.55)' : 'rgba(100, 116, 139, 0.35)';
+    if (isAdjacent && !isPathEdge) ctx.setLineDash([5, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Edge kind label at zoom — same rotated, haloed treatment as the graph's
+    // relationship labels (readable left-to-right).
+    if (globalScale > 2 && mode !== 'path') {
+      const label = link.vertical ? 'vertical'
+        : link.crossStorey ? 'cross-storey'
+        : isAdjacent ? (link.passable ? 'open-plan' : 'adjacent')
+        : 'through';
+      const midX = (sx + tx) / 2;
+      const midY = (sy + ty) / 2;
+      let labelAngle = Math.atan2(ty - sy, tx - sx);
+      if (labelAngle > Math.PI / 2) labelAngle -= Math.PI;
+      if (labelAngle < -Math.PI / 2) labelAngle += Math.PI;
+
+      ctx.save();
+      ctx.translate(midX, midY);
+      ctx.rotate(labelAngle);
+      const fontSize = Math.max(9 / globalScale, 4);
+      ctx.font = `bold ${fontSize}px JetBrains Mono`;
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 2;
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
     }
-    return 'rgba(148, 163, 184, 0.65)';
   }, [mode, pathEdgeIds]);
 
   // ── Node painting: circles for spaces, diamonds for portals ──────────────
+  // Same visual grammar as GraphVisualization's nodeCanvasObject: solid fill +
+  // same-color 1px border, white 2.5px ring + layered radial glow when selected,
+  // orange path rings, JetBrains Mono labels with a dark text shadow.
   const paintNode = useCallback((node: FGNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const x = node.x ?? 0;
     const y = node.y ?? 0;
     const isSelected = node.id === selectedNodeId;
     const isEndpoint = node.id === pathStart || node.id === pathEnd;
-    const radius = node.kind === 'space' ? 5 : node.kind === 'exterior' ? 6 : 3.2;
+    const onPath = pathSteps.has(node.id) || isEndpoint;
+    let radius = NODE_SIZES[node.kind];
+    if (mode === 'path' && onPath && !isSelected) radius *= 1.3; // path nodes read larger, like the graph
     const color = nodeColor(node);
+
+    // Layered radial glow for the selected node (GraphVisualization recipe,
+    // glowIntensity 1.5; heatColor() returns rgb() strings, which skip the
+    // hex-alpha suffix exactly like the original).
+    if (isSelected) {
+      for (let i = 3; i >= 1; i--) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + i * 3, 0, 2 * Math.PI);
+        const gradient = ctx.createRadialGradient(x, y, radius, x, y, radius + i * 4.5);
+        const alpha = (4 - i) * 0.1;
+        gradient.addColorStop(0, color.startsWith('#')
+          ? color + Math.floor(alpha * 255).toString(16).padStart(2, '0')
+          : color);
+        gradient.addColorStop(1, 'transparent');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+      }
+    }
+
+    // Orange route ring (graph's path-to-root convention)
+    if (mode === 'path' && onPath && !isSelected) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius + 3, 0, 2 * Math.PI);
+      ctx.strokeStyle = PATH_COLOR;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
 
     ctx.beginPath();
     if (node.kind === 'portal') {
@@ -275,29 +379,42 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPa
     ctx.fillStyle = color;
     ctx.fill();
 
-    if (isSelected || isEndpoint) {
-      ctx.strokeStyle = isSelected ? '#ffffff' : '#eab308';
-      ctx.lineWidth = 1.5 / globalScale;
-      ctx.stroke();
-    }
+    // Border: white when selected, self-colored hairline otherwise
+    ctx.strokeStyle = isSelected ? '#fff' : color;
+    ctx.lineWidth = isSelected ? 2.5 : 1;
+    ctx.stroke();
 
     // Labels: spaces when zoomed in; always for selected/path/exterior nodes
     const showLabel =
       node.kind === 'exterior' ||
-      isSelected || isEndpoint || pathSteps.has(node.id) ||
-      (node.kind === 'space' && globalScale > 1.4);
+      isSelected || onPath ||
+      (node.kind === 'space' && globalScale > 1.2);
     if (showLabel) {
-      const fontSize = Math.max(2.5, 11 / globalScale);
-      ctx.font = `${fontSize}px Sans-Serif`;
+      const fontSize = Math.max(10 / globalScale, 4);
+      ctx.font = `bold ${fontSize}px JetBrains Mono`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(226, 232, 240, 0.9)';
-      ctx.fillText(node.label, x, y + radius + 1.5);
+      ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowBlur = 2;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(node.label, x, y + radius + 4);
+
+      // Storey subline at deep zoom — parity with the graph's property lines
+      if (globalScale > 2.5 && node.storeyName) {
+        const propFontSize = Math.max(7 / globalScale, 3);
+        ctx.font = `${propFontSize}px JetBrains Mono`;
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillText(node.storeyName, x, y + radius + 4 + fontSize + 3);
+      }
+      ctx.shadowBlur = 0;
     }
-  }, [nodeColor, selectedNodeId, pathStart, pathEnd, pathSteps]);
+  }, [nodeColor, selectedNodeId, pathStart, pathEnd, pathSteps, mode]);
 
   const paintPointerArea = useCallback((node: FGNode, color: string, ctx: CanvasRenderingContext2D) => {
-    const radius = node.kind === 'space' ? 6 : 5;
+    // Generous hit area, same rationale as the graph's nodePointerAreaPaint
+    // (force-graph picking is unreliable on small nodes), scaled down for the
+    // panel's smaller, sparser layouts.
+    const radius = Math.max(NODE_SIZES[node.kind] * 2.5, 20);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
@@ -346,6 +463,43 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPa
     const appNode = data.nodes.find(n => n.id === id);
     if (appNode) onNodeSelect(appNode);
   }, [data.nodes, onNodeSelect]);
+
+  // ── 3D route sync ─────────────────────────────────────────────────────────
+  // Publish the computed route (hop colors matching the 2D fills) so the 3D
+  // viewer can render it; cleared when the path is dropped, the mode changes,
+  // or the panel unmounts. Ref-wrapped so a new callback identity from the
+  // parent doesn't re-emit.
+  const onPathHighlightRef = useRef(onPathHighlight);
+  useEffect(() => { onPathHighlightRef.current = onPathHighlight; });
+
+  useEffect(() => {
+    const publish = onPathHighlightRef.current;
+    if (!publish) return;
+    if (mode !== 'path' || !pathResult) {
+      publish(null);
+      return;
+    }
+    const steps: TopologyPathStep[] = [];
+    pathResult.nodeIds.forEach((id, i) => {
+      const step = nodeById.get(id);
+      if (step && step.kind !== 'exterior' && step.expressId !== undefined) {
+        steps.push({
+          expressId: step.expressId,
+          color: hopColor(i, pathResult.hops),
+          kind: step.kind === 'space' ? 'space' : 'portal',
+        });
+      }
+    });
+    publish(steps.length > 0 ? steps : null);
+  }, [mode, pathResult, nodeById]);
+
+  useEffect(() => () => { onPathHighlightRef.current?.(null); }, []);
+
+  // Match the main graph's force tuning so layout density feels the same
+  useEffect(() => {
+    graphRef.current?.d3Force('charge')?.strength(-185);
+    graphRef.current?.d3Force('link')?.distance(78);
+  }, [forceGraphData]);
 
   // ── Empty state ───────────────────────────────────────────────────────────
   if (tgraph.stats.spaceCount === 0) {
@@ -443,14 +597,14 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPa
         </div>
       )}
 
-      {/* Force graph */}
-      <div ref={containerRef} className="flex-1 min-h-0 relative">
+      {/* Force graph — same backdrop (grid + radial glow) as the Graph panel */}
+      <div ref={containerRef} className="flex-1 min-h-0 relative grid-pattern gradient-radial">
         <ForceGraph2D
           ref={graphRef}
           graphData={forceGraphData}
           width={dimensions.width}
           height={dimensions.height}
-          backgroundColor="rgba(0,0,0,0)"
+          backgroundColor="transparent"
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={paintPointerArea}
           nodeLabel={(node: FGNode) =>
@@ -458,12 +612,12 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect }: TopologyPa
               ? `${node.label} — ${node.portalType} (${node.ifcType})`
               : `${node.label}${node.storeyName ? ` — ${node.storeyName}` : ''} (${node.ifcType})`
           }
-          linkColor={linkColor}
-          linkWidth={(link: { id?: string }) => (mode === 'path' && link.id && pathEdgeIds.has(link.id) ? 2.5 : 1)}
-          linkLineDash={(link: { kind?: string }) => (link.kind === 'adjacent' ? [2, 2] : null)}
+          linkCanvasObject={paintLink}
           onNodeClick={handleNodeClick}
           onBackgroundClick={handleBackgroundClick}
-          cooldownTicks={120}
+          cooldownTicks={100}
+          d3AlphaDecay={0.02}
+          d3VelocityDecay={0.3}
           onEngineStop={() => {
             if (!hasAutoFittedRef.current) {
               hasAutoFittedRef.current = true;
