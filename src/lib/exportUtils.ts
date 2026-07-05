@@ -11,6 +11,7 @@
  */
 
 import { GraphNode, GraphEdge } from '@/types/graph';
+import { TGraph } from '@/lib/topology/tgraph';
 import { toast } from 'sonner';
 
 export type ExportFormat = 'json' | 'csv-nodes' | 'csv-edges' | 'svg' | 'png';
@@ -292,4 +293,60 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Export the topology (TGraph) space graph to JSON.
+ * Includes nodes, edges (with derivation provenance), stats and warnings.
+ */
+export function exportTopologyToJSON(tgraph: TGraph, filename = 'ifc-topology.json'): void {
+  if (tgraph.nodes.length === 0) {
+    toast.error('No topology graph to export');
+    return;
+  }
+
+  const exportData = {
+    metadata: {
+      exportDate: new Date().toISOString(),
+      generator: 'IfcGraphViewer Topology (TopologicPy-style client-side TGraph)',
+      ...tgraph.stats,
+      warnings: tgraph.warnings,
+    },
+    nodes: tgraph.nodes,
+    edges: tgraph.edges,
+  };
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, filename);
+}
+
+/**
+ * Export the topology (TGraph) edge list to CSV — one row per space-adjacency
+ * or space-portal connection, with derivation provenance.
+ */
+export function exportTopologyEdgesToCSV(tgraph: TGraph, filename = 'ifc-topology-edges.csv'): void {
+  if (tgraph.edges.length === 0) {
+    toast.error('No topology edges to export');
+    return;
+  }
+
+  const nodeById = new Map(tgraph.nodes.map(n => [n.id, n]));
+  const headers = ['Source', 'SourceLabel', 'Target', 'TargetLabel', 'Kind', 'Method', 'Passable', 'Vertical', 'CrossStorey', 'ViaElements'];
+  const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
+
+  const rows = tgraph.edges.map(edge => [
+    escape(edge.source),
+    escape(nodeById.get(edge.source)?.label ?? ''),
+    escape(edge.target),
+    escape(nodeById.get(edge.target)?.label ?? ''),
+    edge.kind,
+    edge.method,
+    String(edge.passable),
+    String(edge.vertical ?? false),
+    String(edge.crossStorey ?? false),
+    escape((edge.viaIds ?? []).join(';')),
+  ].join(','));
+
+  const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv' });
+  downloadBlob(blob, filename);
 }

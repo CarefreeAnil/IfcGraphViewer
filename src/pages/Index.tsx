@@ -42,6 +42,7 @@ const GraphVisualization = lazy(() => import('@/components/GraphVisualization').
 const Viewer3D = lazy(() => import('@/components/Viewer3D'));
 const IFC5GraphVisualization = lazy(() => import('@/components/IFC5GraphVisualization').then(m => ({ default: m.IFC5GraphVisualization })));
 const IFC5SourceViewer = lazy(() => import('@/components/IFC5SourceViewer').then(m => ({ default: m.IFC5SourceViewer })));
+const TopologyPanel = lazy(() => import('@/components/TopologyPanel').then(m => ({ default: m.TopologyPanel })));
 
 const Index = () => {
   const navigate = useNavigate();
@@ -92,6 +93,7 @@ const Index = () => {
     tree: true,
     viewer3d: true,
     source: true,
+    topology: false, // opt-in via the taskbar — analysis panel, not core viewing
   });
 
   const togglePanel = useCallback((panelId: PanelId) => {
@@ -1101,6 +1103,26 @@ const Index = () => {
                         </Suspense>
                       </div>
                     </ResizablePanel>
+                )}
+
+                {/* Topology Panel — TopologicPy-style space graph (STEP only) */}
+                {!isIFC5 && panelVisibility.topology && (panelVisibility.properties || panelVisibility.graph || panelVisibility.tree || panelVisibility.viewer3d) && <ResizableHandle />}
+                {!isIFC5 && panelVisibility.topology && (
+                  <ResizablePanel id="topology" order={6} defaultSize={22} minSize={14}>
+                    <div className="h-full overflow-hidden border-l border-border">
+                      <Suspense fallback={
+                        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                          Loading topology analysis…
+                        </div>
+                      }>
+                        <TopologyPanel
+                          data={parsedData.graphData}
+                          selectedNodeId={selectedNode?.id || null}
+                          onNodeSelect={handleNodeClick}
+                        />
+                      </Suspense>
+                    </div>
+                  </ResizablePanel>
                 )}
               </ResizablePanelGroup>
               </div>
