@@ -9,14 +9,15 @@ interface PanelConfig {
   label: string;
   Icon: React.ComponentType<{ className?: string }>;
   ifc5Only?: boolean;
+  stepOnly?: boolean;
 }
 
 const PANEL_CONFIGS: PanelConfig[] = [
-  { id: 'properties', label: 'Properties', Icon: SlidersHorizontal },
-  { id: 'graph',      label: 'Graph',       Icon: Network },
+  { id: 'properties', label: 'Properties',  Icon: SlidersHorizontal },
+  { id: 'graph',      label: 'Graph',        Icon: Network },
   { id: 'tree',       label: 'Tree Browser', Icon: Layers },
-  { id: 'viewer3d',   label: '3D Viewer',   Icon: Box },
-  { id: 'source',     label: 'Source',      Icon: Code2, ifc5Only: true },
+  { id: 'viewer3d',   label: '3D Viewer',    Icon: Box },
+  { id: 'source',     label: 'Source',       Icon: Code2, ifc5Only: true },
 ];
 
 export interface PanelVisibility {
@@ -34,7 +35,11 @@ interface PanelTaskbarProps {
 }
 
 export function PanelTaskbar({ panelVisibility, onTogglePanel, isIFC5 }: PanelTaskbarProps) {
-  const panels = PANEL_CONFIGS.filter(p => !p.ifc5Only || isIFC5);
+  const panels = PANEL_CONFIGS.filter(p => {
+    if (p.ifc5Only && !isIFC5) return false;
+    if (p.stepOnly && isIFC5) return false;
+    return true;
+  });
 
   return (
     <TooltipProvider delayDuration={400}>

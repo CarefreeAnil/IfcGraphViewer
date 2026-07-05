@@ -2,7 +2,7 @@
  * 3D IFC Viewer - Simple Three.js implementation
  * Shows IFC entities as colored boxes with proper interaction
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AlertCircle } from 'lucide-react';

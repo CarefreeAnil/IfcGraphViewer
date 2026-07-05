@@ -1,12 +1,14 @@
-import { useState, useMemo, useCallback, useEffect, useRef, useDeferredValue } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef, useDeferredValue } from 'react';
 import { Copy, ChevronDown, ChevronRight, Search, Hash, ArrowDown, ArrowUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { GraphNode, GraphEdge, ParsedIFCData } from '@/types/graph';
 import { getEntityDef, getNormalizedPropertyName, findBestMatchingProperty } from '@/lib/ifcSchema';
+import { getSchemaProps, getSchemaGeneration, onSchemaLoad } from '@/lib/ifcSchemaRuntime';
 import { isGeometryType } from '@/lib/ifcParser';
 import { cn } from '@/lib/utils';
 
@@ -112,6 +114,100 @@ function buildPlainIFCLine(node: GraphNode): string {
   return `#${stepId}= ${node.ifcType}(${propsStr});`;
 }
 
+// Parse top-level STEP attributes from the string between the outer parentheses.
+// Correctly handles nested groups (...) and quoted strings '...'.
+function parseTopLevelAttributes(content: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let start = 0;
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    if (inString) {
+      if (ch === "'") {
+        // IFC uses '' as escaped single-quote inside strings
+        if (content[i + 1] === "'") { i++; } else { inString = false; }
+      }
+    } else if (ch === "'") {
+      inString = true;
+    } else if (ch === '(') {
+      depth++;
+    } else if (ch === ')') {
+      depth--;
+    } else if (ch === ',' && depth === 0) {
+      result.push(content.substring(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const last = content.substring(start).trim();
+  if (last.length > 0) result.push(last);
+  return result;
+}
+
+// Render a nested group value like (#1,#2,#3) with inner references still clickable.
+function renderNestedGroup(
+  value: string,
+  onRefClick: (stepId: number) => void,
+  key: string
+): React.ReactNode {
+  const refRegex = /#(\d+)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let n = 0;
+  while ((match = refRegex.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`ng-t-${key}-${n}`} className={SYNTAX_COLORS.punctuation}>{value.substring(lastIndex, match.index)}</span>);
+    }
+    const stepId = parseInt(match[1], 10);
+    parts.push(
+      <span key={`ng-r-${key}-${n}`} className={SYNTAX_COLORS.reference} onClick={() => onRefClick(stepId)}>
+        #{stepId}
+      </span>
+    );
+    lastIndex = match.index + match[0].length;
+    n++;
+  }
+  if (lastIndex < value.length) {
+    parts.push(<span key={`ng-e-${key}`} className={SYNTAX_COLORS.punctuation}>{value.substring(lastIndex)}</span>);
+  }
+  return <span key={key}>{parts}</span>;
+}
+
+// Syntax-colour and return a single STEP attribute value token.
+function renderAttrValue(
+  value: string,
+  onRefClick: (stepId: number) => void,
+  key: string
+): React.ReactNode {
+  const v = value.trim();
+  if (!v || v === '$') return <span key={key} className={SYNTAX_COLORS.null}>$</span>;
+  if (v === '*')       return <span key={key} className={SYNTAX_COLORS.null}>*</span>;
+  if (v.startsWith('#')) {
+    const id = parseInt(v.substring(1), 10);
+    if (!isNaN(id)) {
+      return <span key={key} className={SYNTAX_COLORS.reference} onClick={() => onRefClick(id)}>{v}</span>;
+    }
+  }
+  if (v.startsWith("'") && v.endsWith("'")) {
+    return <span key={key} className={SYNTAX_COLORS.string}>{v}</span>;
+  }
+  if (v === '.T.' || v === '.F.') {
+    return <span key={key} className={SYNTAX_COLORS.boolean}>{v}</span>;
+  }
+  if (v.startsWith('.') && v.endsWith('.')) {
+    return <span key={key} className={SYNTAX_COLORS.enum}>{v}</span>;
+  }
+  if (v !== '' && !isNaN(Number(v))) {
+    return <span key={key} className={SYNTAX_COLORS.number}>{v}</span>;
+  }
+  if (v.startsWith('(')) {
+    return renderNestedGroup(v, onRefClick, key);
+  }
+  return <span key={key}>{v}</span>;
+}
+
 // Component to display STEP line with syntax highlighting and expandable references
 function StepLineViewer({
   node,
@@ -120,7 +216,8 @@ function StepLineViewer({
   onReferenceClick,
   isSelected,
   onClick,
-  selectedRef
+  selectedRef,
+  schemaGen,
 }: {
   node: GraphNode;
   nodes: GraphNode[];
@@ -129,6 +226,7 @@ function StepLineViewer({
   isSelected?: boolean;
   onClick?: () => void;
   selectedRef: React.RefObject<HTMLDivElement> | null;
+  schemaGen: number;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -139,7 +237,7 @@ function StepLineViewer({
   const references = useMemo(() => {
     const refs: { stepId: number; position: number }[] = [];
     const refRegex = /#(\d+)/g;
-    let match;
+    let match: RegExpExecArray | null;
 
     while ((match = refRegex.exec(rawStepLine)) !== null) {
       const stepId = parseInt(match[1], 10);
@@ -160,57 +258,99 @@ function StepLineViewer({
     return Array.from(unique.values()).sort((a, b) => a.position - b.position);
   }, [rawStepLine, node.expressId]);
 
-  // Color-code the STEP line for syntax highlighting
+  // Render the STEP line with per-attribute tooltips sourced from the IFC schema.
   const renderStepLine = () => {
     if (!rawStepLine) return null;
 
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-    const refRegex = /#(\d+)/g;
-    let match;
-    const matches: Array<{ index: number; length: number; stepId: number }> = [];
+    const entityDef = getEntityDef(node.ifcType);
+    const schemaProps = getSchemaProps(node.ifcType).length > 0
+      ? getSchemaProps(node.ifcType)
+      : (entityDef?.properties ?? []);
 
-    while ((match = refRegex.exec(rawStepLine)) !== null) {
-      const stepId = parseInt(match[1], 10);
-      matches.push({ index: match.index, length: match[0].length, stepId });
+    // Locate the outer opening parenthesis
+    const openParenIdx = rawStepLine.indexOf('(');
+    if (openParenIdx < 0) {
+      return <span className={SYNTAX_COLORS.punctuation}>{rawStepLine}</span>;
     }
 
-    // Add non-reference parts and reference parts
-    for (const ref of matches) {
-      if (ref.index > lastIndex) {
-        const text = rawStepLine.substring(lastIndex, ref.index);
-        // Color code the text
-        if (text.includes('=')) {
-          parts.push(<span key={`text-${lastIndex}`} className={SYNTAX_COLORS.punctuation}>{text}</span>);
-        } else if (text.includes('(')) {
-          parts.push(<span key={`text-${lastIndex}`} className={SYNTAX_COLORS.punctuation}>{text.substring(0, text.lastIndexOf('('))}</span>);
-          parts.push(<span key={`paren-${lastIndex}`} className={SYNTAX_COLORS.punctuation}>{'('}</span>);
-        } else {
-          parts.push(<span key={`text-${lastIndex}`}>{text}</span>);
-        }
+    // Closing paren: last ) before the trailing ;
+    const semiIdx = rawStepLine.lastIndexOf(';');
+    const closeParenIdx = semiIdx >= 0
+      ? rawStepLine.lastIndexOf(')', semiIdx)
+      : rawStepLine.lastIndexOf(')');
+
+    const headerStr  = rawStepLine.substring(0, openParenIdx);
+    const attrContent = rawStepLine.substring(openParenIdx + 1, closeParenIdx >= 0 ? closeParenIdx : rawStepLine.length);
+    const footerStr  = closeParenIdx >= 0 ? rawStepLine.substring(closeParenIdx) : '';
+
+    // Render the #ID= ENTITYTYPE part
+    const eqIdx = headerStr.indexOf('=');
+    const headerParts: React.ReactNode[] = [];
+    if (eqIdx >= 0) {
+      headerParts.push(<span key="stepid" className={SYNTAX_COLORS.stepId}>{headerStr.substring(0, eqIdx).trim()}</span>);
+      headerParts.push(<span key="eq"     className={SYNTAX_COLORS.punctuation}>= </span>);
+      headerParts.push(<span key="etype"  className={SYNTAX_COLORS.entityType}>{headerStr.substring(eqIdx + 1).trim()}</span>);
+    } else {
+      headerParts.push(<span key="header" className={SYNTAX_COLORS.punctuation}>{headerStr}</span>);
+    }
+    headerParts.push(<span key="oparen" className={SYNTAX_COLORS.punctuation}>(</span>);
+
+    // Parse and render each top-level attribute
+    const attributes = parseTopLevelAttributes(attrContent);
+
+    const attrParts: React.ReactNode[] = attributes.map((attr, idx) => {
+      const schemaProp = schemaProps[idx];
+      const attrNode   = renderAttrValue(attr, onReferenceClick, `av-${idx}`);
+      const comma      = idx > 0 ? <span key={`c-${idx}`} className={SYNTAX_COLORS.punctuation}>,</span> : null;
+
+      if (!schemaProp) {
+        return (
+          <React.Fragment key={`attr-${idx}`}>
+            {comma}
+            {attrNode}
+          </React.Fragment>
+        );
       }
 
-      parts.push(
-        <span
-          key={`ref-${ref.stepId}-${ref.index}`}
-          className={SYNTAX_COLORS.reference}
-          onClick={() => onReferenceClick(ref.stepId)}
-        >
-          #{ref.stepId}
-        </span>
+      return (
+        <React.Fragment key={`attr-${idx}`}>
+          {comma}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help">{attrNode}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <div className="space-y-1 text-xs">
+                <div>
+                  <span className="font-semibold">{schemaProp.name}</span>
+                  {' · '}
+                  <span className="font-mono text-muted-foreground">{schemaProp.type}</span>
+                  {!schemaProp.required && <span className="text-muted-foreground/70"> (optional)</span>}
+                </div>
+                <div className="text-muted-foreground">{schemaProp.description}</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </React.Fragment>
       );
+    });
 
-      lastIndex = ref.index + ref.length;
-    }
-
-    if (lastIndex < rawStepLine.length) {
-      parts.push(
-        <span key="end">{rawStepLine.substring(lastIndex)}</span>
-      );
-    }
-
-    return parts;
+    return (
+      <>
+        {headerParts}
+        {attrParts}
+        <span className={SYNTAX_COLORS.punctuation}>{footerStr}</span>
+      </>
+    );
   };
+
+  // Memoize so the expensive parse + Tooltip tree only rebuilds when the node's
+  // data actually changes, not on every parent scroll/selection re-render.
+  const stepLineContent = useMemo(
+    () => renderStepLine(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawStepLine, node.ifcType, onReferenceClick, schemaGen]
+  );
 
   return (
     <div ref={selectedRef}>
@@ -239,7 +379,7 @@ function StepLineViewer({
 
         {/* STEP Line with syntax highlighting */}
         <div className="flex-1 min-w-0 break-words whitespace-pre-wrap">
-          {renderStepLine()}
+          {stepLineContent}
         </div>
       </div>
 
@@ -268,6 +408,7 @@ function StepLineViewer({
                 onReferenceClick={onReferenceClick}
                 isSelected={false}
                 selectedRef={null}
+                schemaGen={schemaGen}
               />
             );
           })}
@@ -422,6 +563,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
   const [goToId, setGoToId] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [schemaGen, setSchemaGen] = useState(getSchemaGeneration);
   const isProgrammaticScroll = useRef(false);
   const selectedRef = useRef<HTMLDivElement>(null);
   const entityListRef = useRef<HTMLDivElement>(null);
@@ -431,6 +573,9 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
   useEffect(() => {
     console.log('[IFCBrowser] Rendered with:', { nodesCount: nodes.length, edgesCount: edges.length });
   }, []);
+
+  // Re-render tooltips once the IFC schema JSONs have loaded
+  useEffect(() => onSchemaLoad(() => setSchemaGen(g => g + 1)), []);
 
   // Pre-compute reference index with property context
   const referenceIndexWithContext = useMemo(() => buildReferenceIndexWithContext(nodes), [nodes]);
@@ -788,7 +933,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                     <div>HEADER;</div>
                     {metadata?.ifcHeader?.fullHeader ? (
                       <>
-                        {metadata.ifcHeader.fullHeader.split('\n').map((line, idx) => (
+                        {metadata.ifcHeader.fullHeader.split('\n').map((line: string, idx: number) => (
                           <div key={idx}>{line}</div>
                         ))}
                       </>
@@ -837,6 +982,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                         isSelected={selectedNodeId === node.id}
                         onClick={() => onNodeSelect(node)}
                         selectedRef={selectedNodeId === node.id ? selectedRef : null}
+                        schemaGen={schemaGen}
                       />
                     ))
                   ) : (

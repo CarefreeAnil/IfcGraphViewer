@@ -69,6 +69,12 @@ const NODE_SIZES: Record<NodeType, number> = {
   Group: 10,              // IFC5
 };
 
+const MATERIAL_NODE_COLOR = '#8b5a2b'; // wood-tone brown, distinct from spatial blues/greens
+
+function isMaterialIfcType(ifcType?: string): boolean {
+  return (ifcType || '').toUpperCase().startsWith('IFCMATERIAL');
+}
+
 // Relationship explanations for hover tooltips
 function getRelationshipExplanation(relType: string): string {
   if (!relType) return 'Relationship between IFC entities';
@@ -76,6 +82,9 @@ function getRelationshipExplanation(relType: string): string {
   
   if (type.includes('AGGREGATES')) {
     return 'Whole-part decomposition (e.g., Building contains Storeys)';
+  }
+  if (type.includes('NESTS')) {
+    return 'Nesting relationship between a host object and its nested components';
   }
   if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) {
     return 'Spatial containment (e.g., Storey contains Walls)';
@@ -204,8 +213,8 @@ export function GraphVisualization({
 
       // Otherwise, show only checked types (inclusion model)
       if (relationshipFilters.showContainment && type.includes('CONTAINEDINSPATIALSTRUCTURE')) return true;
-      if (relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES'))) return true;
-      if (relationshipFilters.showConnects && (type.includes('CONNECTS') || type.includes('CONNECTEDTO') || type.includes('CONNECTION'))) return true;
+      if (relationshipFilters.showAggregation && (type.includes('AGGREGATES') || type.includes('DECOMPOSES') || type.includes('NESTS'))) return true;
+      if (relationshipFilters.showConnects && (type.includes('CONNECTS') || type.includes('CONNECTEDTO') || type.includes('CONNECTION') || type.includes('ASSIGNSTOGROUP'))) return true;
       if (relationshipFilters.showConnects && (type.includes('VOIDSELEMENT') || type.includes('FILLSELEMENT'))) return true; // ✅ Voids/Fills are structural connections
       if (relationshipFilters.showSpaceBoundary && type.includes('SPACEBOUNDARY')) return true;
       if (relationshipFilters.showProperties && (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET') || type.includes('DEFINESBYTYPE'))) return true;
@@ -268,7 +277,7 @@ export function GraphVisualization({
 
       // Only add HIERARCHY edges connecting path nodes
       // Do NOT add property, material, or other non-hierarchy edges
-      const hierarchyRelTypes = ['AGGREGATES', 'CONTAINEDINSPATIALSTRUCTURE', 'VOIDSELEMENT', 'FILLSELEMENT'];
+      const hierarchyRelTypes = ['AGGREGATES', 'NESTS', 'CONTAINEDINSPATIALSTRUCTURE', 'VOIDSELEMENT', 'FILLSELEMENT'];
       const edgeSet = new Set(edges.map(e => e.id));
       
       data.edges.forEach(edge => {
@@ -316,6 +325,8 @@ export function GraphVisualization({
       const n = nodeMap.get(id);
       if (!n || n.type !== 'element') return false;
       const ifcType = (n.ifcType ?? '').toUpperCase();
+      // Material/resource nodes should remain traversable via IfcRelAssociatesMaterial.
+      if (ifcType.startsWith('IFCMATERIAL')) return false;
       return !ifcType.endsWith('TYPE'); // keep IfcWallType, IfcWindowType etc.; exclude instances
     };
     const result = new Set<string>([selectedNodeId]);
@@ -593,8 +604,9 @@ export function GraphVisualization({
 
   useEffect(() => {
     if (graphRef.current) {
-      graphRef.current.d3Force('charge')?.strength(-150);
-      graphRef.current.d3Force('link')?.distance(60);
+      // Use a wider graph spread so nodes do not compress under the top control area.
+      graphRef.current.d3Force('charge')?.strength(-185);
+      graphRef.current.d3Force('link')?.distance(78);
     }
   }, [displayData]);
 
@@ -715,6 +727,7 @@ export function GraphVisualization({
       const isSelected = node.id === selectedNodeId;
       const isMetadataNode = graphNode.isMetadata || false;
       const isAuxiliary = isAuxiliaryType(graphNode.ifcType);
+      const isMaterialNode = isMaterialIfcType(graphNode.ifcType);
       
       // Path to root highlight
       const isInPath = pathToRootIds.has(node.id);
@@ -740,6 +753,9 @@ export function GraphVisualization({
       if (isAuxiliary) {
         size = size * 0.7; // auxiliary nodes smaller to reduce clutter
       }
+      if (isMaterialNode) {
+        size = size * 1.15;
+      }
       // Path nodes are slightly larger
       if (isInPath && !isSelected) {
         size = size * 1.3;
@@ -757,6 +773,9 @@ export function GraphVisualization({
       }
       if (isAuxiliary) {
         color = 'rgba(148,163,184,0.8)'; // slate tone, semi-transparent
+      }
+      if (isMaterialNode) {
+        color = MATERIAL_NODE_COLOR;
       }
 
       const x = node.x || 0;
@@ -804,7 +823,7 @@ export function GraphVisualization({
       }
 
       // Draw path highlight ring (orange/amber)
-      if (isInPath && showPathToRoot && !isSelected) {
+      if (isInPath && showPathToRoot) {
         ctx.beginPath();
         ctx.arc(x, y, size + 3, 0, 2 * Math.PI);
         ctx.strokeStyle = '#fb923c'; // Orange for spatial path nodes
@@ -944,7 +963,7 @@ export function GraphVisualization({
       const relTypeTarget = (targetIsRel ? targetNode?.ifcType : '') || '';
       const relType = (relTypeSource || relTypeTarget || (link as any).relationshipType || (link as any).type || '').toUpperCase();
       const getRelationshipColor = (type: string): string => {
-        if (type.includes('AGGREGATES')) return '#22d3ee'; // cyan - hierarchy
+        if (type.includes('AGGREGATES') || type.includes('NESTS')) return '#22d3ee'; // cyan - hierarchy
         if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) return '#a78bfa'; // purple - containment
         if (type.includes('DEFINESBYPROPERTIES')) return '#4ade80'; // green - properties
         if (type.includes('VOIDSELEMENT')) return '#f472b6'; // pink - openings
@@ -1052,6 +1071,7 @@ export function GraphVisualization({
             const ifcPropertyNameMap: Record<string, { relating: string; related: string }> = {
               IFCRELAGGREGATES: { relating: 'RelatingObject', related: 'RelatedObjects' },
               IFCRELDECOMPOSES: { relating: 'RelatingObject', related: 'RelatedObjects' },
+              IFCRELNESTS: { relating: 'RelatingObject', related: 'RelatedObjects' },
               IFCRELCONTAINEDINSPATIALSTRUCTURE: { relating: 'RelatingStructure', related: 'RelatedElements' },
               IFCRELVOIDSELEMENT: { relating: 'RelatingBuildingElement', related: 'RelatedOpeningElement' },
               IFCRELFILLSELEMENT: { relating: 'RelatingOpeningElement', related: 'RelatedBuildingElement' },
@@ -1065,6 +1085,7 @@ export function GraphVisualization({
             const inverseRoleLabelMap: Record<string, { relating: string; related: string }> = {
               IFCRELAGGREGATES: { relating: 'IsDecomposedBy', related: 'Decomposes' },
               IFCRELDECOMPOSES: { relating: 'IsDecomposedBy', related: 'Decomposes' },
+              IFCRELNESTS: { relating: 'IsNestedBy', related: 'Nests' },
               IFCRELCONTAINEDINSPATIALSTRUCTURE: { relating: 'ContainsElements', related: 'ContainedInStructure' },
               IFCRELVOIDSELEMENT: { relating: 'HasOpenings', related: 'VoidsElement' },
               IFCRELFILLSELEMENT: { relating: 'HasFillings', related: 'FillsVoid' },
@@ -1102,6 +1123,7 @@ export function GraphVisualization({
           // Convert common IFC relationship type names to readable format
           const relationshipMap: Record<string, string> = {
             'AGGREGATES': 'HasAggregates',
+            'NESTS': 'HasNestedParts',
             'CONTAINEDINSPATIALSTRUCTURE': 'Contains',
             'VOIDSELEMENT': 'HasOpening',
             'FILLSELEMENT': 'FillsVoids',
@@ -1376,7 +1398,9 @@ export function GraphVisualization({
       const gn = n as GraphNode;
       ctx.beginPath();
       ctx.arc(toMX(gn.x ?? 0), toMY(gn.y ?? 0), 2, 0, Math.PI * 2);
-      ctx.fillStyle = NODE_COLORS[gn.type] ?? NODE_COLORS.other;
+      ctx.fillStyle = isMaterialIfcType(gn.ifcType)
+        ? MATERIAL_NODE_COLOR
+        : (NODE_COLORS[gn.type] ?? NODE_COLORS.other);
       ctx.fill();
     }
     // Viewport rectangle
@@ -1557,7 +1581,7 @@ export function GraphVisualization({
       </div>
 
       {/* Control Buttons — consolidated single absolute div */}
-      <div className="absolute top-4 right-4 z-20 flex gap-2 items-center">
+      <div className="absolute top-4 right-4 z-20 flex flex-wrap justify-end gap-2 items-center max-w-[calc(100%-1rem)]">
         {/* Reset Graph — always visible */}
         <button
           onClick={handleResetGraph}
@@ -1614,7 +1638,7 @@ export function GraphVisualization({
               onClick={handleShowPathToRoot}
               className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
             >
-              Show Path to Root
+              Show Path to Project
             </button>
           </>
         )}
@@ -1625,9 +1649,10 @@ export function GraphVisualization({
             onClick={handleClearPathToRoot}
             className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shadow-lg"
           >
-            Clear Path
+            Clear Path to Project
           </button>
         )}
+
       </div>
 
       {/* Isolation info banner */}
@@ -1769,7 +1794,9 @@ export function GraphVisualization({
           }
           drawMinimapRef.current();
         }}
-        onRenderFramePost={() => drawMinimapRef.current()}
+        onRenderFramePost={() => {
+          drawMinimapRef.current();
+        }}
       />
 
       {/* Hover tooltip — fixed position, pointer-events-none */}

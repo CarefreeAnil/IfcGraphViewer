@@ -736,8 +736,10 @@ const Index = () => {
     );
   }, [parsedData?.graphData, learningMode, learningSample?.hasGuidedLearning, currentLearningLayer]);
 
-  // Use filtered graph data in learning mode (only for guided samples), full graph otherwise
-  const displayGraphData = learningMode ? filteredGraphDataForLearning : (parsedData?.graphData || { nodes: [], edges: [] });
+  // Use filtered graph data in learning mode (only for guided samples), full graph otherwise.
+  const displayGraphData = useMemo(() => {
+    return learningMode ? filteredGraphDataForLearning : (parsedData?.graphData || { nodes: [], edges: [] });
+  }, [learningMode, filteredGraphDataForLearning, parsedData?.graphData]);
 
   return (
     <div className="min-h-screen bg-background">

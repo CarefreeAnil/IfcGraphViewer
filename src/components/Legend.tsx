@@ -4,11 +4,12 @@ import { ChevronDown, ArrowRight } from 'lucide-react';
 import { NodeType } from '@/types/graph';
 
 // Colors mirror NODE_COLORS in GraphVisualization.tsx
-const NODE_LEGEND: { type: NodeType; label: string; color: string; description: string }[] = [
+const NODE_LEGEND: { type: string; label: string; color: string; description: string }[] = [
   { type: 'building',      label: 'Building',  color: '#22d3ee', description: 'Project · Site · Storey' },
   { type: 'space',         label: 'Space',     color: '#a78bfa', description: 'Room · Zone · Area' },
   { type: 'element',       label: 'Element',   color: '#fbbf24', description: 'Wall · Door · Slab…' },
   { type: 'property',      label: 'Property',  color: '#4ade80', description: 'PropertySet · QuantitySet' },
+  { type: 'material',      label: 'Material',  color: '#8b5a2b', description: 'IfcMaterial* chain nodes' },
   { type: 'relationship',  label: 'Relation',  color: '#f472b6', description: 'IFC relationship entity' },
 ];
 
