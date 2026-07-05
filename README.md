@@ -1,4 +1,8 @@
-﻿**Proof of Concept: Developing a Unified Web-Based Platform for IFC Graph Visualization, Exploration, and Validation**
+﻿**Web-Based Platform for IFC Graph Visualization, Exploration, and Validation: Proof of Concept**
+ 
+<img width="1339" height="218" alt="image" src="https://github.com/user-attachments/assets/f0bcc0ce-828a-4dc2-b8d3-c10ee07644cf" />
+
+Currently live at : https://ifcgraphviewer.onrender.com/
 
 ## About This Thesis Work
 
@@ -57,31 +61,30 @@ This research aims to democratize IFC education and exploration by providing a z
    - Click-to-select with emissive highlight and opacity dimming on other meshes
    - Lazy-loaded on demand to conserve memory
 
-**For IFC5 JSON files (`.ifcx`)**
+**For IFCX JSON files (`.ifcx`)**
 
-1. **Graph View (IFC5)** - Composed-object force-directed graph
+1. **Graph View** - Composed-object force-directed graph
    - Converts post-composition tree to graph via `convertComposedObjectToGraph()`
    - Configurable: show/hide geometry nodes, attribute nodes, inheritance edges, clustering by namespace
    - Relationship type filtering and cross-panel selection sync
 
-2. **Tree Browser (IFC5)** - Hierarchical composed-object browser
+2. **Tree Browser** - Hierarchical composed-object browser
    - Deep attribute search with match highlighting
    - IFC class badges and icons per node type
    - VirtualList rendering for performance
 
-3. **Property Viewer (IFC5)** - Namespace-aware attribute inspector
+3. **Property Viewer** - Namespace-aware attribute inspector
    - Attributes grouped by namespace (`bsi::ifc::`, `usd::usdgeom::`, `mesh::`, etc.)
    - 4x4 matrix display, geometry array summarization
    - Breadcrumb navigation and IFC class summary
 
-4. **Source Viewer (IFC5)** - Raw `.ifcx` JSON source display
+4. **Source Viewer** - Raw `.ifcx` JSON source display
    - Syntax-highlighted JSON (keys, strings, numbers, booleans in distinct colors)
    - Inline search with jump-to-match navigation
    - Large geometry array truncation to prevent browser freeze
    - Click-to-cross-select between source blocks and tree/graph
 
-5. **3D Viewer (IFC5)** - Interactive Three.js 3D scene rendered directly from the `ComposedObject` tree
-   - **Auto-loads** when an `.ifcx` file is parsed — no manual trigger needed
+5. **3D Viewer** - Interactive Three.js 3D scene rendered directly from the `ComposedObject` tree
    - Supports `Mesh` (PBR: base color, metalness, roughness; fallback Lambert diffuse), `Curve` (line geometry), and `Points` (including base64-encoded position/color buffers)
    - Z-up coordinate convention matching the IFC5/USD specification
    - Camera auto-fits to model bounding box on load
@@ -160,7 +163,6 @@ Planned client-side validation for offline use. Infrastructure exists in `src/li
 ```bash
 # Clone the repository
 git clone <YOUR_GIT_URL>
-cd "Thesis - POC"
 
 # Install frontend dependencies
 npm install
@@ -202,7 +204,7 @@ npm run build      # Outputs to dist/
 npm run preview    # Preview the production build locally
 ```
 
-Deploy the `dist/` folder to any static host (Vercel, Netlify, GitHub Pages, AWS S3, etc.).
+Deploy the `dist/` folder to any static host (Onrender, Vercel, Netlify, GitHub Pages, AWS S3, etc.).
 
 ---
 
@@ -542,6 +544,3 @@ Located in `public/testFiles/`:
 - [x] Export: graph as JSON/CSV/PNG, validation as JSON/CSV/text
 - [x] Keyboard shortcuts (Ctrl+F, Ctrl+S, Escape, Ctrl+Shift+V, etc.)
 - [x] Virtual scrolling and pagination for large entity lists
-
-### Planned / In Progress
-- [ ] Local validator (offline schema compliance checking without API)
