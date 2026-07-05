@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo, startTransition } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Info, GraduationCap, Shield, Lock, Code2 } from 'lucide-react';
+import { Info, GraduationCap, Shield, Lock, Code2, Github } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -77,6 +77,7 @@ const Index = () => {
   });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const graphCanvasRef = useRef<HTMLCanvasElement>(null);
+  const graphPanelRef = useRef<HTMLDivElement>(null);
   const ifcFileBufferRef = useRef<ArrayBuffer | undefined>(undefined);
   const ifc5ViewerContainerRef = useRef<HTMLDivElement>(null);
   const lastLoadedIFC5Ref = useRef<ComposedObject | null>(null);
@@ -590,9 +591,8 @@ const Index = () => {
     // Force a micro-task to allow cleanup
     setTimeout(() => {
       // Try to trigger garbage collection hint (if available)
-      if (window.gc) {
-        window.gc();
-      }
+      const maybeWindowWithGc = window as Window & { gc?: () => void };
+      maybeWindowWithGc.gc?.();
     }, 0);
   }, [navigate]);
 
@@ -806,6 +806,17 @@ const Index = () => {
                 <Info className="w-3.5 h-3.5" />
                 About this application
               </button>
+
+              <a
+                href="https://github.com/CarefreeAnil/IfcGraphViewer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card/40 text-xs text-foreground/80 hover:text-foreground hover:bg-card/70 transition-colors"
+                aria-label="Open-source project on GitHub"
+              >
+                <Github className="w-4 h-4" />
+                View source code on GitHub
+              </a>
             </motion.div>
           ) : (
             <motion.div
@@ -907,7 +918,7 @@ const Index = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="h-full relative flex flex-col">
+                    <div ref={graphPanelRef} className="h-full relative flex flex-col">
                       <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading graph visualization...</div>}>
                         <GraphVisualization
                           data={displayGraphData}
@@ -919,6 +930,10 @@ const Index = () => {
                           includeAuxiliaryLayer={includeAuxiliaryLayer}
                           relationshipFilters={relationshipFilters}
                           onStatsUpdate={setGraphStats}
+                          fullscreenTargetRef={graphPanelRef}
+                          onGraphCanvasReady={(canvas) => {
+                            graphCanvasRef.current = canvas;
+                          }}
                         />
                       </Suspense>
 
@@ -934,6 +949,7 @@ const Index = () => {
                         onIncludeAuxiliaryToggle={setIncludeAuxiliaryLayer}
                         relationshipFilters={relationshipFilters}
                         onRelationshipFilterChange={handleRelationshipFilterChange}
+                        fullscreenTargetRef={graphPanelRef}
                         searchInputRef={searchInputRef}
                         onExport={(format) => {
                           const { nodes, edges } = parsedData.graphData;
@@ -951,10 +967,8 @@ const Index = () => {
                               exportToSTEP(nodes);
                               break;
                             case 'png':
-                              // Get canvas from graph visualization
-                              const canvasElement = document.querySelector('canvas') as HTMLCanvasElement;
-                              if (canvasElement) {
-                                exportToPNG(canvasElement);
+                              if (graphCanvasRef.current) {
+                                exportToPNG(graphCanvasRef.current);
                               } else {
                                 toast.error('Could not access graph canvas');
                               }

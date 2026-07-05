@@ -98,8 +98,16 @@ export function IFC5GraphVisualization({
     };
 
     updateDimensions();
+    const container = containerRef.current;
+    const observer = typeof ResizeObserver !== 'undefined' && container
+      ? new ResizeObserver(updateDimensions)
+      : null;
+    if (container && observer) observer.observe(container);
     window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateDimensions);
+    };
   }, []);
 
   // Prepare data for force graph with filtering

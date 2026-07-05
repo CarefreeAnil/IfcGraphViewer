@@ -420,9 +420,16 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           renderer.setSize(w, h);
           framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
         };
+        const resizeObserver = typeof ResizeObserver !== 'undefined'
+          ? new ResizeObserver(handleResize)
+          : null;
+        if (containerRef.current && resizeObserver) {
+          resizeObserver.observe(containerRef.current);
+        }
         window.addEventListener('resize', handleResize);
 
         return () => {
+          resizeObserver?.disconnect();
           window.removeEventListener('resize', handleResize);
           renderer.domElement.removeEventListener('click', handleClick);
           meshesRef.current.forEach((mesh) => {

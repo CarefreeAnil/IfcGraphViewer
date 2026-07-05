@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { Network, RotateCcw, BookOpen, CheckSquare, GraduationCap } from 'lucide-react';
+import { Network, RotateCcw, BookOpen, CheckSquare, GraduationCap, Github } from 'lucide-react';
 import { ValidationDialog } from '@/components/ValidationDialog';
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 import { GraphNode } from '@/types/graph';
@@ -102,6 +102,18 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
         </div>
 
         <div className="flex items-center gap-3">
+          <a
+            href="https://github.com/CarefreeAnil/IfcGraphViewer"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card/70 hover:bg-card text-foreground transition-colors"
+            title="IfcGraphViewer on GitHub"
+            aria-label="IfcGraphViewer on GitHub"
+          >
+            <Github className="w-4 h-4" />
+            <span className="text-sm font-medium">GitHub</span>
+          </a>
+
           {/* Learn Button - Always visible */}
           <button
             onClick={() => navigate('/learn')}

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import ForceGraph2D, { ForceGraphMethods, NodeObject } from 'react-force-graph-2d';
 import { toast } from 'sonner';
-import { ZoomIn, ZoomOut, Maximize2, Crosshair } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Minimize2, Crosshair } from 'lucide-react';
 import { GraphData, GraphNode, NodeType } from '@/types/graph';
 import { getEntityColor, getEntityDisplayName } from '@/lib/ifcSchema';
 import { applyLoD, LoDLevel, GraphLoD, getLoDConfig, isAuxiliaryType } from '@/lib/graphLoD';
@@ -39,6 +39,8 @@ interface GraphVisualizationProps {
   onShowPathToRoot?: () => void;
   onClearPathToRoot?: () => void;
   showPathToRootButton?: boolean;
+  onGraphCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
+  fullscreenTargetRef?: React.RefObject<HTMLElement>;
 }
 
 const NODE_COLORS: Record<NodeType, string> = {
@@ -150,11 +152,14 @@ export function GraphVisualization({
   onShowPathToRoot,
   onClearPathToRoot,
   showPathToRootButton = false,
+  onGraphCanvasReady,
+  fullscreenTargetRef,
 }: GraphVisualizationProps) {
   const graphRef = useRef<ForceGraphMethods>();
   const currentZoomRef = useRef<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const graphCanvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [connectedNodeIds, setConnectedNodeIds] = useState<Set<string>>(new Set());
@@ -178,6 +183,7 @@ export function GraphVisualization({
 
   // Minimap
   const [minimapVisible, setMinimapVisible] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const drawMinimapRef = useRef<() => void>(() => {});
 
   // Track selection state for animations
@@ -598,9 +604,81 @@ export function GraphVisualization({
     };
 
     updateDimensions();
+    const container = containerRef.current;
+    const observer = typeof ResizeObserver !== 'undefined' && container
+      ? new ResizeObserver(updateDimensions)
+      : null;
+    if (container && observer) observer.observe(container);
     window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateDimensions);
+    };
   }, []);
+
+  // Keep a reliable reference to the main force-graph canvas (not minimap).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const syncMainCanvas = () => {
+      const canvases = Array.from(container.querySelectorAll('canvas')) as HTMLCanvasElement[];
+      if (canvases.length === 0) {
+        graphCanvasElementRef.current = null;
+        onGraphCanvasReady?.(null);
+        return;
+      }
+
+      // Main graph canvas is the largest canvas in this component.
+      const mainCanvas = canvases.reduce((largest, current) => {
+        const largestArea = largest.width * largest.height;
+        const currentArea = current.width * current.height;
+        return currentArea > largestArea ? current : largest;
+      }, canvases[0]);
+
+      if (graphCanvasElementRef.current !== mainCanvas) {
+        graphCanvasElementRef.current = mainCanvas;
+        onGraphCanvasReady?.(mainCanvas);
+      }
+    };
+
+    syncMainCanvas();
+    const rafId = requestAnimationFrame(syncMainCanvas);
+    const mutationObserver = new MutationObserver(syncMainCanvas);
+    mutationObserver.observe(container, { childList: true, subtree: true });
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      mutationObserver.disconnect();
+      graphCanvasElementRef.current = null;
+      onGraphCanvasReady?.(null);
+    };
+  }, [onGraphCanvasReady]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const fullscreenTarget = fullscreenTargetRef?.current ?? containerRef.current;
+      setIsFullscreen(document.fullscreenElement === fullscreenTarget);
+    };
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const fullscreenTarget = fullscreenTargetRef?.current ?? containerRef.current;
+    if (!fullscreenTarget) return;
+
+    try {
+      if (document.fullscreenElement === fullscreenTarget) {
+        await document.exitFullscreen();
+      } else {
+        await fullscreenTarget.requestFullscreen();
+      }
+    } catch {
+      toast.error('Fullscreen is not available in this browser context');
+    }
+  }, [fullscreenTargetRef]);
 
   useEffect(() => {
     if (graphRef.current) {
@@ -1420,10 +1498,14 @@ export function GraphVisualization({
   // CRITICAL: Setup manual canvas click detection for nodes force-graph's onNodeClick misses
   // This is necessary because force-graph-2d has unreliable hit detection for dense graphs
   useEffect(() => {
+    if (isFullscreen) {
+      return;
+    }
+
     const handleCanvasPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return; // Only left click
       
-      const canvas = containerRef.current?.querySelector('canvas') as HTMLCanvasElement;
+      const canvas = graphCanvasElementRef.current;
       if (!canvas || !graphRef.current) return;
       
       // Get click in canvas coordinates
@@ -1467,7 +1549,7 @@ export function GraphVisualization({
       canvas.addEventListener('pointerdown', handleCanvasPointerDown, true);
       return () => canvas.removeEventListener('pointerdown', handleCanvasPointerDown, true);
     }
-  }, [displayData.nodes, handleNodeClick]);
+  }, [displayData.nodes, handleNodeClick, isFullscreen]);
 
   // Hover disabled to prevent animation instability
 
@@ -1477,7 +1559,7 @@ export function GraphVisualization({
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (!graphRef.current || !containerRef.current) return;
       
-      const canvas = containerRef.current.querySelector('canvas') as HTMLCanvasElement;
+      const canvas = graphCanvasElementRef.current;
       if (!canvas) {
         console.log('[OverlayClick] No canvas found');
         return;
@@ -1589,6 +1671,17 @@ export function GraphVisualization({
           title="Reset graph view and clear selections"
         >
           Reset Graph
+        </button>
+
+        <button
+          onClick={toggleFullscreen}
+          className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+          title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          </span>
         </button>
 
         {/* Isolation controls */}
@@ -1716,7 +1809,7 @@ export function GraphVisualization({
         }}
         onBackgroundClick={(event) => {
           // Manual node detection for background clicks
-          const canvas = containerRef.current?.querySelector('canvas');
+          const canvas = graphCanvasElementRef.current;
           if (canvas && graphRef.current) {
             const rect = canvas.getBoundingClientRect();
             const screenX = (event?.clientX ?? 0) - rect.left;

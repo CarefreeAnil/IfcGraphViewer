@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { Search, Filter, Box, Layers, Building, Hash, Link2, ChevronDown, Download, Gauge, X } from 'lucide-react';
 import { NodeType, GraphNode } from '@/types/graph';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +36,7 @@ interface GraphControlsProps {
     showSpaceBoundary: boolean;
   };
   onRelationshipFilterChange?: (filter: 'containment' | 'aggregation' | 'properties' | 'auxiliary' | 'connects' | 'associates' | 'spaceBoundary', value: boolean) => void;
+  fullscreenTargetRef?: React.RefObject<HTMLElement>;
 }
 
 const TYPE_FILTERS: { type: NodeType; label: string; icon: React.ReactNode; color: string }[] = [
@@ -81,8 +82,26 @@ export function GraphControls({
     showSpaceBoundary: false,
   },
   onRelationshipFilterChange,
+  fullscreenTargetRef,
 }: GraphControlsProps) {
   const [showFilterDrawer, setShowFilterDrawer] = useState(false);
+  const [showLoDMenu, setShowLoDMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const fullscreenTarget = fullscreenTargetRef?.current;
+      setIsFullscreen(!!fullscreenTarget && document.fullscreenElement === fullscreenTarget);
+      // Close floating menus when fullscreen mode toggles
+      setShowLoDMenu(false);
+      setShowExportMenu(false);
+    };
+
+    onFullscreenChange();
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, [fullscreenTargetRef]);
 
   // Count active filters for badge
   const activeRelFilters = Object.values(relationshipFilters).filter(Boolean).length;
@@ -116,7 +135,7 @@ export function GraphControls({
     <motion.div
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="absolute top-4 left-4 flex flex-col gap-3"
+      className="absolute top-4 left-4 z-[70] flex flex-col gap-3"
     >
       {/* Top Bar: Search, LoD, Export, Filter Button */}
       <div className="flex items-center gap-2">
@@ -134,7 +153,7 @@ export function GraphControls({
         </div>
 
         {/* LoD Control */}
-        {onLoDChange && (
+        {onLoDChange && !isFullscreen && (
           <TooltipProvider>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -283,8 +302,43 @@ export function GraphControls({
           </TooltipProvider>
         )}
 
+        {onLoDChange && isFullscreen && (
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowLoDMenu(v => !v);
+                setShowExportMenu(false);
+              }}
+              className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+            >
+              <Gauge className="w-3.5 h-3.5" />
+              {getLoDLabel(graphLoD)}
+            </Button>
+            {showLoDMenu && (
+              <div className="absolute top-full left-0 mt-1 w-56 rounded-md border bg-popover p-1 text-popover-foreground shadow-md z-[80]">
+                <div className="px-2 py-1.5 text-sm font-semibold">LoD Level</div>
+                <div className="h-px bg-muted my-1" />
+                {[4, 3, 2, 1].map((lod) => (
+                  <button
+                    key={lod}
+                    onClick={() => {
+                      onLoDChange(lod as 1 | 2 | 3 | 4 | 5);
+                      setShowLoDMenu(false);
+                    }}
+                    className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <span className={graphLoD === lod ? 'font-bold' : ''}>{getLoDLabel(lod as 1 | 2 | 3 | 4 | 5)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Export Menu */}
-        {onExport && (
+        {onExport && !isFullscreen && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="gap-2 bg-card/95 backdrop-blur-md text-xs">
@@ -301,6 +355,33 @@ export function GraphControls({
               <DropdownMenuItem onClick={() => onExport('png')}>Export Graph as PNG</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        )}
+
+        {onExport && isFullscreen && (
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowExportMenu(v => !v);
+                setShowLoDMenu(false);
+              }}
+              className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </Button>
+            {showExportMenu && (
+              <div className="absolute top-full left-0 mt-1 w-56 rounded-md border bg-popover p-1 text-popover-foreground shadow-md z-[80]">
+                <div className="px-2 py-1.5 text-sm font-semibold">Export Format</div>
+                <div className="h-px bg-muted my-1" />
+                <button onClick={() => { onExport('json'); setShowExportMenu(false); }} className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent">Export as JSON</button>
+                <button onClick={() => { onExport('csv-nodes'); setShowExportMenu(false); }} className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent">Export Nodes as CSV</button>
+                <button onClick={() => { onExport('csv-edges'); setShowExportMenu(false); }} className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent">Export Edges as CSV</button>
+                <button onClick={() => { onExport('png'); setShowExportMenu(false); }} className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent">Export Graph as PNG</button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Filter Button with active count badge */}
