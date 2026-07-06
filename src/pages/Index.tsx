@@ -62,6 +62,7 @@ const Index = () => {
   const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
   const [viewer3DLoaded, setViewer3DLoaded] = useState(false); // 3D viewer unloaded by default
   const [topologyPath, setTopologyPath] = useState<TopologyPathStep[] | null>(null); // route from the Topology panel, rendered in 3D
+  const [walkPath, setWalkPath] = useState<Array<[number, number, number]> | null>(null); // navmesh walking route, rendered in 3D
   const [ifc5GraphLoaded, setIfc5GraphLoaded] = useState(false); // IFC5 graph unloaded by default
   const [isValidating, setIsValidating] = useState(false); // Validation in progress
   const [relationshipFilters, setRelationshipFilters] = useState({
@@ -1070,6 +1071,7 @@ const Index = () => {
                             ifcFileBuffer={ifcFileBufferRef.current}
                             isContextOnly={false}
                             pathHighlight={topologyPath}
+                            walkPath={walkPath}
                           />
                         </Suspense>
                       )}
@@ -1124,6 +1126,7 @@ const Index = () => {
                           selectedNodeId={selectedNode?.id || null}
                           onNodeSelect={handleNodeClick}
                           onPathHighlight={setTopologyPath}
+                          onWalkPath={setWalkPath}
                           ifcFileBuffer={ifcFileBufferRef.current}
                         />
                       </Suspense>

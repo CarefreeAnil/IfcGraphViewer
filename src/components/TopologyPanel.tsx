@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D, { ForceGraphMethods, NodeObject } from 'react-force-graph-2d';
 import {
-  Waypoints, Route, Activity, Boxes, Download, AlertTriangle, Crosshair, X,
+  Waypoints, Route, Activity, Boxes, Download, AlertTriangle, Crosshair, X, Footprints,
 } from 'lucide-react';
 import { GraphData, GraphNode } from '@/types/graph';
 import {
@@ -31,11 +31,12 @@ import {
   KernelAdjacencyInput, EXTERIOR_NODE_ID,
 } from '@/lib/topology/tgraph';
 import type { KernelResult } from '@/workers/topologyKernelWorker';
+import type { NavReadyMessage, RouteResultMessage, NavErrorMessage } from '@/workers/navMeshWorker';
 import {
   buildGraphIndex, shortestPath, betweennessCentrality, closenessCentrality,
   degreeCentrality, connectedComponents, diameter, density,
 } from '@/lib/topology/algorithms';
-import { exportTopologyToJSON, exportTopologyEdgesToCSV } from '@/lib/exportUtils';
+import { exportTopologyToJSON, exportTopologyEdgesToCSV, exportTopologyToTurtle } from '@/lib/exportUtils';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -47,6 +48,8 @@ interface TopologyPanelProps {
   onNodeSelect: (node: GraphNode | null) => void; // same handler as the other panels
   /** Route steps for the 3D viewer (hop-colored); null clears the 3D route. */
   onPathHighlight?: (steps: TopologyPathStep[] | null) => void;
+  /** Navmesh walking-route points for the 3D viewer; null clears it. */
+  onWalkPath?: (points: Array<[number, number, number]> | null) => void;
   /** Raw IFC buffer — enables the optional geometry-kernel cross-check. */
   ifcFileBuffer?: ArrayBuffer | null;
 }
@@ -109,7 +112,7 @@ function hopColor(step: number, totalHops: number): string {
 
 type FGNode = NodeObject & TGraphNode;
 
-export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighlight, ifcFileBuffer }: TopologyPanelProps) {
+export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighlight, onWalkPath, ifcFileBuffer }: TopologyPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods>();
   const hasAutoFittedRef = useRef(false);
@@ -126,6 +129,8 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
   const [kernelState, setKernelState] = useState<KernelState>('idle');
   const [kernelAdjacency, setKernelAdjacency] = useState<KernelAdjacencyInput[] | null>(null);
   const [kernelSummary, setKernelSummary] = useState<string | null>(null);
+  // expressId → exact volume (m³) / area (m²) from the kernel
+  const [roomMetrics, setRoomMetrics] = useState<Map<number, { volume: number; area: number }> | null>(null);
   const kernelWorkerRef = useRef<Worker | null>(null);
 
   const runGeometryCheck = useCallback(() => {
@@ -142,6 +147,7 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
         setKernelAdjacency(msg.adjacency.map(a => ({
           expressIdA: a.expressIdA, expressIdB: a.expressIdB, gap: a.gap,
         })));
+        setRoomMetrics(new Map(msg.metrics.map(m => [m.expressId, { volume: m.volume, area: m.area }])));
         setKernelSummary(
           `${msg.cellCount} cells · ${msg.adjacency.length} pairs · ${msg.elapsedMs} ms`
           + (msg.failedSpaces.length > 0 ? ` · ${msg.failedSpaces.length} unmeshable` : ''),
@@ -170,6 +176,75 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
     kernelWorkerRef.current = null;
   }, []);
 
+  // ── Navmesh walking routes (recast-navigation, bundled) ───────────────────
+  type NavState = 'idle' | 'building' | 'ready' | 'error';
+  const [navState, setNavState] = useState<NavState>('idle');
+  const [navSummary, setNavSummary] = useState<string | null>(null);
+  const [walkEnabled, setWalkEnabled] = useState(false);
+  const navWorkerRef = useRef<Worker | null>(null);
+  const navBuiltRef = useRef(false);
+  const pendingRouteRef = useRef<{ from: number; to: number } | null>(null);
+  const onWalkPathRef = useRef(onWalkPath);
+  useEffect(() => { onWalkPathRef.current = onWalkPath; });
+
+  const ensureNavWorker = useCallback((): Worker => {
+    if (navWorkerRef.current) return navWorkerRef.current;
+    const worker = new Worker(new URL('../workers/navMeshWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent<NavReadyMessage | RouteResultMessage | NavErrorMessage>) => {
+      const msg = event.data;
+      if (msg.type === 'navReady') {
+        navBuiltRef.current = true;
+        setNavState('ready');
+        setNavSummary(`navmesh: ${msg.triangleCount.toLocaleString()} tris · ${msg.elapsedMs} ms`);
+        if (pendingRouteRef.current) {
+          worker.postMessage({ type: 'route', fromExpressId: pendingRouteRef.current.from, toExpressId: pendingRouteRef.current.to });
+          pendingRouteRef.current = null;
+        }
+      } else if (msg.type === 'routeResult') {
+        onWalkPathRef.current?.(msg.points);
+        setNavSummary(`${msg.length.toFixed(1)} m walked · ${msg.points.length} waypoints`);
+        setNavState('ready');
+      } else {
+        setNavSummary(msg.message);
+        setNavState('error');
+      }
+    };
+    worker.onerror = (e) => { setNavSummary(e.message || 'navmesh worker failed'); setNavState('error'); };
+    navWorkerRef.current = worker;
+    return worker;
+  }, []);
+
+  // Route (or queue a build then route) between two space expressIds
+  const requestWalk = useCallback((fromExpressId: number, toExpressId: number) => {
+    if (!ifcFileBuffer) return;
+    const worker = ensureNavWorker();
+    if (navBuiltRef.current) {
+      setNavState('ready');
+      worker.postMessage({ type: 'route', fromExpressId, toExpressId });
+    } else {
+      pendingRouteRef.current = { from: fromExpressId, to: toExpressId };
+      setNavState('building');
+      const copy = ifcFileBuffer.slice(0);
+      worker.postMessage({ type: 'build', buffer: copy }, [copy]);
+    }
+  }, [ifcFileBuffer, ensureNavWorker]);
+
+  useEffect(() => () => {
+    navWorkerRef.current?.terminate();
+    navWorkerRef.current = null;
+    onWalkPathRef.current?.(null);
+  }, []);
+
+  // New file invalidates the cached navmesh
+  useEffect(() => {
+    navWorkerRef.current?.terminate();
+    navWorkerRef.current = null;
+    navBuiltRef.current = false;
+    setNavState('idle');
+    setNavSummary(null);
+    setWalkEnabled(false);
+  }, [data]);
+
   // ── Build the topology graph (memoized per file) ──────────────────────────
   const baseGraph = useMemo(() => buildTGraph(data), [data]);
 
@@ -177,6 +252,7 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
   useEffect(() => {
     setKernelAdjacency(null);
     setKernelSummary(null);
+    setRoomMetrics(null);
     setKernelState('idle');
   }, [baseGraph]);
 
@@ -234,6 +310,19 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
   }, [tgraph, centralityValues]);
 
   const maxCentrality = centralityRanking.length > 0 ? centralityRanking[0].value : 0;
+
+  // Kernel-measured volume/area for a node (null before the geometry check)
+  const metricFor = useCallback((node: TGraphNode): { volume: number; area: number } | null => {
+    if (!roomMetrics || node.expressId === undefined) return null;
+    return roomMetrics.get(node.expressId) ?? null;
+  }, [roomMetrics]);
+
+  const totalVolume = useMemo(() => {
+    if (!roomMetrics) return null;
+    let sum = 0;
+    for (const { volume } of roomMetrics.values()) sum += volume;
+    return sum;
+  }, [roomMetrics]);
 
   const pathResult = useMemo(() => {
     if (!pathStart || !pathEnd) return null;
@@ -568,6 +657,24 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
 
   useEffect(() => () => { onPathHighlightRef.current?.(null); }, []);
 
+  // Walking route: recompute whenever the walk toggle is on and both room
+  // endpoints are set; clear the 3D route when off, out of path mode, or the
+  // endpoints aren't both spaces.
+  useEffect(() => {
+    if (!walkEnabled || mode !== 'path' || !pathStart || !pathEnd) {
+      onWalkPathRef.current?.(null);
+      return;
+    }
+    const from = nodeById.get(pathStart);
+    const to = nodeById.get(pathEnd);
+    if (from?.kind === 'space' && to?.kind === 'space'
+        && from.expressId !== undefined && to.expressId !== undefined) {
+      requestWalk(from.expressId, to.expressId);
+    } else {
+      onWalkPathRef.current?.(null);
+    }
+  }, [walkEnabled, mode, pathStart, pathEnd, nodeById, requestWalk]);
+
   // Match the main graph's force tuning so layout density feels the same
   useEffect(() => {
     graphRef.current?.d3Force('charge')?.strength(-185);
@@ -623,6 +730,9 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => exportTopologyEdgesToCSV(tgraph)}>
                 Edge list (CSV)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportTopologyToTurtle(tgraph, roomMetrics)}>
+                Building topology (BOT / Turtle)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -691,6 +801,7 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
               {kernelMerge.confirmed} confirmed
               {kernelMerge.kernelOnly > 0 && <> · {kernelMerge.kernelOnly} kernel-only</>}
               {kernelMerge.relationshipOnly > 0 && <> · {kernelMerge.relationshipOnly} unsupported</>}
+              {totalVolume !== null && <> · {totalVolume.toFixed(0)} m³ total</>}
               {kernelSummary && <> — {kernelSummary}</>}
             </span>
           )}
@@ -713,11 +824,12 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
           backgroundColor="transparent"
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={paintPointerArea}
-          nodeLabel={(node: FGNode) =>
-            node.kind === 'portal'
-              ? `${node.label} — ${node.portalType} (${node.ifcType})`
-              : `${node.label}${node.storeyName ? ` — ${node.storeyName}` : ''} (${node.ifcType})`
-          }
+          nodeLabel={(node: FGNode) => {
+            if (node.kind === 'portal') return `${node.label} — ${node.portalType} (${node.ifcType})`;
+            const m = metricFor(node);
+            const metricSuffix = m ? ` · ${m.volume.toFixed(1)} m³ · ${m.area.toFixed(1)} m²` : '';
+            return `${node.label}${node.storeyName ? ` — ${node.storeyName}` : ''} (${node.ifcType})${metricSuffix}`;
+          }}
           linkCanvasObject={paintLink}
           onNodeClick={handleNodeClick}
           onBackgroundClick={handleBackgroundClick}
@@ -789,21 +901,25 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
               ))}
               <span className="ml-auto text-[9px] text-muted-foreground">circulation network</span>
             </div>
-            {centralityRanking.slice(0, 8).map(({ node, value }) => (
-              <button
-                key={node.id}
-                onClick={() => selectFromList(node.id)}
-                className="w-full flex items-center gap-2 text-left group"
-              >
-                <span className="text-[10px] truncate flex-1 group-hover:text-primary transition-colors">
-                  {node.label}
-                </span>
-                <span className="h-1.5 rounded bg-primary/60" style={{ width: `${Math.max(2, maxCentrality > 0 ? (value / maxCentrality) * 72 : 0)}px` }} />
-                <span className="text-[9px] font-mono text-muted-foreground w-12 text-right">
-                  {value.toFixed(3)}
-                </span>
-              </button>
-            ))}
+            {centralityRanking.slice(0, 8).map(({ node, value }) => {
+              const m = metricFor(node);
+              return (
+                <button
+                  key={node.id}
+                  onClick={() => selectFromList(node.id)}
+                  className="w-full flex items-center gap-2 text-left group"
+                >
+                  <span className="text-[10px] truncate flex-1 group-hover:text-primary transition-colors">
+                    {node.label}
+                    {m && <span className="text-muted-foreground/70"> · {m.volume.toFixed(1)} m³</span>}
+                  </span>
+                  <span className="h-1.5 rounded bg-primary/60" style={{ width: `${Math.max(2, maxCentrality > 0 ? (value / maxCentrality) * 72 : 0)}px` }} />
+                  <span className="text-[9px] font-mono text-muted-foreground w-12 text-right">
+                    {value.toFixed(3)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -860,6 +976,33 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Real walking route via navmesh (recast-navigation) */}
+            {pathStart && pathEnd && ifcFileBuffer && (
+              <div className="pt-1.5 mt-1 border-t border-border/60 space-y-1">
+                <button
+                  onClick={() => setWalkEnabled(v => !v)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[9px] transition-colors border',
+                    walkEnabled
+                      ? 'border-amber-500/40 text-amber-400 bg-amber-500/10'
+                      : 'border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10',
+                  )}
+                  title="Compute the real walking route through door openings (navmesh) and show it in 3D"
+                >
+                  <Footprints className="w-3 h-3" />
+                  {walkEnabled ? 'Walking route on' : 'Walk in 3D'}
+                </button>
+                {walkEnabled && (
+                  <p className="text-[9px] text-muted-foreground leading-tight">
+                    {navState === 'building' && <span className="animate-pulse">building navmesh from the model…</span>}
+                    {navState === 'error' && <span className="text-destructive">navmesh: {navSummary}</span>}
+                    {(navState === 'ready') && navSummary}
+                    {navState === 'ready' && <span className="block text-muted-foreground/70">true walking distance through doorways — orange tube in the 3D viewer</span>}
+                  </p>
+                )}
               </div>
             )}
           </div>

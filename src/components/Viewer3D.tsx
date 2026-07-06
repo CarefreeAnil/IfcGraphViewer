@@ -33,9 +33,10 @@ interface Viewer3DProps {
   ifcFileBuffer?: ArrayBuffer;
   isContextOnly?: boolean;  // OPTIMIZATION: Skip costly overlays for context-only view
   pathHighlight?: PathHighlightStep[] | null; // topology panel shortest-path route
+  walkPath?: Array<[number, number, number]> | null; // navmesh walking route (world points)
 }
 
-export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, isContextOnly = true, pathHighlight }: Viewer3DProps) {
+export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, isContextOnly = true, pathHighlight, walkPath }: Viewer3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -72,6 +73,8 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   const pathMeshesRef = useRef<THREE.Mesh[]>([]);
   const pathPendingRef = useRef<Map<number, PathHighlightStep>>(new Map());
   const pathBBoxRef = useRef<THREE.Box3>(new THREE.Box3());
+  // Navmesh walking route: a bright tube + waypoint markers
+  const walkGroupRef = useRef<THREE.Group | null>(null);
 
   // Handle selection from other components or internal clicks
   useEffect(() => {
@@ -345,6 +348,84 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
       }
     }
   }, [pathHighlight, selectedNodeId, viewerReadyTick]);
+
+  // ── Navmesh walking route → glowing tube + waypoint dots ──────────────────
+  useEffect(() => {
+    const scene = sceneRef.current;
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+
+    if (walkGroupRef.current && scene) {
+      scene.remove(walkGroupRef.current);
+      walkGroupRef.current.traverse(obj => {
+        const mesh = obj as THREE.Mesh;
+        mesh.geometry?.dispose?.();
+        if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+      });
+      walkGroupRef.current = null;
+    }
+
+    if (!walkPath || walkPath.length < 2 || !scene) return;
+
+    const group = new THREE.Group();
+    const points = walkPath.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+    const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.1);
+    const tube = new THREE.TubeGeometry(curve, Math.max(16, points.length * 6), 0.06, 8, false);
+    const tubeMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#f59e0b'),
+      emissive: new THREE.Color('#f59e0b'),
+      emissiveIntensity: 0.7,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false, // route reads over the model
+    });
+    const tubeMesh = new THREE.Mesh(tube, tubeMat);
+    tubeMesh.renderOrder = 999;
+    group.add(tubeMesh);
+
+    // Waypoint dots (start green, end red, corners amber)
+    const sphere = new THREE.SphereGeometry(0.12, 12, 8);
+    points.forEach((p, i) => {
+      const color = i === 0 ? '#22c55e' : i === points.length - 1 ? '#ef4444' : '#fbbf24';
+      const dot = new THREE.Mesh(sphere.clone(), new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color), emissive: new THREE.Color(color),
+        emissiveIntensity: 0.6, depthTest: false,
+      }));
+      dot.position.copy(p);
+      dot.renderOrder = 1000;
+      group.add(dot);
+    });
+
+    scene.add(group);
+    walkGroupRef.current = group;
+
+    // Frame the route
+    if (cameraRef.current && controlsRef.current) {
+      const box = new THREE.Box3().setFromPoints(points);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        const fov = cameraRef.current.fov * (Math.PI / 180);
+        const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.3;
+        const dir = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize();
+        const targetPos = center.clone().add(dir.multiplyScalar(dist));
+        const startPos = cameraRef.current.position.clone();
+        const startTarget = controlsRef.current.target.clone();
+        const dur = 800, t0 = Date.now();
+        const step = () => {
+          const t = Math.min((Date.now() - t0) / dur, 1);
+          const e = 1 - Math.pow(1 - t, 3);
+          cameraRef.current!.position.lerpVectors(startPos, targetPos, e);
+          controlsRef.current!.target.lerpVectors(startTarget, center, e);
+          controlsRef.current!.update();
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+          if (t < 1) requestAnimationFrame(step);
+        };
+        step();
+      }
+    }
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+  }, [walkPath]);
 
   useEffect(() => {
     if (!containerRef.current) return;

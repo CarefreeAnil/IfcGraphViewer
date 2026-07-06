@@ -18,7 +18,8 @@ import * as WebIFC from 'web-ifc';
 
 // Pinned to an exact commit: immutable on the CDN (no stale-cache surprises)
 // and the analysis stays reproducible. Bump deliberately on kernel upgrades.
-const KERNEL_VERSION = '55fd5f7e507106ed4e3edc53c3bd12a0ac7fdeb1';
+// v0.3.0 — adds topologyVolume / topologySurfaceArea used below.
+const KERNEL_VERSION = '41841bdf4e903870bc132ba232cbf0e1b10fd623';
 const KERNEL_BASE = `https://cdn.jsdelivr.net/gh/jonatanjacobsson/topologic-wasm@${KERNEL_VERSION}/dist`;
 const KERNEL_URL = `${KERNEL_BASE}/topologic.js`;
 const KERNEL_WASM_URL = `${KERNEL_BASE}/topologic.wasm`;
@@ -30,9 +31,16 @@ export interface KernelAdjacency {
   midpoint: [number, number, number];
 }
 
+export interface KernelSpaceMetric {
+  expressId: number;
+  volume: number;                    // m³ for metre models
+  area: number;                      // m² surface area
+}
+
 export interface KernelResult {
   type: 'kernelResult';
   adjacency: KernelAdjacency[];
+  metrics: KernelSpaceMetric[];      // exact per-space volume/area from OCCT
   cellCount: number;
   failedSpaces: number[];            // expressIds whose mesh didn't close
   kernelVersion: string;
@@ -109,10 +117,20 @@ self.onmessage = async (event: MessageEvent<AnalyzeMessage>) => {
     const cells: unknown[] = [];
     const cellExpressIds: number[] = [];
     const failedSpaces: number[] = [];
+    const metrics: KernelSpaceMetric[] = [];
     for (const space of spaces) {
       try {
-        cells.push(T.cellFromMesh(space.positions, space.indices, 1e-4));
+        const cell = T.cellFromMesh(space.positions, space.indices, 1e-4);
+        cells.push(cell);
         cellExpressIds.push(space.expressId);
+        // Exact volume/area straight from OCCT (metre models → m³ / m²)
+        try {
+          metrics.push({
+            expressId: space.expressId,
+            volume: Math.abs(T.topologyVolume(cell)),
+            area: T.topologySurfaceArea(cell),
+          });
+        } catch { /* metric failure is non-fatal — adjacency still stands */ }
       } catch {
         failedSpaces.push(space.expressId);
       }
@@ -134,6 +152,7 @@ self.onmessage = async (event: MessageEvent<AnalyzeMessage>) => {
     const result: KernelResult = {
       type: 'kernelResult',
       adjacency,
+      metrics,
       cellCount: cells.length,
       failedSpaces,
       kernelVersion: T.version(),
