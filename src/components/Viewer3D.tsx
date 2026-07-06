@@ -6,6 +6,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AlertCircle } from 'lucide-react';
+// Type-only import — erased at compile time, keeps the topology chunk decoupled.
+import type { TopologyPathStep as PathHighlightStep } from '@/lib/topology/tgraph';
 
 // Local mirror of the worker's MeshPayload shape — kept here (not imported from the
 // worker file) to prevent the bundler from pulling web-ifc WASM into the main bundle.
@@ -30,9 +32,11 @@ interface Viewer3DProps {
   onSelectNode?: (nodeId: string) => void;
   ifcFileBuffer?: ArrayBuffer;
   isContextOnly?: boolean;  // OPTIMIZATION: Skip costly overlays for context-only view
+  pathHighlight?: PathHighlightStep[] | null; // topology panel shortest-path route
+  walkPath?: Array<[number, number, number]> | null; // navmesh walking route (world points)
 }
 
-export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, isContextOnly = true }: Viewer3DProps) {
+export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, isContextOnly = true, pathHighlight, walkPath }: Viewer3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -50,6 +54,10 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   
   const [error, setError] = useState<string | null>(null);
   const [geometryCount, setGeometryCount] = useState(0);
+  // Bumped when the worker/scene become able to serve a route (modelLoaded and
+  // streaming complete) so the path effect re-runs if the route was set while
+  // the viewer was still initializing.
+  const [viewerReadyTick, setViewerReadyTick] = useState(0);
 
   useEffect(() => {
     console.log('[Viewer3D] Mounted with ifcFileBuffer:', ifcFileBuffer ? `${ifcFileBuffer.byteLength} bytes` : 'undefined');
@@ -59,6 +67,14 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   const workerReadyRef = useRef<boolean>(false); // true when worker has model loaded and can inspect
   const pendingInspectsRef = useRef<number[]>([]); // queue inspect IDs requested before model load
   const pendingGeometryRef = useRef<number | null>(null); // single queued getGeometry ID (only one selection active at a time)
+  // Topology route visualization: hop-colored overlay meshes, one per path step.
+  // Spaces aren't streamed, so their geometry arrives via getGeometry responses —
+  // pathPendingRef correlates those responses (by echoed express id) to their step.
+  const pathMeshesRef = useRef<THREE.Mesh[]>([]);
+  const pathPendingRef = useRef<Map<number, PathHighlightStep>>(new Map());
+  const pathBBoxRef = useRef<THREE.Box3>(new THREE.Box3());
+  // Navmesh walking route: a bright tube + waypoint markers
+  const walkGroupRef = useRef<THREE.Group | null>(null);
 
   // Handle selection from other components or internal clicks
   useEffect(() => {
@@ -210,6 +226,206 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
       }
     }
   }, [selectedNodeId]);
+
+  // ── Topology route (path mode) → hop-colored overlay meshes ────────────────
+  // Runs after the selection effect (declared below it) so path ghosting wins
+  // when both are active. Streamed elements get drawRange overlays immediately;
+  // spaces are fetched on demand and added by the geometryResult handler.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+
+    // Clear previous route
+    pathMeshesRef.current.forEach(m => {
+      scene?.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+    pathMeshesRef.current = [];
+    pathPendingRef.current.clear();
+    pathBBoxRef.current = new THREE.Box3();
+
+    if (!pathHighlight || pathHighlight.length === 0 || !scene) {
+      // Un-ghost only when no selection is active (the selection effect owns
+      // ghosting while an element is selected).
+      if (!selectedNodeId) {
+        meshesRef.current.forEach(m => {
+          if (m.material instanceof THREE.Material && m.userData.originalOpacity !== undefined) {
+            m.material.transparent = m.userData.originalTransparent ?? m.material.transparent;
+            m.material.opacity = m.userData.originalOpacity;
+            m.material.needsUpdate = true;
+            delete m.userData.originalOpacity;
+            delete m.userData.originalTransparent;
+          }
+        });
+      }
+      return;
+    }
+
+    // Ghost the model so the route reads clearly (same idiom as selection)
+    meshesRef.current.forEach(m => {
+      if (m.material instanceof THREE.Material) {
+        if (m.userData.originalOpacity === undefined) {
+          m.userData.originalTransparent = m.material.transparent;
+          m.userData.originalOpacity = m.material.opacity;
+        }
+        m.material.transparent = true;
+        m.material.opacity = 0.06;
+        m.material.needsUpdate = true;
+      }
+    });
+
+    for (const step of pathHighlight) {
+      const found = expressIdLookupRef.current.get(step.expressId);
+      if (!found) {
+        // Not streamed (IFCSPACE etc.) — fetch geometry from the worker; the
+        // geometryResult handler matches the echoed id back to this step. If
+        // the worker isn't ready yet, skip: viewerReadyTick re-runs this
+        // effect once it is.
+        if (workerRef.current && workerReadyRef.current) {
+          pathPendingRef.current.set(step.expressId, step);
+          workerRef.current.postMessage({ type: 'getGeometry', id: step.expressId });
+        }
+        continue;
+      }
+
+      const { mesh, range } = found;
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(step.color),
+        emissive: new THREE.Color(step.color),
+        emissiveIntensity: step.kind === 'space' ? 0.25 : 0.5,
+        transparent: step.kind === 'space',
+        opacity: step.kind === 'space' ? 0.35 : 1,
+        side: THREE.DoubleSide,
+        depthWrite: step.kind !== 'space',
+      });
+
+      let overlay: THREE.Mesh;
+      if (mesh.userData.isBatchMesh) {
+        const batchGeo = mesh.geometry as THREE.BufferGeometry;
+        const overlayGeo = new THREE.BufferGeometry();
+        overlayGeo.setAttribute('position', batchGeo.getAttribute('position'));
+        overlayGeo.setAttribute('normal', batchGeo.getAttribute('normal'));
+        overlayGeo.setIndex(batchGeo.getIndex());
+        overlayGeo.setDrawRange(range.start * 3, range.count * 3);
+        overlay = new THREE.Mesh(overlayGeo, mat);
+        pathBBoxRef.current.expandByPoint(new THREE.Vector3(...range.bbox.min));
+        pathBBoxRef.current.expandByPoint(new THREE.Vector3(...range.bbox.max));
+      } else {
+        overlay = new THREE.Mesh(mesh.geometry, mat);
+        overlay.applyMatrix4(mesh.matrixWorld);
+        pathBBoxRef.current.union(new THREE.Box3().setFromObject(overlay));
+      }
+      scene.add(overlay);
+      pathMeshesRef.current.push(overlay);
+    }
+
+    // Frame the route now if everything was streamed; otherwise the
+    // geometryResult handler re-frames when the last pending space arrives.
+    if (pathPendingRef.current.size === 0 && !pathBBoxRef.current.isEmpty()
+        && cameraRef.current && controlsRef.current) {
+      const center = pathBBoxRef.current.getCenter(new THREE.Vector3());
+      const size = pathBBoxRef.current.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        const fov = cameraRef.current.fov * (Math.PI / 180);
+        const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.2;
+        const dir = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize();
+        const targetPos = center.clone().add(dir.multiplyScalar(dist));
+        const startPos = cameraRef.current.position.clone();
+        const startTarget = controlsRef.current.target.clone();
+        const dur = 800, t0 = Date.now();
+        const step = () => {
+          const t = Math.min((Date.now() - t0) / dur, 1);
+          const e = 1 - Math.pow(1 - t, 3);
+          cameraRef.current!.position.lerpVectors(startPos, targetPos, e);
+          controlsRef.current!.target.lerpVectors(startTarget, center, e);
+          controlsRef.current!.update();
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+          if (t < 1) requestAnimationFrame(step);
+        };
+        step();
+      }
+    }
+  }, [pathHighlight, selectedNodeId, viewerReadyTick]);
+
+  // ── Navmesh walking route → glowing tube + waypoint dots ──────────────────
+  useEffect(() => {
+    const scene = sceneRef.current;
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+
+    if (walkGroupRef.current && scene) {
+      scene.remove(walkGroupRef.current);
+      walkGroupRef.current.traverse(obj => {
+        const mesh = obj as THREE.Mesh;
+        mesh.geometry?.dispose?.();
+        if (mesh.material instanceof THREE.Material) mesh.material.dispose();
+      });
+      walkGroupRef.current = null;
+    }
+
+    if (!walkPath || walkPath.length < 2 || !scene) return;
+
+    const group = new THREE.Group();
+    const points = walkPath.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+    const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.1);
+    const tube = new THREE.TubeGeometry(curve, Math.max(16, points.length * 6), 0.06, 8, false);
+    const tubeMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#f59e0b'),
+      emissive: new THREE.Color('#f59e0b'),
+      emissiveIntensity: 0.7,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false, // route reads over the model
+    });
+    const tubeMesh = new THREE.Mesh(tube, tubeMat);
+    tubeMesh.renderOrder = 999;
+    group.add(tubeMesh);
+
+    // Waypoint dots (start green, end red, corners amber)
+    const sphere = new THREE.SphereGeometry(0.12, 12, 8);
+    points.forEach((p, i) => {
+      const color = i === 0 ? '#22c55e' : i === points.length - 1 ? '#ef4444' : '#fbbf24';
+      const dot = new THREE.Mesh(sphere.clone(), new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color), emissive: new THREE.Color(color),
+        emissiveIntensity: 0.6, depthTest: false,
+      }));
+      dot.position.copy(p);
+      dot.renderOrder = 1000;
+      group.add(dot);
+    });
+
+    scene.add(group);
+    walkGroupRef.current = group;
+
+    // Frame the route
+    if (cameraRef.current && controlsRef.current) {
+      const box = new THREE.Box3().setFromPoints(points);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        const fov = cameraRef.current.fov * (Math.PI / 180);
+        const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.3;
+        const dir = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize();
+        const targetPos = center.clone().add(dir.multiplyScalar(dist));
+        const startPos = cameraRef.current.position.clone();
+        const startTarget = controlsRef.current.target.clone();
+        const dur = 800, t0 = Date.now();
+        const step = () => {
+          const t = Math.min((Date.now() - t0) / dur, 1);
+          const e = 1 - Math.pow(1 - t, 3);
+          cameraRef.current!.position.lerpVectors(startPos, targetPos, e);
+          controlsRef.current!.target.lerpVectors(startTarget, center, e);
+          controlsRef.current!.update();
+          framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+          if (t < 1) requestAnimationFrame(step);
+        };
+        step();
+      }
+    }
+    framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+  }, [walkPath]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -532,6 +748,9 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
             try { workerRef.current?.postMessage({ type: 'getGeometry', id: pendingGeometryRef.current }); } catch { /* ignore */ }
             pendingGeometryRef.current = null;
           }
+          // re-run the route effect: steps that couldn't be requested while the
+          // worker was initializing get posted now (see viewerReadyTick).
+          setViewerReadyTick(t => t + 1);
           console.log('[Viewer3D] worker modelLoaded:', data.modelId);
           return;
         }
@@ -550,6 +769,76 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
           return;
         }
         if (data?.type === 'geometryResult') {
+          // Route step? (topology path) — the worker echoes the requested id, which
+          // lets us tell path fetches apart from the single-selection fetch below.
+          const pathStep = typeof data.id === 'number' ? pathPendingRef.current.get(data.id) : undefined;
+          if (pathStep) {
+            pathPendingRef.current.delete(data.id);
+            const stepPayloads = data.payloads as MeshPayload[] | null;
+            if (stepPayloads && stepPayloads.length > 0 && sceneRef.current) {
+              let total = 0;
+              for (const p of stepPayloads) total += p.positions.length / 3;
+              if (total > 0) {
+                const pos = new Float32Array(total * 3);
+                const nor = new Float32Array(total * 3);
+                const idx: number[] = [];
+                let off = 0;
+                for (const p of stepPayloads) {
+                  pos.set(p.positions, off * 3);
+                  nor.set(p.normals, off * 3);
+                  for (let i = 0; i < p.indices.length; i++) idx.push(p.indices[i] + off);
+                  off += p.positions.length / 3;
+                }
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+                geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+
+                const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+                  color: new THREE.Color(pathStep.color),
+                  emissive: new THREE.Color(pathStep.color),
+                  emissiveIntensity: pathStep.kind === 'space' ? 0.25 : 0.5,
+                  transparent: pathStep.kind === 'space',
+                  opacity: pathStep.kind === 'space' ? 0.35 : 1,
+                  side: THREE.DoubleSide,
+                  depthWrite: pathStep.kind !== 'space',
+                }));
+                sceneRef.current.add(mesh);
+                pathMeshesRef.current.push(mesh);
+                geo.computeBoundingBox();
+                if (geo.boundingBox) pathBBoxRef.current.union(geo.boundingBox);
+              }
+            }
+            // Last pending step arrived → frame the whole route
+            if (pathPendingRef.current.size === 0 && !pathBBoxRef.current.isEmpty()
+                && cameraRef.current && controlsRef.current) {
+              const center = pathBBoxRef.current.getCenter(new THREE.Vector3());
+              const size = pathBBoxRef.current.getSize(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z);
+              if (maxDim > 0) {
+                const fov = cameraRef.current.fov * (Math.PI / 180);
+                const dist = Math.abs(maxDim / Math.tan(fov / 2)) * 1.2;
+                const dir = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize();
+                const targetPos = center.clone().add(dir.multiplyScalar(dist));
+                const startPos = cameraRef.current.position.clone();
+                const startTarget = controlsRef.current.target.clone();
+                const dur = 800, t0 = Date.now();
+                const step = () => {
+                  const t = Math.min((Date.now() - t0) / dur, 1);
+                  const e = 1 - Math.pow(1 - t, 3);
+                  cameraRef.current!.position.lerpVectors(startPos, targetPos, e);
+                  controlsRef.current!.target.lerpVectors(startTarget, center, e);
+                  controlsRef.current!.update();
+                  framesRemainingRef.current = Math.max(framesRemainingRef.current, 5);
+                  if (t < 1) requestAnimationFrame(step);
+                };
+                step();
+              }
+            }
+            framesRemainingRef.current = Math.max(framesRemainingRef.current, 60);
+            return;
+          }
+
           // On-demand geometry for hidden element types (IFCSPACE etc.) requested from
           // the selectedNodeId effect when the element isn't in expressIdLookupRef.
           const onDemandPayloads = data.payloads as MeshPayload[] | null;
@@ -839,6 +1128,9 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
 
           // Update geometry count with final total
           setGeometryCount(meshes.length);
+          // All meshes are in the scene now — re-run the route effect so an
+          // active route re-applies ghosting to everything that streamed in.
+          setViewerReadyTick(t => t + 1);
         }
       };
 

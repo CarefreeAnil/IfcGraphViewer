@@ -29,6 +29,15 @@ export default defineConfig(({ mode }) => ({
   },
   optimizeDeps: {
     exclude: ["web-ifc"],
+    // Pre-bundle the navmesh worker's deps so their first use doesn't trigger
+    // a dev-server "new dependency optimized" full reload (which would unload
+    // the model mid-session). No effect on the production build.
+    include: ["recast-navigation", "recast-navigation/generators"],
+  },
+  // ES-module workers so module workers that pull code-split deps (the navmesh
+  // worker imports recast-navigation, which dynamic-imports its wasm) build.
+  worker: {
+    format: "es",
   },
   build: {
     rollupOptions: {
