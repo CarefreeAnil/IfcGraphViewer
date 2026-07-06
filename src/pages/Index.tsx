@@ -1124,6 +1124,7 @@ const Index = () => {
                           selectedNodeId={selectedNode?.id || null}
                           onNodeSelect={handleNodeClick}
                           onPathHighlight={setTopologyPath}
+                          ifcFileBuffer={ifcFileBufferRef.current}
                         />
                       </Suspense>
                     </div>

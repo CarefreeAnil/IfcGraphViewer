@@ -27,8 +27,10 @@ import {
 } from 'lucide-react';
 import { GraphData, GraphNode } from '@/types/graph';
 import {
-  buildTGraph, TGraphNode, TGraphEdge, TopologyPathStep, EXTERIOR_NODE_ID,
+  buildTGraph, mergeKernelAdjacency, TGraphNode, TGraphEdge, TopologyPathStep,
+  KernelAdjacencyInput, EXTERIOR_NODE_ID,
 } from '@/lib/topology/tgraph';
+import type { KernelResult } from '@/workers/topologyKernelWorker';
 import {
   buildGraphIndex, shortestPath, betweennessCentrality, closenessCentrality,
   degreeCentrality, connectedComponents, diameter, density,
@@ -45,6 +47,8 @@ interface TopologyPanelProps {
   onNodeSelect: (node: GraphNode | null) => void; // same handler as the other panels
   /** Route steps for the 3D viewer (hop-colored); null clears the 3D route. */
   onPathHighlight?: (steps: TopologyPathStep[] | null) => void;
+  /** Raw IFC buffer — enables the optional geometry-kernel cross-check. */
+  ifcFileBuffer?: ArrayBuffer | null;
 }
 
 type AnalysisMode = 'network' | 'centrality' | 'path' | 'areas';
@@ -105,7 +109,7 @@ function hopColor(step: number, totalHops: number): string {
 
 type FGNode = NodeObject & TGraphNode;
 
-export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighlight }: TopologyPanelProps) {
+export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighlight, ifcFileBuffer }: TopologyPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods>();
   const hasAutoFittedRef = useRef(false);
@@ -117,8 +121,70 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
   const [pathEnd, setPathEnd] = useState<string | null>(null);
   const [selectedArea, setSelectedArea] = useState<number | null>(null);
 
+  // ── Geometry kernel (topologic-wasm) cross-check ──────────────────────────
+  type KernelState = 'idle' | 'running' | 'done' | 'error';
+  const [kernelState, setKernelState] = useState<KernelState>('idle');
+  const [kernelAdjacency, setKernelAdjacency] = useState<KernelAdjacencyInput[] | null>(null);
+  const [kernelSummary, setKernelSummary] = useState<string | null>(null);
+  const kernelWorkerRef = useRef<Worker | null>(null);
+
+  const runGeometryCheck = useCallback(() => {
+    if (!ifcFileBuffer || kernelWorkerRef.current) return;
+    setKernelState('running');
+    const worker = new Worker(
+      new URL('../workers/topologyKernelWorker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    kernelWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<KernelResult | { type: 'kernelError'; message: string }>) => {
+      const msg = event.data;
+      if (msg.type === 'kernelResult') {
+        setKernelAdjacency(msg.adjacency.map(a => ({
+          expressIdA: a.expressIdA, expressIdB: a.expressIdB, gap: a.gap,
+        })));
+        setKernelSummary(
+          `${msg.cellCount} cells · ${msg.adjacency.length} pairs · ${msg.elapsedMs} ms`
+          + (msg.failedSpaces.length > 0 ? ` · ${msg.failedSpaces.length} unmeshable` : ''),
+        );
+        setKernelState('done');
+      } else {
+        setKernelSummary(msg.message);
+        setKernelState('error');
+      }
+      worker.terminate();
+      kernelWorkerRef.current = null;
+    };
+    worker.onerror = (e) => {
+      setKernelSummary(e.message || 'kernel worker failed');
+      setKernelState('error');
+      worker.terminate();
+      kernelWorkerRef.current = null;
+    };
+    // Copy the buffer — the transferred copy is consumed by the worker.
+    const copy = ifcFileBuffer.slice(0);
+    worker.postMessage({ type: 'analyze', buffer: copy }, [copy]);
+  }, [ifcFileBuffer]);
+
+  useEffect(() => () => {
+    kernelWorkerRef.current?.terminate();
+    kernelWorkerRef.current = null;
+  }, []);
+
   // ── Build the topology graph (memoized per file) ──────────────────────────
-  const tgraph = useMemo(() => buildTGraph(data), [data]);
+  const baseGraph = useMemo(() => buildTGraph(data), [data]);
+
+  // New file → stale kernel results are dropped
+  useEffect(() => {
+    setKernelAdjacency(null);
+    setKernelSummary(null);
+    setKernelState('idle');
+  }, [baseGraph]);
+
+  const kernelMerge = useMemo(
+    () => (kernelAdjacency ? mergeKernelAdjacency(baseGraph, kernelAdjacency) : null),
+    [baseGraph, kernelAdjacency],
+  );
+  const tgraph = kernelMerge?.graph ?? baseGraph;
 
   // Loading a different file invalidates node ids — clear analysis state.
   useEffect(() => {
@@ -257,6 +323,7 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
   // 3px route edges, and rotated JetBrains Mono kind-labels at zoom.
   type FGLink = {
     kind?: string; passable?: boolean; vertical?: boolean; crossStorey?: boolean; id?: string;
+    method?: string; gap?: number;
     source?: { x?: number; y?: number }; target?: { x?: number; y?: number };
   };
 
@@ -285,6 +352,7 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
       let color: string;
       if (link.crossStorey) color = '#ef4444';
       else if (link.vertical) color = '#a855f7';
+      else if (link.method === 'geometric') color = 'rgba(34, 211, 238, 0.6)'; // kernel-only adjacency
       else if (isAdjacent) color = link.passable ? 'rgba(34, 197, 94, 0.55)' : 'rgba(100, 116, 139, 0.35)';
       else color = 'rgba(148, 163, 184, 0.65)';
       ctx.strokeStyle = color;
@@ -297,10 +365,15 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
     // Edge kind label at zoom — same rotated, haloed treatment as the graph's
     // relationship labels (readable left-to-right).
     if (globalScale > 2 && mode !== 'path') {
-      const label = link.vertical ? 'vertical'
+      let label = link.vertical ? 'vertical'
         : link.crossStorey ? 'cross-storey'
+        : link.method === 'geometric' ? 'geometric'
         : isAdjacent ? (link.passable ? 'open-plan' : 'adjacent')
         : 'through';
+      // Kernel-measured gap = wall thickness between the space volumes
+      if (isAdjacent && typeof link.gap === 'number') {
+        label += ` · ${(link.gap * 100).toFixed(0)}cm`;
+      }
       const midX = (sx + tx) / 2;
       const midY = (sy + ty) / 2;
       let labelAngle = Math.atan2(ty - sy, tx - sx);
@@ -597,6 +670,39 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
         </div>
       )}
 
+      {/* Geometry kernel cross-check (topologic-wasm, loaded on demand) */}
+      {ifcFileBuffer && (
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-border text-[9px]">
+          {kernelState === 'idle' && (
+            <button
+              onClick={runGeometryCheck}
+              className="px-1.5 py-0.5 rounded border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+              title="Verify adjacency against exact space geometry (TopologicCore/OpenCASCADE wasm kernel, fetched on demand)"
+            >
+              Geometry check
+            </button>
+          )}
+          {kernelState === 'running' && (
+            <span className="text-muted-foreground animate-pulse">running geometry kernel…</span>
+          )}
+          {kernelState === 'done' && kernelMerge && (
+            <span className="text-muted-foreground">
+              <span className="text-cyan-400 font-medium">geometry:</span>{' '}
+              {kernelMerge.confirmed} confirmed
+              {kernelMerge.kernelOnly > 0 && <> · {kernelMerge.kernelOnly} kernel-only</>}
+              {kernelMerge.relationshipOnly > 0 && <> · {kernelMerge.relationshipOnly} unsupported</>}
+              {kernelSummary && <> — {kernelSummary}</>}
+            </span>
+          )}
+          {kernelState === 'error' && (
+            <span className="text-destructive truncate" title={kernelSummary ?? undefined}>
+              kernel failed: {kernelSummary}
+              <button onClick={() => setKernelState('idle')} className="ml-1.5 underline">retry</button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Force graph — same backdrop (grid + radial glow) as the Graph panel */}
       <div ref={containerRef} className="flex-1 min-h-0 relative grid-pattern gradient-radial">
         <ForceGraph2D
@@ -643,6 +749,11 @@ export function TopologyPanel({ data, selectedNodeId, onNodeSelect, onPathHighli
           <span className="flex items-center gap-1">
             <span className="w-3 border-t border-dashed border-[#64748b] inline-block" /> adjacent
           </span>
+          {kernelMerge && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 border-t border-dashed border-[#22d3ee] inline-block" /> geometric
+            </span>
+          )}
           {mode === 'network' && (
             <span className="flex items-center gap-1">
               <span className="w-3 border-t border-[#a855f7] inline-block" /> vertical

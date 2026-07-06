@@ -37,7 +37,8 @@ export type TGraphEdgeMethod =
   | 'space_boundary'    // both endpoints found via IfcRelSpaceBoundary
   | 'fills_opening'     // portal resolved via IfcRelFillsElement → opening boundaries
   | 'host_wall'         // portal resolved via opening → IfcRelVoidsElement → wall boundaries
-  | 'virtual_boundary'; // IfcVirtualElement boundary (open-plan connection)
+  | 'virtual_boundary'  // IfcVirtualElement boundary (open-plan connection)
+  | 'geometric';        // topologic-wasm kernel proximity (not in the relationship data)
 
 export interface TGraphNode {
   id: string;                 // same as main graph: `node_${expressId}` (or EXTERIOR_NODE_ID)
@@ -60,6 +61,8 @@ export interface TGraphEdge {
   viaIds?: string[];          // shared bounding element ids ('adjacent' edges)
   vertical?: boolean;         // stair/ramp/elevator link (expected to cross storeys)
   crossStorey?: boolean;      // a DOOR linking different storeys (suspicious data)
+  gap?: number;               // kernel-measured min distance between the space volumes (m)
+  geometryVerified?: boolean; // relationship edge confirmed by the geometry kernel
 }
 
 export interface TGraphStats {
@@ -237,6 +240,81 @@ function resolveStorey(
 
 function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Geometry-kernel merge (topologic-wasm)
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface KernelAdjacencyInput {
+  expressIdA: number;
+  expressIdB: number;
+  gap: number; // metres; ~0 = exact contact (open plan)
+}
+
+export interface KernelMergeResult {
+  graph: TGraph;
+  confirmed: number;        // relationship adjacency also found geometrically
+  kernelOnly: number;       // geometric adjacency the relationships missed
+  relationshipOnly: number; // relationship adjacency with no geometric support
+}
+
+/**
+ * Cross-check relationship-derived space adjacency against exact geometric
+ * proximity from the topologic-wasm kernel. Matching edges get the measured
+ * gap (wall thickness) and a verified flag; kernel-only pairs are appended
+ * as 'geometric' edges (passable when the volumes actually touch — the
+ * geometric signature of an open-plan connection).
+ */
+export function mergeKernelAdjacency(graph: TGraph, kernel: KernelAdjacencyInput[]): KernelMergeResult {
+  const idByExpress = new Map<number, string>();
+  for (const n of graph.nodes) {
+    if (n.kind === 'space' && n.expressId !== undefined) idByExpress.set(n.expressId, n.id);
+  }
+
+  const gapByPair = new Map<string, number>();
+  for (const k of kernel) {
+    const a = idByExpress.get(k.expressIdA);
+    const b = idByExpress.get(k.expressIdB);
+    if (!a || !b || a === b) continue;
+    const key = pairKey(a, b);
+    const existing = gapByPair.get(key);
+    if (existing === undefined || k.gap < existing) gapByPair.set(key, k.gap);
+  }
+
+  let confirmed = 0;
+  let relationshipOnly = 0;
+  const seenPairs = new Set<string>();
+  const edges: TGraphEdge[] = graph.edges.map(edge => {
+    if (edge.kind !== 'adjacent') return edge;
+    const key = pairKey(edge.source, edge.target);
+    seenPairs.add(key);
+    const gap = gapByPair.get(key);
+    if (gap === undefined) {
+      relationshipOnly++;
+      return { ...edge, geometryVerified: false };
+    }
+    confirmed++;
+    return { ...edge, gap, geometryVerified: true };
+  });
+
+  let kernelOnly = 0;
+  for (const [key, gap] of gapByPair) {
+    if (seenPairs.has(key)) continue;
+    kernelOnly++;
+    const [a, b] = key.split('|');
+    edges.push({
+      id: `tedge_geo_${key}`,
+      source: a,
+      target: b,
+      kind: 'adjacent',
+      passable: gap < 0.01,
+      method: 'geometric',
+      gap,
+    });
+  }
+
+  return { graph: { ...graph, edges }, confirmed, kernelOnly, relationshipOnly };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
