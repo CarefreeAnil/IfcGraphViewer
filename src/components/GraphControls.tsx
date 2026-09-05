@@ -418,7 +418,7 @@ export function GraphControls({
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className="pointer-events-auto absolute top-full left-0 mt-3 w-[min(340px,calc(100%_-_2rem))] max-w-full bg-card/98 backdrop-blur-md border border-border rounded-lg shadow-xl z-50"
+          className="pointer-events-auto absolute top-full left-0 mt-3 w-[min(340px,calc(100%_-_2rem))] max-w-full bg-card border border-border rounded-lg shadow-xl z-50"
         >
           {/* Panel Header */}
           <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">

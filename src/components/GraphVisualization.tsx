@@ -5,6 +5,7 @@ import { ZoomIn, ZoomOut, Maximize2, Minimize2, Crosshair } from 'lucide-react';
 import { GraphData, GraphNode, NodeType } from '@/types/graph';
 import { getEntityColor, getEntityDisplayName } from '@/lib/ifcSchema';
 import { applyLoD, LoDLevel, GraphLoD, getLoDConfig, isAuxiliaryType } from '@/lib/graphLoD';
+import { useUIState } from '@/contexts/UIStateContext';
 
 // Track selection changes for animation
 interface SelectionState {
@@ -155,6 +156,7 @@ export function GraphVisualization({
   onGraphCanvasReady,
   fullscreenTargetRef,
 }: GraphVisualizationProps) {
+    const { theme } = useUIState();
   const graphRef = useRef<ForceGraphMethods>();
   const currentZoomRef = useRef<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -965,7 +967,9 @@ export function GraphVisualization({
         ctx.font = `bold ${fontSize}px JetBrains Mono`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillStyle = isMetadataNode ? 'rgba(200,200,200,0.8)' : '#ffffff'; // Lighter for metadata
+        ctx.fillStyle = isMetadataNode
+          ? (theme === 'light' ? 'rgba(71,85,105,0.85)' : 'rgba(200,200,200,0.8)')
+          : (theme === 'light' ? '#172033' : '#ffffff');
         // Reduced shadow blur for better performance
         ctx.shadowColor = 'rgba(0,0,0,0.6)';
         ctx.shadowBlur = 2;
@@ -981,7 +985,7 @@ export function GraphVisualization({
         if (shouldShowDetailedAttrs && !isMetadataNode && cached) {
           const propFontSize = Math.max(7 / globalScale, 3);
           ctx.font = `${propFontSize}px JetBrains Mono`;
-          ctx.fillStyle = 'rgba(255,255,255,0.8)';
+          ctx.fillStyle = theme === 'light' ? 'rgba(51,65,85,0.9)' : 'rgba(255,255,255,0.8)';
           
           cached.properties.forEach((line, idx) => {
             ctx.fillText(line, x, y + size + 13 + idx * (propFontSize + 2));
@@ -990,6 +994,7 @@ export function GraphVisualization({
       }
     },
     [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode]
+    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode, theme]
   );
 
   const linkCanvasObject = useCallback(
@@ -1238,23 +1243,25 @@ export function GraphVisualization({
           // Dynamic font size based on zoom
           const fontSize = Math.max(9 / globalScale, 4);
           ctx.font = `bold ${fontSize}px JetBrains Mono`;
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = theme === 'light' ? '#172033' : '#ffffff';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          // Reduced shadow for better performance
-          ctx.shadowColor = 'rgba(0,0,0,0.5)';
-          ctx.shadowBlur = 2;
+          // Use a pale outline in light mode so labels remain readable over colored edges.
+          ctx.strokeStyle = theme === 'light' ? 'rgba(245,248,250,0.95)' : 'rgba(0,0,0,0.5)';
+          ctx.lineWidth = theme === 'light' ? Math.max(2 / globalScale, 1) : 2;
+          ctx.shadowColor = theme === 'light' ? 'transparent' : 'rgba(0,0,0,0.5)';
+          ctx.shadowBlur = theme === 'light' ? 0 : 2;
           ctx.shadowOffsetX = 0;
           ctx.shadowOffsetY = 0;
           
-          // Draw text with shadow only (no background box or stroke)
+          ctx.strokeText(labelText, 0, 0);
           ctx.fillText(labelText, 0, 0);
           
           ctx.restore();
         }
       }
     },
-    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot, pathToRootIds, selectionState.source, selectionState.timestamp, isolationMode]
+    [isNodeVisible, focusedNodeId, connectedNodeIds, showPathToRoot, pathToRootIds, selectionState.source, selectionState.timestamp, isolationMode, theme]
   );
   // Auto-zoom to selected node when selection changes externally (from other panels)
   useEffect(() => {
@@ -1633,7 +1640,7 @@ export function GraphVisualization({
   return (
     <div
       ref={containerRef}
-      className="w-full h-full grid-pattern gradient-radial"
+      className="graph-surface w-full h-full grid-pattern gradient-radial"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >

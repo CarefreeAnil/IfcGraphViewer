@@ -1,3 +1,4 @@
+import { useUIState } from '@/contexts/UIStateContext';
 /**
  * IFC5 Graph Visualization Component
  * Displays IFC5 JSON structure as an interactive force-directed graph
@@ -49,6 +50,7 @@ export function IFC5GraphVisualization({
   onNodeSelect,
   selectedNodePath,
 }: IFC5GraphVisualizationProps) {
+    const { theme } = useUIState();
   const graphRef = useRef<ForceGraphMethods>();
   const [config, setConfig] = useState<Partial<IFC5GraphConfig>>({
     showGeometryNodes: false,
@@ -498,7 +500,7 @@ export function IFC5GraphVisualization({
             if (globalScale > 1.5 || node.id === selectedNodePath || node.path === selectedNodePath || node === hoveredNode) {
               ctx.textAlign = 'center';
               ctx.textBaseline = 'top';
-              ctx.fillStyle = '#fff';
+              ctx.fillStyle = theme === 'light' ? '#172033' : '#fff';
 
               // Draw short name
               ctx.font = `${fontSize}px Sans-Serif`;
@@ -507,7 +509,7 @@ export function IFC5GraphVisualization({
               // Draw IFC class below if available
               if (ifcClass && node.category === 'data') {
                 ctx.font = `${smallFontSize}px Sans-Serif`;
-                ctx.fillStyle = '#a1a1aa';
+                ctx.fillStyle = theme === 'light' ? '#475569' : '#a1a1aa';
                 ctx.fillText(`[${ifcClass}]`, node.x, node.y + getNodeSize(node) + fontSize + 5);
               }
             }

@@ -918,7 +918,7 @@ const Index = () => {
                       </div>
                     </div>
                   ) : (
-                    <div ref={graphPanelRef} className="h-full relative flex flex-col">
+                    <div ref={graphPanelRef} className="h-full relative flex flex-col bg-background">
                       <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading graph visualization...</div>}>
                         <GraphVisualization
                           data={displayGraphData}
