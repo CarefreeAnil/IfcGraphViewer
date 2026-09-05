@@ -1,7 +1,9 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "IFC Graph Visualizer",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Web-based platform for IFC graph visualization, exploration, and validation.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
