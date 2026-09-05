@@ -135,12 +135,13 @@ export function GraphControls({
     <motion.div
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="absolute top-4 left-4 z-[70] flex flex-col gap-3"
+      className="absolute top-4 left-4 right-60 z-[70] flex flex-col gap-3 pointer-events-none"
     >
       {/* Top Bar: Search, LoD, Export, Filter Button */}
-      <div className="flex items-center gap-2">
+      <div className="w-full overflow-x-auto pb-1 pointer-events-auto">
+        <div className="flex min-w-max flex-nowrap items-center gap-2 [&>*]:shrink-0">
         {/* Search */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
             ref={searchInputRef}
@@ -408,6 +409,7 @@ export function GraphControls({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        </div>
       </div>
 
       {/* Unified Filter Panel */}
@@ -416,7 +418,7 @@ export function GraphControls({
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className="absolute top-16 left-0 w-[340px] bg-card/98 backdrop-blur-md border border-border rounded-lg shadow-xl z-50"
+          className="pointer-events-auto absolute top-full left-0 mt-3 w-[min(340px,calc(100%_-_2rem))] max-w-full bg-card/98 backdrop-blur-md border border-border rounded-lg shadow-xl z-50"
         >
           {/* Panel Header */}
           <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">

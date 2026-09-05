@@ -1663,97 +1663,97 @@ export function GraphVisualization({
       </div>
 
       {/* Control Buttons — consolidated single absolute div */}
-      <div className="absolute top-4 right-4 z-20 flex flex-wrap justify-end gap-2 items-center max-w-[calc(100%-1rem)]">
-        {/* Reset Graph — always visible */}
-        <button
-          onClick={handleResetGraph}
-          className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
-          title="Reset graph view and clear selections"
-        >
-          Reset Graph
-        </button>
-
-        <button
-          onClick={toggleFullscreen}
-          className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
-          title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        >
-          <span className="inline-flex items-center gap-1.5">
-            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-            {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-          </span>
-        </button>
-
-        {/* Isolation controls */}
-        {isolationMode && (
-          <>
-            <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium shadow-lg">
-              <button
-                onClick={() => setIsolationHops(1)}
-                className={isolationHops === 1
-                  ? 'px-3 py-2 bg-primary text-primary-foreground'
-                  : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
-              >1 hop</button>
-              <button
-                onClick={() => setIsolationHops(2)}
-                className={isolationHops === 2
-                  ? 'px-3 py-2 bg-primary text-primary-foreground'
-                  : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
-              >2 hops</button>
-            </div>
-            <button
-              onClick={() => setIsolationMode(false)}
-              className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
-            >
-              Exit Isolation
-            </button>
-          </>
-        )}
-
-        {/* Isolate + Show Path — when node selected, not in isolation, not in path mode */}
-        {!isolationMode && !showPathToRoot && selectedNodeId && (
-          <>
-            <button
-              onClick={handleIsolate}
-              disabled={!canIsolate}
-              className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors shadow-lg ${
-                canIsolate
-                  ? 'bg-violet-600 text-white hover:bg-violet-700'
-                  : 'bg-violet-600/40 text-white/50 cursor-not-allowed'
-              }`}
-              title={canIsolate
-                ? "Show only this node's neighborhood"
-                : "Node has no connections in this graph view"}
-            >
-              Isolate
-            </button>
-            <button
-              onClick={handleShowPathToRoot}
-              className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
-            >
-              Show Path to Project
-            </button>
-          </>
-        )}
-
-        {/* Clear Path */}
-        {!isolationMode && showPathToRoot && (
+      <div className="absolute top-4 right-4 z-20 flex w-56 flex-col items-end gap-2">
+        <div className="flex w-full flex-wrap justify-end gap-2 items-center">
+          {/* Reset Graph — always visible */}
           <button
-            onClick={handleClearPathToRoot}
-            className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shadow-lg"
+            onClick={handleResetGraph}
+            className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+            title="Reset graph view and clear selections"
           >
-            Clear Path to Project
+            Reset Graph
           </button>
-        )}
 
-      </div>
+          <button
+            onClick={toggleFullscreen}
+            className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+            title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            </span>
+          </button>
 
-      {/* Isolation info banner */}
-      {isolationMode && displayData.nodes.length > 0 && (
-        <div className="absolute top-16 right-4 z-20 text-xs text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-sm">
-          {isolationHops}-hop neighborhood · {displayData.nodes.length} nodes · {displayData.edges.length} edges
+          {/* Isolation controls */}
+          {isolationMode && (
+            <>
+              <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium shadow-lg">
+                <button
+                  onClick={() => setIsolationHops(1)}
+                  className={isolationHops === 1
+                    ? 'px-3 py-2 bg-primary text-primary-foreground'
+                    : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
+                >1 hop</button>
+                <button
+                  onClick={() => setIsolationHops(2)}
+                  className={isolationHops === 2
+                    ? 'px-3 py-2 bg-primary text-primary-foreground'
+                    : 'px-3 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/90'}
+                >2 hops</button>
+              </div>
+              <button
+                onClick={() => setIsolationMode(false)}
+                className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+              >
+                Exit Isolation
+              </button>
+            </>
+          )}
+
+          {/* Isolate + Show Path — when node selected, not in isolation, not in path mode */}
+          {!isolationMode && !showPathToRoot && selectedNodeId && (
+            <>
+              <button
+                onClick={handleIsolate}
+                disabled={!canIsolate}
+                className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors shadow-lg ${
+                  canIsolate
+                    ? 'bg-violet-600 text-white hover:bg-violet-700'
+                    : 'bg-violet-600/40 text-white/50 cursor-not-allowed'
+                }`}
+                title={canIsolate
+                  ? "Show only this node's neighborhood"
+                  : "Node has no connections in this graph view"}
+              >
+                Isolate
+              </button>
+              <button
+                onClick={handleShowPathToRoot}
+                className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
+              >
+                Show Path to Project
+              </button>
+            </>
+          )}
+
+          {/* Clear Path */}
+          {!isolationMode && showPathToRoot && (
+            <button
+              onClick={handleClearPathToRoot}
+              className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shadow-lg"
+            >
+              Clear Path to Project
+            </button>
+          )}
         </div>
-      )}
+
+        {isolationMode && displayData.nodes.length > 0 && (
+          <div className="max-w-full text-right text-xs text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-sm">
+            {isolationHops}-hop neighborhood · {displayData.nodes.length} nodes · {displayData.edges.length} edges
+          </div>
+        )}
+      </div>
 
       {/* Zoom Controls — bottom-left stack, above stats counter */}
       <div className="absolute bottom-20 left-4 z-20 flex flex-col gap-1">
