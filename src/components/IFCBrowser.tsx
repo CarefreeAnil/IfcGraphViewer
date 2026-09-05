@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef, useDeferredVa
 import { Copy, ChevronDown, ChevronRight, Search, Hash, ArrowDown, ArrowUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
@@ -378,7 +378,7 @@ function StepLineViewer({
         )}
 
         {/* STEP Line with syntax highlighting */}
-        <div className="flex-1 min-w-0 break-words whitespace-pre-wrap">
+        <div className="flex-1 min-w-0 whitespace-nowrap">
           {stepLineContent}
         </div>
       </div>
@@ -914,10 +914,10 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
       </div>
 
       {/* Main Split View */}
-      <ResizablePanelGroup direction="vertical" className="flex-1">
+      <ResizablePanelGroup direction="vertical" className="min-h-0 flex-1">
         {/* Upper Panel: IFC File View with Header, Data, and Footer */}
         <ResizablePanel defaultSize={65} minSize={40}>
-          <div className="h-full flex flex-col">
+          <div className="h-full min-h-0 flex flex-col overflow-x-auto">
             {/* Header Section - Collapsible */}
             <div ref={headerRef} className="border-b border-border/30 bg-muted/20 relative">
               <button
@@ -955,7 +955,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
             {/* Virtualized Entity List */}
             <div
               ref={entityListRef}
-              className="flex-1 overflow-y-auto font-mono text-xs"
+              className="min-h-0 min-w-max flex-1 overflow-y-scroll font-mono text-xs"
               onScroll={(e) => {
                 // Ignore scroll events during programmatic scrolls
                 if (!isProgrammaticScroll.current) {
@@ -1011,8 +1011,8 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
 
         {/* Lower Panel: Referenced By (Inverse References) */}
         <ResizablePanel defaultSize={35} minSize={15}>
-          <ScrollArea className="h-full">
-            <div className="p-3">
+          <ScrollArea className="h-full min-h-0">
+            <div className="min-w-max p-3">
               {selectedNode ? (
                 <div className="space-y-2">
                   {/* Selected Entity Header */}
@@ -1049,13 +1049,13 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                             <div
                               key={ref.node.id}
                               onClick={() => onNodeSelect(ref.node)}
-                              className="p-1.5 rounded bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer transition-colors border border-orange-500/20 hover:border-orange-500/40 font-mono text-xs overflow-x-auto"
+                              className="p-1.5 rounded bg-orange-500/10 hover:bg-orange-500/20 cursor-pointer transition-colors border border-orange-500/20 hover:border-orange-500/40 font-mono text-xs"
                             >
                               <div className="flex items-start gap-2">
                                 <span className="shrink-0">
                                   <span className={SYNTAX_COLORS.stepId}>#{ref.node.expressId}</span>
                                 </span>
-                                <span className="text-[10px] text-muted-foreground truncate break-words flex-1">
+                                <span className="text-[10px] text-muted-foreground whitespace-nowrap flex-1">
                                   {rawStepLine}
                                 </span>
                               </div>
@@ -1087,13 +1087,13 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                             <div
                               key={ref.node.id}
                               onClick={() => onNodeSelect(ref.node)}
-                              className="p-1.5 rounded bg-blue-500/10 hover:bg-blue-500/20 cursor-pointer transition-colors border border-blue-500/20 hover:border-blue-500/40 font-mono text-xs overflow-x-auto"
+                              className="p-1.5 rounded bg-blue-500/10 hover:bg-blue-500/20 cursor-pointer transition-colors border border-blue-500/20 hover:border-blue-500/40 font-mono text-xs"
                             >
                               <div className="flex items-start gap-2">
                                 <span className="shrink-0">
                                   <span className={SYNTAX_COLORS.stepId}>#{ref.node.expressId}</span>
                                 </span>
-                                <span className="text-[10px] text-muted-foreground truncate break-words flex-1">
+                                <span className="text-[10px] text-muted-foreground whitespace-nowrap flex-1">
                                   {rawStepLine}
                                 </span>
                               </div>
@@ -1110,6 +1110,7 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
                 </div>
               )}
             </div>
+            <ScrollBar orientation="horizontal" />
           </ScrollArea>
         </ResizablePanel>
       </ResizablePanelGroup>

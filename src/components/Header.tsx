@@ -1,11 +1,12 @@
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { Network, RotateCcw, BookOpen, CheckSquare, GraduationCap, Github } from 'lucide-react';
+import { Network, RotateCcw, BookOpen, CheckSquare, GraduationCap, Github, Moon, Sun } from 'lucide-react';
 import { ValidationDialog } from '@/components/ValidationDialog';
 import { ValidationResult } from '@/lib/ifcValidatorEnhanced';
 import { GraphNode } from '@/types/graph';
 import { EducationalSample } from '@/features/educational/data/educationalSamples';
 import { Button } from '@/components/ui/button';
+import { useUIState } from '@/contexts/UIStateContext';
 
 interface HeaderProps {
   hasData: boolean;
@@ -38,6 +39,7 @@ function formatTime(ms: number): string {
 
 export function Header({ hasData, onReset, validation, hasErrors, onValidate, isValidating, metadata, nodes, onEntityClick, isIFC5, parsedData, ifcFileBuffer, fileName, learningMode, learningSample }: HeaderProps) {
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useUIState();
 
   const handleNavigateToValidation = () => {
     // Navigate to validation page with parsed data, buffer, filename, and any existing validation results
@@ -102,6 +104,17 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card/70 text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-pressed={theme === 'light'}
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+
           <a
             href="https://github.com/CarefreeAnil/IfcGraphViewer"
             target="_blank"

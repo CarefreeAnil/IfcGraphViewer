@@ -2,10 +2,12 @@
  * UI State Context
  * Global state management for UI controls and filters
  */
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { NodeType } from '@/types/graph';
 
 interface UIStateContextType {
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
   highlightedTypes: NodeType[];
   setHighlightedTypes: (types: NodeType[]) => void;
   toggleType: (type: NodeType) => void;
@@ -29,6 +31,10 @@ interface UIStateContextType {
 const UIStateContext = createContext<UIStateContextType | undefined>(undefined);
 
 export function UIStateProvider({ children }: { children: ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return window.localStorage.getItem('ifc-graph-theme') === 'light' ? 'light' : 'dark';
+  });
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAttributes, setShowAttributes] = useState(false);
@@ -36,6 +42,17 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
   const [graphLoD, setGraphLoD] = useState(2); // Default to LoD2 (Least Graph)
   const [show3DViewer, setShow3DViewer] = useState(false); // Lazy load 3D viewer
   const [schemaVersion, setSchemaVersion] = useState('IFC4'); // Default to IFC4
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem('ifc-graph-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark');
+  }, []);
 
   const toggleType = useCallback((type: NodeType) => {
     setHighlightedTypes((prev) => {
@@ -56,6 +73,8 @@ export function UIStateProvider({ children }: { children: ReactNode }) {
   return (
     <UIStateContext.Provider
       value={{
+        theme,
+        toggleTheme,
         highlightedTypes,
         setHighlightedTypes,
         toggleType,
