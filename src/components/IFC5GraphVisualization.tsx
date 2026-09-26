@@ -35,6 +35,8 @@ import {
   Database,
   ChevronDown,
   ChevronUp,
+  LocateFixed,
+  X,
 } from 'lucide-react';
 
 interface IFC5GraphVisualizationProps {
@@ -65,6 +67,8 @@ export function IFC5GraphVisualization({
   const [showControls, setShowControls] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [isolationMode, setIsolationMode] = useState(false);
+  const [isolationHops, setIsolationHops] = useState<1 | 2>(2);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Convert to graph data first (moved up before nodePathMap)
@@ -113,13 +117,11 @@ export function IFC5GraphVisualization({
   }, []);
 
   // Prepare data for force graph with filtering
-  const forceGraphData = useMemo(() => {
+  const filteredGraphData = useMemo(() => {
     // Filter edges based on relationship filter
     const filteredEdges = config.relationshipFilter === 'all'
       ? graphData.edges
       : graphData.edges.filter(edge => {
-        if (!edge.category) return true; // Keep edges without category
-
         switch (config.relationshipFilter) {
           case 'spatial':
             return edge.category === 'spatial';
@@ -195,6 +197,99 @@ export function IFC5GraphVisualization({
       })),
     };
   }, [graphData, config.relationshipFilter]);
+
+  const displayGraphData = useMemo(() => {
+    const normaliseId = (value: string | { id?: string } | undefined) =>
+      typeof value === 'string' ? value : value?.id ?? '';
+
+    if (!selectedNodePath || !isolationMode) {
+      return filteredGraphData;
+    }
+
+    const sourceNodes = filteredGraphData.nodes;
+    const sourceLinks = filteredGraphData.links.map(link => ({
+      source: normaliseId(link.source as string | { id?: string }),
+      target: normaliseId(link.target as string | { id?: string }),
+      link,
+    }));
+    const nodeIds = new Set(sourceNodes.map(node => node.id));
+    const selectedGraphNode = sourceNodes.find(node =>
+      node.id === selectedNodePath ||
+      node.path === selectedNodePath ||
+      node.properties?.path === selectedNodePath
+    );
+    const selectedGraphId = selectedGraphNode?.id;
+    if (!selectedGraphId || !nodeIds.has(selectedGraphId)) return filteredGraphData;
+
+    const visibleEdges = sourceLinks.map(({ source, target, link }) => ({
+      source: normaliseId(source as string | { id?: string }),
+      target: normaliseId(target as string | { id?: string }),
+      link,
+    }));
+    const displayNodeIds = new Set<string>([selectedGraphId]);
+
+    if (isolationMode) {
+      const adjacency = new Map<string, Set<string>>();
+      visibleEdges.forEach(({ source, target }) => {
+        if (!adjacency.has(source)) adjacency.set(source, new Set());
+        if (!adjacency.has(target)) adjacency.set(target, new Set());
+        adjacency.get(source)!.add(target);
+        adjacency.get(target)!.add(source);
+      });
+
+      let frontier = new Set([selectedGraphId]);
+      for (let hop = 0; hop < isolationHops; hop += 1) {
+        const nextFrontier = new Set<string>();
+        frontier.forEach(nodeId => {
+          adjacency.get(nodeId)?.forEach(neighborId => {
+            if (!displayNodeIds.has(neighborId)) {
+              displayNodeIds.add(neighborId);
+              nextFrontier.add(neighborId);
+            }
+          });
+        });
+        frontier = nextFrontier;
+      }
+    }
+
+    const nodes = sourceNodes.filter(node => displayNodeIds.has(node.id));
+    const displayIds = new Set(nodes.map(node => node.id));
+    const links = visibleEdges
+      .filter(({ source, target }) => displayIds.has(source) && displayIds.has(target))
+      .map(({ link }) => link)
+      .filter(link =>
+        displayIds.has(normaliseId(link.source as string | { id?: string })) &&
+        displayIds.has(normaliseId(link.target as string | { id?: string }))
+    );
+
+    return { nodes, links };
+  }, [filteredGraphData, isolationHops, isolationMode, selectedNodePath]);
+
+  useEffect(() => {
+    if (!selectedNodePath) {
+      setIsolationMode(false);
+      return;
+    }
+
+    const selectedIsVisible = filteredGraphData.nodes.some(node =>
+      node.id === selectedNodePath ||
+      node.properties?.path === selectedNodePath
+    );
+    if (!selectedIsVisible) {
+      setIsolationMode(false);
+    }
+  }, [filteredGraphData.nodes, selectedNodePath]);
+
+  const clearGraphFocus = useCallback(() => {
+    setIsolationMode(false);
+  }, []);
+
+  const canFocusSelectedNode = Boolean(
+    selectedNodePath && filteredGraphData.nodes.some(node =>
+      node.id === selectedNodePath ||
+      node.properties?.path === selectedNodePath
+    )
+  );
 
   // Node color based on category and IFC Class
   const getNodeColor = useCallback((node: any) => {
@@ -342,11 +437,11 @@ export function IFC5GraphVisualization({
   useEffect(() => {
     if (!selectedNodePath || !graphRef.current) return;
 
-    // forceGraphData.nodes are the same objects the physics engine mutates —
+    // displayGraphData.nodes are the same objects the physics engine mutates —
     // they get x/y added once the simulation starts. We wait a beat so the
     // simulation has had a chance to assign coordinates.
     const timeoutId = setTimeout(() => {
-      const node = forceGraphData.nodes.find(
+      const node = displayGraphData.nodes.find(
         (n: any) => n.id === selectedNodePath || n.path === selectedNodePath
       );
       if (node && (node as any).x !== undefined && (node as any).y !== undefined) {
@@ -360,7 +455,7 @@ export function IFC5GraphVisualization({
     }, 150);
 
     return () => clearTimeout(timeoutId);
-  }, [selectedNodePath, forceGraphData.nodes]);
+  }, [selectedNodePath, displayGraphData.nodes]);
 
   return (
     <div ref={containerRef} className="h-full w-full flex flex-col bg-background">
@@ -371,7 +466,7 @@ export function IFC5GraphVisualization({
             <Network className="w-4 h-4 text-primary" />
             <h3 className="font-semibold text-sm">IFC5 Graph</h3>
             <Badge variant="secondary" className="text-xs">
-              {forceGraphData.nodes.length}
+              {displayGraphData.nodes.length}
             </Badge>
             {config.relationshipFilter !== 'all' && (
               <Badge variant="default" className="text-xs capitalize">
@@ -399,6 +494,11 @@ export function IFC5GraphVisualization({
             <Button size="sm" variant="ghost" onClick={handleZoomFit} className="h-7 px-2" title="Fit View">
               <Maximize2 className="w-3 h-3" />
             </Button>
+            {isolationMode ? (
+              <Button size="sm" variant="ghost" onClick={clearGraphFocus} className="h-7 px-2" title="Clear Graph Focus">
+                <X className="w-3 h-3" />
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -418,6 +518,43 @@ export function IFC5GraphVisualization({
                   {filter}
                 </Button>
               ))}
+            </div>
+
+            <div className="flex items-center gap-1 flex-wrap">
+              <Button
+                size="sm"
+                variant={isolationMode ? 'default' : 'outline'}
+                onClick={() => {
+                  setIsolationMode(true);
+                }}
+                disabled={!canFocusSelectedNode}
+                className="h-6 text-xs px-2 gap-1"
+                title="Isolate the selected node and its visible neighbors"
+              >
+                <LocateFixed className="w-3 h-3" />
+                Isolate
+              </Button>
+              {isolationMode && (
+                <Button size="sm" variant="ghost" onClick={clearGraphFocus} className="h-6 text-xs px-2">
+                  Clear
+                </Button>
+              )}
+              {isolationMode && (
+                <div className="flex items-center gap-1 ml-1 text-xs text-muted-foreground">
+                  <span>Hops</span>
+                  {[1, 2].map(hops => (
+                    <Button
+                      key={hops}
+                      size="sm"
+                      variant={isolationHops === hops ? 'secondary' : 'ghost'}
+                      onClick={() => setIsolationHops(hops as 1 | 2)}
+                      className="h-6 min-w-6 px-1 text-xs"
+                    >
+                      {hops}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-3 text-xs">
@@ -454,7 +591,7 @@ export function IFC5GraphVisualization({
       <div className="flex-1 relative bg-background">
         <ForceGraph2D
           ref={graphRef}
-          graphData={forceGraphData}
+          graphData={displayGraphData}
           width={dimensions.width}
           height={dimensions.height}
           nodeLabel={(node: any) => {

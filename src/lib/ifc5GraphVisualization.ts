@@ -260,6 +260,7 @@ function processAttributes(
         type: 'attribute',
         label: namespace,
         relationshipType: 'HAS_ATTRIBUTE',
+        category: isGeometry ? 'geometry' : categorizeAttributeRelationship(key, value),
       });
 
       // If value is a reference, create reference edge
@@ -273,6 +274,7 @@ function processAttributes(
             type: 'reference',
             label: 'references',
             relationshipType: 'REFERENCES',
+            category: categorizeAttributeRelationship(key, value),
           });
         }
       }
@@ -424,6 +426,19 @@ function categorizeRelationship(
   if (relType === 'child') {
     return 'spatial';
   }
+
+  return 'general';
+}
+
+function categorizeAttributeRelationship(
+  key: string,
+  value: any
+): 'spatial' | 'material' | 'geometry' | 'property' | 'general' {
+  if (isGeometryAttribute(key, value)) return 'geometry';
+
+  const keyLower = key.toLowerCase();
+  if (keyLower.includes('material')) return 'material';
+  if (keyLower.includes('property') || keyLower.includes('pset')) return 'property';
 
   return 'general';
 }
