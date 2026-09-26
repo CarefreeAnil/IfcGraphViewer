@@ -892,18 +892,29 @@ const Index = () => {
                         </div>
                       </div>
                     ) : (
-                      <Suspense fallback={
-                        <div className="flex items-center justify-center h-full text-muted-foreground">
-                          Loading IFC5 graph visualization...
+                      <div className="h-full w-full relative">
+                        <Suspense fallback={
+                          <div className="flex items-center justify-center h-full text-muted-foreground">
+                            Loading IFC5 graph visualization...
+                          </div>
+                        }>
+                          <IFC5GraphVisualization
+                            composedObject={parsedData.rawData?.composedObject!}
+                            ifc5File={parsedData.rawData?.ifc5File}
+                            onNodeSelect={handleIFC5NodeSelect}
+                            selectedNodePath={selectedIFC5ComposedPath}
+                          />
+                        </Suspense>
+                        <div className="absolute bottom-2 right-2 z-20">
+                          <button
+                            onClick={() => setIfc5GraphLoaded(false)}
+                            className="px-3 py-1 bg-destructive/20 text-destructive rounded text-xs hover:bg-destructive/30 transition-colors"
+                            title="Unload the current IFC5 graph visualization"
+                          >
+                            Unload Graph
+                          </button>
                         </div>
-                      }>
-                        <IFC5GraphVisualization
-                          composedObject={parsedData.rawData?.composedObject!}
-                          ifc5File={parsedData.rawData?.ifc5File}
-                          onNodeSelect={handleIFC5NodeSelect}
-                          selectedNodePath={selectedIFC5ComposedPath}
-                        />
-                      </Suspense>
+                      </div>
                     )
                   ) : !graphLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center">
