@@ -33,6 +33,32 @@ function mapSeverity(bsSeverity?: any): 'error' | 'warning' | 'info' {
   return 'info';
 }
 
+function mapOutcomeState(bsSeverity?: any): NonNullable<ValidationError['buildingSmart']>['outcomeState'] {
+  if (typeof bsSeverity === 'number') {
+    return ({
+      0: 'not-applicable',
+      1: 'executed',
+      2: 'passed',
+      3: 'warning',
+      4: 'error',
+    } as const)[bsSeverity] || 'unknown';
+  }
+
+  const severity = String(bsSeverity || '').toLowerCase();
+  if (severity.includes('not_applicable') || severity.includes('not applicable')) return 'not-applicable';
+  if (severity.includes('executed')) return 'executed';
+  if (severity.includes('passed') || severity === 'pass') return 'passed';
+  if (severity.includes('warning') || severity.includes('warn')) return 'warning';
+  if (severity.includes('error') || severity.includes('critical')) return 'error';
+  return 'unknown';
+}
+
+function extractStableRuleCode(feature?: any): string | undefined {
+  const featureText = feature ? String(feature) : '';
+  const match = featureText.match(/^([A-Z]{3}\d{3})\b/);
+  return match?.[1];
+}
+
 /**
  * Map BuildingSmart feature to validation type
  */
@@ -276,7 +302,7 @@ function mapResultToError(
   const error: ValidationError = {
     severity,
     type,
-    code: generateCode(result.feature, index),
+    code: extractStableRuleCode(result.feature) || generateCode(result.feature, index),
     message,
     entityId,
     entityType,
@@ -346,6 +372,21 @@ function mapResultToError(
       });
     }
   }
+
+  error.buildingSmart = {
+    outcomeId: result.public_id ? String(result.public_id) : undefined,
+    outcomeCode: result.outcome_code ? String(result.outcome_code) : undefined,
+    outcomeSeverity: result.severity,
+    outcomeState: mapOutcomeState(result.severity),
+    taskType: result.task_type,
+    feature: result.feature ? String(result.feature) : undefined,
+    featureVersion: result.feature_version,
+    featureUrl: result.feature_url,
+    expected: result.expected,
+    observed: result.observed,
+    instancePublicId: result.instance_public_id ? String(result.instance_public_id) : undefined,
+    rawMessage: typeof rawMessage === 'string' ? rawMessage : rawMessage ? JSON.stringify(rawMessage) : undefined,
+  };
 
   return error;
 }

@@ -197,6 +197,16 @@ export function getSeverityDisplay(severity: 'error' | 'warning' | 'info'): stri
   return map[severity] || severity;
 }
 
+export function getOutcomeStateDisplay(error: ValidationError): string {
+  const state = error.buildingSmart?.outcomeState;
+  if (state === 'not-applicable') return 'N/A';
+  if (state === 'executed') return 'Applicable';
+  if (state === 'passed') return 'Passed';
+  if (state === 'warning') return 'Warning';
+  if (state === 'error') return 'Error';
+  return getSeverityDisplay(error.severity);
+}
+
 /**
  * Check if error is a schema/entity rule (vs normative Gherkin rule)
  * Schema rules have JSON features with "entity_rule" type
