@@ -1,8 +1,8 @@
-import { SlidersHorizontal, Network, Layers, Box, Code2 } from 'lucide-react';
+import { SlidersHorizontal, Network, Layers, Box, Code2, Waypoints } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
-export type PanelId = 'properties' | 'graph' | 'tree' | 'viewer3d' | 'source';
+export type PanelId = 'properties' | 'graph' | 'tree' | 'viewer3d' | 'source' | 'topology';
 
 interface PanelConfig {
   id: PanelId;
@@ -18,6 +18,7 @@ const PANEL_CONFIGS: PanelConfig[] = [
   { id: 'tree',       label: 'Tree Browser', Icon: Layers },
   { id: 'viewer3d',   label: '3D Viewer',    Icon: Box },
   { id: 'source',     label: 'Source',       Icon: Code2, ifc5Only: true },
+  { id: 'topology',   label: 'Topology',     Icon: Waypoints, stepOnly: true },
 ];
 
 export interface PanelVisibility {
@@ -26,6 +27,7 @@ export interface PanelVisibility {
   tree: boolean;
   viewer3d: boolean;
   source: boolean;
+  topology: boolean;
 }
 
 interface PanelTaskbarProps {
