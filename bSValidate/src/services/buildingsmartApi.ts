@@ -18,7 +18,9 @@ export interface BuildingSmartResultsResponse {
       validation_task_public_id: string;
       feature: any;
       feature_version?: number | null;
-      severity: any;
+      severity?: any;
+      severity_in_db?: number | string | null;
+      task_type?: string;
       outcome_code?: string;
       expected?: any;
       observed?: any;

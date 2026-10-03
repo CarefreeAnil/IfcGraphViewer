@@ -5,6 +5,7 @@
 import { BuildingSmartResultsResponse } from './buildingsmartApi';
 import { ValidationError, ValidationResult } from '../../../src/lib/ifcValidatorEnhanced';
 import { mapBuildingSmartFeatureToFunctionalPart, getFunctionalPart } from '../lib/functionalParts';
+import { asFeatureString, extractRuleCode, isSchemaRule } from '../lib/buildingsmartUtils';
 
 /**
  * Map BuildingSmart severity to internal severity
@@ -53,10 +54,34 @@ function mapOutcomeState(bsSeverity?: any): NonNullable<ValidationError['buildin
   return 'unknown';
 }
 
-function extractStableRuleCode(feature?: any): string | undefined {
-  const featureText = feature ? String(feature) : '';
-  const match = featureText.match(/^([A-Z]{3}\d{3})\b/);
-  return match?.[1];
+function getOutcomeSeverity(result: any): unknown {
+  return result.severity_in_db ?? result.severity;
+}
+
+function formatFieldValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseInstanceFromText(value: unknown): { entityId?: string; entityType?: string } {
+  if (value == null) return {};
+  const text = typeof value === 'string' ? value : formatFieldValue(value);
+
+  const onInstance = text.match(/On instance:\s*#(\d+)\s*=\s*([A-Za-z0-9_]+)/i);
+  if (onInstance) {
+    return { entityId: `#${onInstance[1]}`, entityType: onInstance[2] };
+  }
+
+  const assignment = text.match(/#(\d+)\s*=\s*([A-Za-z0-9_]+)\s*\(/);
+  if (assignment) {
+    return { entityId: `#${assignment[1]}`, entityType: assignment[2] };
+  }
+
+  return {};
 }
 
 /**
@@ -128,7 +153,9 @@ function mapFeatureToType(feature?: any): string {
  * Generate validation code based on feature
  */
 function generateCode(feature?: any, index: number = 0): string {
-  const featureStr = feature ? String(feature) : '';
+  const fromFeature = extractRuleCode(feature);
+  if (fromFeature) return fromFeature;
+  const featureStr = asFeatureString(feature);
   const prefix = featureStr.substring(0, 3).toUpperCase() || 'BS';
   return `${prefix}${String(index + 1).padStart(3, '0')}`;
 }
@@ -137,26 +164,25 @@ function generateCode(feature?: any, index: number = 0): string {
  * Extract entity ID from various BuildingSmart result formats
  */
 function extractEntityId(result: any): string | undefined {
-  // Try direct fields first
+  const fromObserved = parseInstanceFromText(result.observed);
+  if (fromObserved.entityId) return fromObserved.entityId;
+
   if (result.instance_id) return String(result.instance_id);
   if (result.instanceId) return String(result.instanceId);
-  if (result.instance_public_id && result.instance_public_id !== null) return String(result.instance_public_id);
-  if (result.id) return String(result.id);
-  
-  // Try parsing from 'On instance:' text if available
+  if (result.id && String(result.id).startsWith('#')) return String(result.id);
+
   if (result.instance_ref || result.on_instance) {
     const instanceText = result.instance_ref || result.on_instance;
-    const match = instanceText.match(/#(\d+)/);
+    const match = String(instanceText).match(/#(\d+)/);
     if (match) return `#${match[1]}`;
   }
-  
-  // Try parsing from msg field which might contain entity references
+
   if (result.msg || result.message) {
     const msg = result.msg || result.message;
     const match = String(msg).match(/#(\d+)/);
     if (match) return `#${match[1]}`;
   }
-  
+
   return undefined;
 }
 
@@ -164,26 +190,26 @@ function extractEntityId(result: any): string | undefined {
  * Extract entity type from various BuildingSmart result formats
  */
 function extractEntityType(result: any): string | undefined {
-  // Try direct fields first
+  const fromObserved = parseInstanceFromText(result.observed);
+  if (fromObserved.entityType) return fromObserved.entityType;
+
   if (result.instance_type) return String(result.instance_type);
   if (result.instanceType) return String(result.instanceType);
   if (result.entity_type) return String(result.entity_type);
   if (result.entityType) return String(result.entityType);
-  
-  // Try parsing from 'On instance:' text if available
+
   if (result.instance_ref || result.on_instance) {
     const instanceText = result.instance_ref || result.on_instance;
-    const match = instanceText.match(/#\d+=([A-Za-z0-9]+)/);
+    const match = String(instanceText).match(/#\d+\s*=\s*([A-Za-z0-9_]+)/);
     if (match) return match[1];
   }
-  
-  // Try parsing from msg field
+
   if (result.msg || result.message) {
     const msg = result.msg || result.message;
     const match = String(msg).match(/\b(Ifc[A-Za-z0-9]+)\b/);
     if (match) return match[1];
   }
-  
+
   return undefined;
 }
 
@@ -194,7 +220,7 @@ function getOutcomeDescription(outcomeCode: string, feature: string): string | n
   // Map common outcome codes to descriptions
   const outcomeDescriptions: Record<string, string> = {
     'N00010': 'Not applicable - feature not used in file',
-    'X00040': 'Feature validation failed',
+    'X00040': 'Rule executed',
     'X00010': 'Required feature missing',
     'X00020': 'Invalid feature implementation',
     'X00030': 'Feature constraint violation',
@@ -221,7 +247,8 @@ function mapResultToError(
   result: any,
   index: number
 ): ValidationError {
-  const severity = mapSeverity(result.severity);
+  const outcomeSeverity = getOutcomeSeverity(result);
+  const severity = mapSeverity(outcomeSeverity);
   const type = mapFeatureToType(result.feature);
 
   // Extract message - build a comprehensive message
@@ -302,7 +329,7 @@ function mapResultToError(
   const error: ValidationError = {
     severity,
     type,
-    code: extractStableRuleCode(result.feature) || generateCode(result.feature, index),
+    code: generateCode(result.feature, index),
     message,
     entityId,
     entityType,
@@ -376,8 +403,8 @@ function mapResultToError(
   error.buildingSmart = {
     outcomeId: result.public_id ? String(result.public_id) : undefined,
     outcomeCode: result.outcome_code ? String(result.outcome_code) : undefined,
-    outcomeSeverity: result.severity,
-    outcomeState: mapOutcomeState(result.severity),
+    outcomeSeverity,
+    outcomeState: mapOutcomeState(outcomeSeverity),
     taskType: result.task_type,
     feature: result.feature ? String(result.feature) : undefined,
     featureVersion: result.feature_version,

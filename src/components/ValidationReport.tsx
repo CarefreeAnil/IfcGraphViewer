@@ -552,7 +552,7 @@ export function ValidationReport({ result, nodes, onEntityClick, context }: Vali
               IFC Schema Compliance
             </h3>
             <Badge variant={visibleSchemaErrors.length === 0 ? "outline" : "destructive"}>
-              {visibleSchemaErrors.length} Issues
+              {visibleSchemaErrors.length} Results
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -562,9 +562,9 @@ export function ValidationReport({ result, nodes, onEntityClick, context }: Vali
           {/* Show BuildingSMART Schema Results if available */}
           {isBuildingSmartResult && visibleSchemaErrors.length > 0 ? (
             <SchemaResults
-              errors={visibleSchemaErrors}
-              warnings={[]}
-              info={[]}
+              errors={visibleSchemaErrors.filter(error => error.severity === 'error')}
+              warnings={visibleSchemaErrors.filter(error => error.severity === 'warning')}
+              info={visibleSchemaErrors.filter(error => error.severity === 'info')}
               nodes={nodes}
               onEntityClick={onEntityClick}
             />

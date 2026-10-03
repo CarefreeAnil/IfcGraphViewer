@@ -259,17 +259,6 @@ export function SchemaResults({
     }
   };
 
-  if (schemaResults.length === 0) {
-    return (
-      <div className="p-8 border rounded-lg bg-green-50 text-center">
-        <Info className="w-10 h-10 text-green-500 mx-auto mb-2" />
-        <p className="text-green-800 font-medium">
-          No schema validation errors found!
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       {/* Filter checkbox */}
@@ -286,6 +275,17 @@ export function SchemaResults({
            Include Passed, Disabled and N/A
         </label>
       </div>
+
+      {schemaResults.length === 0 && (
+        <div className="p-8 border rounded-lg bg-green-50 text-center">
+          <Info className="w-10 h-10 text-green-500 mx-auto mb-2" />
+          <p className="text-green-800 font-medium">
+            {errors.length === 0 && (warnings.length > 0 || info.length > 0)
+              ? 'Only non-error results are available. Enable the checkbox above to view them.'
+              : 'No schema validation errors found!'}
+          </p>
+        </div>
+      )}
 
       {/* Rule groups */}
       <div className="space-y-3">

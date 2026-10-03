@@ -393,7 +393,7 @@ export async function parseIFCFile(
   // Set the WASM path to the root where static files are copied
   await ifcApi.Init((path: string) => {
     // In development/production, WASM files are copied to root
-    return `/${path}`;
+    return `/ifc-wasm/${path}`;
   });
 
   const loadTime = performance.now();
