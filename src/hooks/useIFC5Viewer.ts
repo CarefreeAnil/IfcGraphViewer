@@ -152,8 +152,36 @@ export function useIFC5Viewer(
       };
       window.addEventListener('resize', handleResize);
 
+      // OrbitControls emits a click after a drag ends. Track pointer movement so
+      // orbiting the model cannot be mistaken for an empty-space selection.
+      let pointerDownPosition: { x: number; y: number } | null = null;
+      let pointerMoved = false;
+      const handlePointerDown = (event: PointerEvent) => {
+        if (event.button !== 0) return;
+        pointerDownPosition = { x: event.clientX, y: event.clientY };
+        pointerMoved = false;
+      };
+      const handlePointerMove = (event: PointerEvent) => {
+        if (!pointerDownPosition) return;
+        const dx = event.clientX - pointerDownPosition.x;
+        const dy = event.clientY - pointerDownPosition.y;
+        pointerMoved = pointerMoved || Math.hypot(dx, dy) > 4;
+      };
+      const handlePointerUp = () => {
+        pointerDownPosition = null;
+      };
+
+      renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+      renderer.domElement.addEventListener('pointermove', handlePointerMove);
+      renderer.domElement.addEventListener('pointerup', handlePointerUp);
+
       // Handle clicks on objects
       const handleCanvasClick = (event: MouseEvent) => {
+        if (pointerMoved) {
+          pointerMoved = false;
+          return;
+        }
+
         if (!container || !camera || !cameraRef.current) return;
 
         const rect = renderer.domElement.getBoundingClientRect();
@@ -181,6 +209,8 @@ export function useIFC5Viewer(
             }
             clicked = clicked.parent as THREE.Object3D;
           }
+        } else {
+          onObjectClickRef.current?.('');
         }
       };
       renderer.domElement.addEventListener('click', handleCanvasClick);
@@ -198,6 +228,9 @@ export function useIFC5Viewer(
         setIsInitialized(false);
 
         window.removeEventListener('resize', handleResize);
+        renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+        renderer.domElement.removeEventListener('pointermove', handlePointerMove);
+        renderer.domElement.removeEventListener('pointerup', handlePointerUp);
         renderer.domElement.removeEventListener('click', handleCanvasClick);
 
         // Dispose all geometries and materials in the scene
@@ -537,6 +570,8 @@ export function useIFC5Viewer(
 
   // Select object by path
   const selectObject = useCallback((path: string | null) => {
+    restoreObjectOpacity();
+
     // Unhighlight previous selection
     if (selectedPathRef.current) {
       const prevObj = objectMapRef.current.get(selectedPathRef.current);
@@ -553,9 +588,65 @@ export function useIFC5Viewer(
       const obj = objectMapRef.current.get(path);
       if (obj) {
         highlightObject(obj);
+        isolateObject(obj);
       }
     }
+
   }, []);
+
+  // Restore materials changed by selection isolation.
+  const restoreObjectOpacity = () => {
+    objectMapRef.current.forEach((obj) => {
+      obj.traverse((child) => {
+        if (!(child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points)) {
+          return;
+        }
+
+        const material = child.material as THREE.Material | THREE.Material[];
+        const materials = Array.isArray(material) ? material : [material];
+        materials.forEach((mat) => {
+          const originalOpacity = mat.userData._ifcxOriginalOpacity as number | undefined;
+          const originalTransparent = mat.userData._ifcxOriginalTransparent as boolean | undefined;
+          if (originalOpacity !== undefined) {
+            mat.opacity = originalOpacity;
+            mat.transparent = originalTransparent ?? mat.transparent;
+            mat.needsUpdate = true;
+            delete mat.userData._ifcxOriginalOpacity;
+            delete mat.userData._ifcxOriginalTransparent;
+          }
+        });
+      });
+    });
+  };
+
+  // Keep the selected component opaque and make unrelated model geometry translucent.
+  const isolateObject = (selectedObject: THREE.Object3D) => {
+    objectMapRef.current.forEach((obj) => {
+      obj.traverse((child) => {
+        if (!(child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points)) {
+          return;
+        }
+
+        const material = child.material as THREE.Material | THREE.Material[];
+        const materials = Array.isArray(material) ? material : [material];
+        const belongsToSelection = selectedObject === child || selectedObject.getObjectById(child.id) !== undefined;
+
+        if (belongsToSelection) {
+          return;
+        }
+
+        materials.forEach((mat) => {
+          if (mat.userData._ifcxOriginalOpacity === undefined) {
+            mat.userData._ifcxOriginalOpacity = mat.opacity;
+            mat.userData._ifcxOriginalTransparent = mat.transparent;
+          }
+          mat.transparent = true;
+          mat.opacity = 0.15;
+          mat.needsUpdate = true;
+        });
+      });
+    });
+  };
 
   // Highlight object
   const highlightObject = (obj: THREE.Object3D) => {
