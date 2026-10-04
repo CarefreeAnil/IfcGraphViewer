@@ -568,8 +568,50 @@ export function useIFC5Viewer(
     }
   }, []);
 
+  const focusObject = (obj: THREE.Object3D) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+
+    const box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty()) return;
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDimension = Math.max(size.x, size.y, size.z, 0.1);
+    const fov = THREE.MathUtils.degToRad(camera.fov);
+    const distance = (maxDimension / 2) / Math.tan(fov / 2) * 1.6;
+    const direction = camera.position.clone().sub(controls.target);
+
+    if (direction.lengthSq() === 0) {
+      direction.set(1, 1, 1);
+    }
+    direction.normalize();
+
+    const startPosition = camera.position.clone();
+    const startTarget = controls.target.clone();
+    const endPosition = center.clone().add(direction.multiplyScalar(distance));
+    const startTime = performance.now();
+    const duration = 500;
+
+    const animateFocus = (time: number) => {
+      const progress = Math.min((time - startTime) / duration, 1);
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+      camera.position.lerpVectors(startPosition, endPosition, easedProgress);
+      controls.target.lerpVectors(startTarget, center, easedProgress);
+      controls.update();
+
+      if (progress < 1) {
+        requestAnimationFrame(animateFocus);
+      }
+    };
+
+    requestAnimationFrame(animateFocus);
+  };
+
   // Select object by path
   const selectObject = useCallback((path: string | null) => {
+    const previousPath = selectedPathRef.current;
     restoreObjectOpacity();
 
     // Unhighlight previous selection
@@ -589,6 +631,9 @@ export function useIFC5Viewer(
       if (obj) {
         highlightObject(obj);
         isolateObject(obj);
+        if (previousPath !== path) {
+          focusObject(obj);
+        }
       }
     }
 
