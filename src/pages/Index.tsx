@@ -107,7 +107,7 @@ const Index = () => {
   const isIFC5 = parsedData?.metadata?.isIFC5 === true;
 
   // Ref to hold the selectObject function from useIFC5Viewer
-  const selectObjectRef = useRef<((path: string) => void) | null>(null);
+  const selectObjectRef = useRef<((path: string | null) => void) | null>(null);
 
   // Bridge selection between composed hierarchy paths (Graph/Tree/3D) and raw IFC5 data paths (Source JSON).
   const ifc5SelectionMaps = useMemo(() => {
@@ -227,6 +227,15 @@ const Index = () => {
   // Handle 3D object click
   const handleIFC5ObjectClick = useCallback((path: string) => {
     logger.debug('3D object clicked', { path });
+    if (!path) {
+      setSelectedIFC5Node(null);
+      setSelectedIFC5ComposedPath(null);
+      setSelectedIFC5RawPath(null);
+      setSelectedIFC5AttributeKey(null);
+      selectObjectRef.current?.(null);
+      return;
+    }
+
     // Find the node with this path in the composed object
     if (parsedData?.rawData?.composedObject) {
       const findNodeByPath = (node: ComposedObject, targetPath: string): ComposedObject | null => {
@@ -602,7 +611,7 @@ const Index = () => {
 
   // Keep 3D selection in sync when selection changes in panels
   useEffect(() => {
-    if (viewer3DLoaded && isIFC5 && selectedIFC5ComposedPath && selectObjectRef.current) {
+    if (viewer3DLoaded && isIFC5 && selectObjectRef.current) {
       selectObjectRef.current(selectedIFC5ComposedPath);
     }
   }, [viewer3DLoaded, isIFC5, selectedIFC5ComposedPath]);
@@ -636,6 +645,11 @@ const Index = () => {
       ...DEFAULT_SHORTCUTS.CLEAR,
       action: () => {
         setSelectedNode(null);
+        setSelectedIFC5Node(null);
+        setSelectedIFC5ComposedPath(null);
+        setSelectedIFC5RawPath(null);
+        setSelectedIFC5AttributeKey(null);
+        selectObjectRef.current?.(null);
         setSearchQuery('');
       },
     },
