@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, RotateCcw } from 'lucide-react';
 
 // Local mirror of the worker's MeshPayload shape — kept here (not imported from the
 // worker file) to prevent the bundler from pulling web-ifc WASM into the main bundle.
@@ -50,6 +50,8 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   
   const [error, setError] = useState<string | null>(null);
   const [geometryCount, setGeometryCount] = useState(0);
+  const initialCameraPositionRef = useRef(new THREE.Vector3(50, 50, 50));
+  const initialCameraTargetRef = useRef(new THREE.Vector3(0, 0, 0));
 
   useEffect(() => {
     console.log('[Viewer3D] Mounted with ifcFileBuffer:', ifcFileBuffer ? `${ifcFileBuffer.byteLength} bytes` : 'undefined');
@@ -209,7 +211,7 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
         animateCamera(center, Math.max(size.x, size.y, size.z));
       }
     }
-  }, [selectedNodeId]);
+  }, [selectedNodeId, geometryCount]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -338,6 +340,8 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
             controls.maxDistance = maxDim * 10;
             controls.minDistance = maxDim * 0.1;
             controls.update();
+            initialCameraPositionRef.current.copy(camera.position);
+            initialCameraTargetRef.current.copy(controls.target);
           };
 
           // Fit on first batch, then re-fit after 1 s once more geometry has streamed in
@@ -889,7 +893,30 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
         </button>
       </div>
 
-      <div ref={containerRef} className="flex-1 bg-slate-900" />
+      <div ref={containerRef} className="relative flex-1 bg-slate-900">
+        <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+          <button
+            type="button"
+            aria-label="Reset 3D camera"
+            title="Reset camera"
+            onClick={() => {
+              const camera = cameraRef.current;
+              const controls = controlsRef.current;
+              if (!camera || !controls) return;
+              camera.position.copy(initialCameraPositionRef.current);
+              controls.target.copy(initialCameraTargetRef.current);
+              controls.update();
+              framesRemainingRef.current = Math.max(framesRemainingRef.current, 30);
+            }}
+            className="pointer-events-auto flex min-h-11 min-w-11 items-center justify-center rounded-full border border-slate-600 bg-slate-800/90 text-slate-100 shadow-lg backdrop-blur-md transition-colors hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <div className="rounded-md bg-slate-800/80 px-2 py-1 text-[10px] text-slate-300 backdrop-blur-md sm:hidden">
+            Drag to rotate · pinch to zoom
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

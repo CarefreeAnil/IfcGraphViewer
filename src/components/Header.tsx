@@ -58,23 +58,23 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
     <motion.header
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border"
+      className="fixed top-0 left-0 right-0 z-50 overflow-hidden bg-background/80 px-2 py-1 backdrop-blur-md border-b border-border lg:px-6 lg:py-4"
     >
-      <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/20 glow-primary">
-              <Network className="w-6 h-6 text-primary" />
+      <div className="mx-auto flex min-w-0 max-w-screen-2xl items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 lg:gap-6">
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <div className="rounded-lg bg-primary/20 p-1 glow-primary lg:p-2">
+              <Network className="h-4 w-4 text-primary lg:h-6 lg:w-6" />
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-gradient">IFC Graph Visualizer</h1>
-              <p className="text-xs text-muted-foreground">Parse • Transform • Explore</p>
+            <div className="min-w-0">
+              <h1 className="max-w-[150px] truncate text-sm font-bold text-gradient lg:max-w-none lg:text-xl">IFC Graph Visualizer</h1>
+              <p className="hidden text-xs text-muted-foreground lg:block">Parse • Transform • Explore</p>
             </div>
           </div>
 
           {/* Learning Mode Indicator */}
           {learningMode && learningSample && (
-            <div className="flex items-center gap-2 pl-4">
+            <div className="hidden items-center gap-2 pl-4 lg:flex">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/20 border border-primary/30">
                 <GraduationCap className="w-4 h-4 text-primary" />
                 <span className="text-xs font-medium text-primary">Learning Mode</span>
@@ -86,7 +86,7 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
 
           {/* File metadata */}
           {hasData && metadata && (
-            <div className="flex items-center gap-3 pl-4 border-l border-border">
+            <div className="hidden items-center gap-3 border-l border-border pl-4 lg:flex">
               <div className="flex flex-col">
                 <span className="text-[8px] uppercase tracking-wider text-muted-foreground">File</span>
                 <span className="text-[11px] font-mono text-foreground truncate max-w-xs">{metadata.fileName}</span>
@@ -103,7 +103,7 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1 lg:gap-3">
           <button
             type="button"
             onClick={toggleTheme}
@@ -119,7 +119,7 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
             href="https://github.com/CarefreeAnil/IfcGraphViewer"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card/70 hover:bg-card text-foreground transition-colors"
+            className="hidden items-center gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 text-foreground transition-colors hover:bg-card lg:flex"
             title="IfcGraphViewer on GitHub"
             aria-label="IfcGraphViewer on GitHub"
           >
@@ -130,11 +130,11 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
           {/* Learn Button - Always visible */}
           <button
             onClick={() => navigate('/learn')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors"
+            className="hidden items-center gap-2 rounded-lg bg-primary/10 px-2 py-2 text-primary text-sm font-medium transition-colors hover:bg-primary/20 lg:flex lg:px-4"
             title="Explore educational IFC samples"
           >
             <BookOpen className="w-4 h-4" />
-            Learn
+            <span>Learn</span>
           </button>
 
           {hasData && (
@@ -144,18 +144,19 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
                   variant="outline"
                   size="sm"
                   onClick={handleNavigateToValidation}
-                  className="gap-2"
+                  className="hidden gap-2 px-2 lg:flex lg:px-3"
                 >
                   <CheckSquare className="w-4 h-4" />
-                  {parsedData?.validation ? 'Validation Results' : 'Validate'}
+                  <span>{parsedData?.validation ? 'Validation Results' : 'Validate'}</span>
                 </Button>
               )}
               <button
                 onClick={onReset}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-sm font-medium text-destructive transition-colors"
+                aria-label="Unload File"
+                className="flex items-center gap-2 rounded-lg bg-destructive/10 px-2 py-1.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/20 lg:px-4 lg:py-2"
               >
                 <RotateCcw className="w-4 h-4" />
-                Unload File
+                <span className="hidden lg:inline">Unload File</span>
               </button>
             </div>
           )}
