@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo, startTransition } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Info, GraduationCap, Shield, Lock, Code2, Github } from 'lucide-react';
+import { Info, GraduationCap, Shield, Lock, Code2, Github, SlidersHorizontal, Network, Layers, Box } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -35,6 +35,7 @@ import { useIFCWorker } from '@/hooks/useIFCWorker';
 import { exportToJSON, exportNodesToCSV, exportEdgesToCSV, exportToSTEP, exportToPNG } from '@/lib/exportUtils';
 import { logger } from '@/utils/logger';
 import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useUIState } from '@/contexts/UIStateContext';
 
 // Lazy load heavy components
@@ -46,6 +47,7 @@ const IFC5SourceViewer = lazy(() => import('@/components/IFC5SourceViewer').then
 const Index = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const { setSchemaVersion } = useUIState();
   const [parsedData, setParsedData] = useState<ParsedIFCData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -93,9 +95,14 @@ const Index = () => {
     viewer3d: true,
     source: true,
   });
+  const [activeMobilePanel, setActiveMobilePanel] = useState<PanelId>('graph');
 
   const togglePanel = useCallback((panelId: PanelId) => {
     setPanelVisibility(prev => ({ ...prev, [panelId]: !prev[panelId] }));
+  }, []);
+
+  const selectMobilePanel = useCallback((panelId: PanelId) => {
+    setActiveMobilePanel(panelId);
   }, []);
 
   // Learning Mode state
@@ -105,6 +112,11 @@ const Index = () => {
 
   // Check if current file is IFC5
   const isIFC5 = parsedData?.metadata?.isIFC5 === true;
+
+  useEffect(() => {
+    if (isIFC5 || activeMobilePanel !== 'source') return;
+    setActiveMobilePanel('graph');
+  }, [activeMobilePanel, isIFC5]);
 
   // Ref to hold the selectObject function from useIFC5Viewer
   const selectObjectRef = useRef<((path: string | null) => void) | null>(null);
@@ -775,7 +787,7 @@ const Index = () => {
         learningSample={learningSample}
       />
 
-      <main className="pt-20 h-screen">
+      <main className="pt-12 pb-16 lg:pt-20 lg:pb-0 h-screen">
         <AnimatePresence mode="wait">
           {!parsedData ? (
             <motion.div
@@ -841,18 +853,20 @@ const Index = () => {
               className="h-full flex"
             >
               {/* Vertical panel taskbar — only when a file is loaded */}
-              <PanelTaskbar
-                panelVisibility={panelVisibility}
-                onTogglePanel={togglePanel}
-                isIFC5={isIFC5}
-              />
+              <div className="hidden lg:block">
+                <PanelTaskbar
+                  panelVisibility={panelVisibility}
+                  onTogglePanel={togglePanel}
+                  isIFC5={isIFC5}
+                />
+              </div>
 
               {/* Layout: Properties | Graph | Tree | 3D Viewer | Source (IFC5 only) */}
               <div className="flex-1 h-full min-w-0">
               <ResizablePanelGroup direction="horizontal" className="h-full">
                 {/* Properties Panel */}
-                {panelVisibility.properties && (
-                <ResizablePanel id="properties" order={1} defaultSize={12} minSize={8}>
+                {panelVisibility.properties && (!isMobile || activeMobilePanel === 'properties') && (
+                <ResizablePanel id="properties" order={1} defaultSize={isMobile ? 100 : 12} minSize={8}>
                   <div className="h-full w-full bg-card/50 backdrop-blur-sm overflow-y-auto">
                     {isIFC5 ? (
                       <IFC5PropertyViewer
@@ -882,11 +896,11 @@ const Index = () => {
                 </ResizablePanel>
                 )}
 
-                {panelVisibility.properties && panelVisibility.graph && <ResizableHandle />}
+                {!isMobile && panelVisibility.properties && panelVisibility.graph && <ResizableHandle />}
 
                 {/* Graph Panel */}
-                {panelVisibility.graph && (
-                <ResizablePanel id="graph" order={2} defaultSize={28} minSize={20}>
+                {panelVisibility.graph && (!isMobile || activeMobilePanel === 'graph') && (
+                <ResizablePanel id="graph" order={2} defaultSize={isMobile ? 100 : 28} minSize={20}>
                   {isIFC5 ? (
                     !ifc5GraphLoaded ? (
                       <div className="h-full w-full bg-background/50 flex items-center justify-center">
@@ -1031,11 +1045,11 @@ const Index = () => {
                 </ResizablePanel>
                 )}
 
-                {(panelVisibility.properties || panelVisibility.graph) && panelVisibility.tree && <ResizableHandle />}
+                {!isMobile && (panelVisibility.properties || panelVisibility.graph) && panelVisibility.tree && <ResizableHandle />}
 
                 {/* Tree / IFC Browser Panel */}
-                {panelVisibility.tree && (
-                <ResizablePanel id="tree" order={3} defaultSize={20} minSize={12}>
+                {panelVisibility.tree && (!isMobile || activeMobilePanel === 'tree') && (
+                <ResizablePanel id="tree" order={3} defaultSize={isMobile ? 100 : 20} minSize={12}>
                   <div className="h-full overflow-hidden border-r border-border">
                     {isIFC5 ? (
                       <IFC5TreeBrowser
@@ -1056,11 +1070,11 @@ const Index = () => {
                 </ResizablePanel>
                 )}
 
-                {(panelVisibility.properties || panelVisibility.graph || panelVisibility.tree) && panelVisibility.viewer3d && <ResizableHandle />}
+                {!isMobile && (panelVisibility.properties || panelVisibility.graph || panelVisibility.tree) && panelVisibility.viewer3d && <ResizableHandle />}
 
                 {/* 3D Viewer Panel */}
-                {panelVisibility.viewer3d && (
-                <ResizablePanel id="viewer3d" order={4} defaultSize={20} minSize={10}>
+                {panelVisibility.viewer3d && (!isMobile || activeMobilePanel === 'viewer3d') && (
+                <ResizablePanel id="viewer3d" order={4} defaultSize={isMobile ? 100 : 20} minSize={10}>
                   {!viewer3DLoaded ? (
                     <div className="h-full w-full bg-background/50 flex items-center justify-center border-l border-border">
                       <div className="text-center space-y-4">
@@ -1108,9 +1122,9 @@ const Index = () => {
                 )}
 
                 {/* Source Viewer Panel — only rendered for IFC5 (.ifcx) files */}
-                {isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (panelVisibility.properties || panelVisibility.graph || panelVisibility.tree || panelVisibility.viewer3d) && <ResizableHandle />}
-                {isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (
-                    <ResizablePanel id="source" order={5} defaultSize={20} minSize={12}>
+                {!isMobile && isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (panelVisibility.properties || panelVisibility.graph || panelVisibility.tree || panelVisibility.viewer3d) && <ResizableHandle />}
+                {isIFC5 && parsedData.rawData?.ifc5File && panelVisibility.source && (!isMobile || activeMobilePanel === 'source') && (
+                    <ResizablePanel id="source" order={5} defaultSize={isMobile ? 100 : 20} minSize={12}>
                       <div className="h-full overflow-hidden border-l border-border">
                         <Suspense fallback={
                           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -1129,6 +1143,35 @@ const Index = () => {
                 )}
               </ResizablePanelGroup>
               </div>
+
+              <nav
+                className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
+                aria-label="Mobile panel navigation"
+              >
+                {([
+                  { id: 'properties', label: 'Properties', Icon: SlidersHorizontal },
+                  { id: 'graph', label: 'Graph', Icon: Network },
+                  { id: 'tree', label: isIFC5 ? 'Tree' : 'Browser', Icon: Layers },
+                  { id: 'viewer3d', label: '3D', Icon: Box },
+                  ...(isIFC5 ? [{ id: 'source' as const, label: 'Source', Icon: Code2 }] : []),
+                ] as const).map(({ id, label, Icon }) => {
+                  const isActive = activeMobilePanel === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => selectMobilePanel(id)}
+                      className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[10px] font-medium transition-colors ${
+                        isActive ? 'text-primary' : 'text-muted-foreground'
+                      }`}
+                      aria-current={isActive ? 'page' : undefined}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span className="truncate">{label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
             </motion.div>
           )}
         </AnimatePresence>

@@ -315,6 +315,18 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         for (let qi = 0; qi < queue.length; qi++) {
           if (geometryStubs.length >= MAX_GEOMETRY_STUBS) break;
 
+          if (qi > 0 && qi % 100 === 0) {
+            const bfsProgress = Math.min(99, 95 + Math.round((qi / queue.length) * 4));
+            self.postMessage({
+              type: 'progress',
+              fileId,
+              progress: {
+                percentage: bfsProgress,
+                message: `[Worker] Expanding referenced entities (${qi}/${queue.length})...`,
+              },
+            } as WorkerResponse);
+          }
+
           const expressId = queue[qi];
           const stepLine = result.rawData.rawStepLines.get(expressId);
           if (!stepLine) continue;
