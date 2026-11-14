@@ -37,12 +37,41 @@ import { logger } from '@/utils/logger';
 import { useIFC5Viewer } from '@/hooks/useIFC5Viewer';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useUIState } from '@/contexts/UIStateContext';
+import { nodeMatchesSearch } from '@/lib/graphSearch';
 
 // Lazy load heavy components
 const GraphVisualization = lazy(() => import('@/components/GraphVisualization').then(m => ({ default: m.GraphVisualization })));
 const Viewer3D = lazy(() => import('@/components/Viewer3D'));
 const IFC5GraphVisualization = lazy(() => import('@/components/IFC5GraphVisualization').then(m => ({ default: m.IFC5GraphVisualization })));
 const IFC5SourceViewer = lazy(() => import('@/components/IFC5SourceViewer').then(m => ({ default: m.IFC5SourceViewer })));
+
+function flattenIFC5SearchValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) return value.map(flattenIFC5SearchValue).join(' ');
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nestedValue]) => `${key} ${flattenIFC5SearchValue(nestedValue)}`)
+      .join(' ');
+  }
+  return String(value);
+}
+
+function getIFC5SearchText(node: ComposedObject): string {
+  return [
+    node.name,
+    node.type,
+    flattenIFC5SearchValue(node.attributes),
+  ].join(' ').toLowerCase();
+}
+
+function getIFC5RawSearchText(node: { path: string; inherits?: Record<string, unknown>; children?: Record<string, unknown>; attributes?: Record<string, unknown> }): string {
+  return [
+    node.path,
+    flattenIFC5SearchValue(node.inherits),
+    flattenIFC5SearchValue(node.children),
+    flattenIFC5SearchValue(node.attributes),
+  ].join(' ').toLowerCase();
+}
 
 const Index = () => {
   const navigate = useNavigate();
@@ -56,6 +85,8 @@ const Index = () => {
   const [selectedIFC5RawPath, setSelectedIFC5RawPath] = useState<string | null>(null);
   const [highlightedTypes, setHighlightedTypes] = useState<NodeType[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeSearchMatch, setActiveSearchMatch] = useState(-1);
+  const [graphResetToken, setGraphResetToken] = useState(0);
   const [graphLoD, setGraphLoD] = useState<1 | 2 | 3 | 4>(2); // Default to LoD2 (Minimal)
   const [includeAuxiliaryLayer, setIncludeAuxiliaryLayer] = useState(false);
   const [graphLoaded, setGraphLoaded] = useState(false); // Graph unloaded by default
@@ -243,7 +274,6 @@ const Index = () => {
       setSelectedIFC5Node(null);
       setSelectedIFC5ComposedPath(null);
       setSelectedIFC5RawPath(null);
-      setSelectedIFC5AttributeKey(null);
       selectObjectRef.current?.(null);
       return;
     }
@@ -637,6 +667,12 @@ const Index = () => {
     });
   }, []);
 
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setActiveSearchMatch(-1);
+    }
+  }, [searchQuery]);
+
   // Keyboard shortcuts
   useKeyboardShortcuts([
     {
@@ -660,9 +696,10 @@ const Index = () => {
         setSelectedIFC5Node(null);
         setSelectedIFC5ComposedPath(null);
         setSelectedIFC5RawPath(null);
-        setSelectedIFC5AttributeKey(null);
         selectObjectRef.current?.(null);
         setSearchQuery('');
+        setActiveSearchMatch(-1);
+        setGraphResetToken((token) => token + 1);
       },
     },
     {
@@ -748,6 +785,78 @@ const Index = () => {
     combined.sort((a, b) => (a.expressId || 0) - (b.expressId || 0));
     return combined;
   }, [parsedData?.graphData?.nodes, parsedData?.allEntities]);
+
+  const globalSearchMatches = useMemo(
+    () => searchQuery.trim()
+      ? enrichedEntities.filter((node) => nodeMatchesSearch(node, searchQuery))
+      : [],
+    [enrichedEntities, searchQuery]
+  );
+
+  const ifc5SearchMatches = useMemo(() => {
+    if (!isIFC5 || !searchQuery.trim() || !parsedData?.rawData?.composedObject) return [];
+
+    const matches: Array<{ path: string; node: ComposedObject }> = [];
+    const matchedPaths = new Set<string>();
+    const term = searchQuery.trim().toLowerCase();
+    const walk = (node: ComposedObject) => {
+      if (getIFC5SearchText(node).includes(term)) {
+        matches.push({ path: node.name, node });
+        matchedPaths.add(node.name);
+      }
+      node.children?.forEach(walk);
+    };
+    walk(parsedData.rawData.composedObject);
+
+    parsedData.rawData.ifc5File?.data.forEach((node) => {
+      if (matchedPaths.has(node.path) || !getIFC5RawSearchText(node).includes(term)) return;
+      matches.push({
+        path: node.path,
+        node: {
+          name: node.path,
+          attributes: node.attributes,
+        },
+      });
+    });
+
+    return matches;
+  }, [isIFC5, parsedData?.rawData?.composedObject, parsedData?.rawData?.ifc5File, searchQuery]);
+
+  const searchMatchCount = isIFC5 ? ifc5SearchMatches.length : globalSearchMatches.length;
+
+  useEffect(() => {
+    setActiveSearchMatch(searchMatchCount > 0 ? 0 : -1);
+  }, [searchMatchCount]);
+
+  const handleSearchNavigate = useCallback((direction: 1 | -1) => {
+    if (searchMatchCount === 0) return;
+    setActiveSearchMatch((current) => {
+      const start = current < 0 ? 0 : current;
+      return (start + direction + searchMatchCount) % searchMatchCount;
+    });
+  }, [searchMatchCount]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    if (isIFC5) {
+      const activeMatch = ifc5SearchMatches[activeSearchMatch];
+      if (activeMatch) {
+        handleIFC5NodeSelect(activeMatch.path, activeMatch.node);
+      }
+      return;
+    }
+
+    const activeMatch = globalSearchMatches[activeSearchMatch];
+    if (activeMatch) {
+      setSelectedNode(activeMatch);
+    }
+  }, [activeSearchMatch, globalSearchMatches, ifc5SearchMatches, isIFC5, searchQuery, handleIFC5NodeSelect]);
+
+  useEffect(() => {
+    if (!isIFC5 && globalSearchMatches.length > 0) {
+      setSelectedNode(globalSearchMatches[0]);
+    }
+  }, [globalSearchMatches, isIFC5]);
 
   // Memoize filtered graph data for progressive learning
   // Only apply progressive filtering for guided learning samples
@@ -906,16 +1015,16 @@ const Index = () => {
                       <div className="h-full w-full bg-background/50 flex items-center justify-center">
                         <div className="text-center space-y-4">
                           <div className="text-4xl mb-2">🕸️</div>
-                          <p className="text-lg font-medium">IFC5 Graph View</p>
+                          <p className="text-lg font-medium">IFCX Graph View</p>
                           <p className="text-muted-foreground text-sm max-w-md">
-                            Visualize IFC5 JSON structure as an interactive graph with
+                            Visualize IFCX JSON structure as an interactive graph with
                             data nodes, attributes, geometry, and inheritance relationships.
                           </p>
                           <button
                             onClick={() => setIfc5GraphLoaded(true)}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
                           >
-                            Load IFC5 Graph
+                            Load IFCX Graph
                           </button>
                         </div>
                       </div>
@@ -931,6 +1040,11 @@ const Index = () => {
                             ifc5File={parsedData.rawData?.ifc5File}
                             onNodeSelect={handleIFC5NodeSelect}
                             selectedNodePath={selectedIFC5ComposedPath}
+                            searchQuery={searchQuery}
+                            searchMatchCount={ifc5SearchMatches.length}
+                            activeSearchMatch={activeSearchMatch}
+                            onSearchChange={setSearchQuery}
+                            onSearchNavigate={handleSearchNavigate}
                           />
                         </Suspense>
                         <div className="absolute bottom-2 right-2 z-20">
@@ -965,6 +1079,9 @@ const Index = () => {
                           selectedNodeId={selectedNode?.id || null}
                           highlightedTypes={highlightedTypes}
                           searchQuery={searchQuery}
+                          searchMatchIndex={activeSearchMatch}
+                          searchMatchIds={globalSearchMatches.map((node) => node.id)}
+                          resetToken={graphResetToken}
                           graphLoD={graphLoD}
                           includeAuxiliaryLayer={includeAuxiliaryLayer}
                           relationshipFilters={relationshipFilters}
@@ -979,6 +1096,9 @@ const Index = () => {
                       <GraphControls
                         searchQuery={searchQuery}
                         onSearchChange={setSearchQuery}
+                        searchMatchCount={globalSearchMatches.length}
+                        activeSearchMatch={activeSearchMatch}
+                        onSearchNavigate={handleSearchNavigate}
                         highlightedTypes={highlightedTypes}
                         onTypeToggle={handleTypeToggle}
                         selectedNode={selectedNode}
@@ -1056,6 +1176,8 @@ const Index = () => {
                         composedObject={parsedData.rawData?.composedObject}
                         onNodeSelect={handleIFC5NodeSelect}
                         selectedPath={selectedIFC5ComposedPath}
+                        globalSearchQuery={searchQuery}
+                        onGlobalSearchChange={setSearchQuery}
                       />
                     ) : (
                       <IFCBrowser
@@ -1064,6 +1186,8 @@ const Index = () => {
                         selectedNodeId={selectedNode?.id || null}
                         onNodeSelect={handleNodeClick}
                         metadata={parsedData.metadata}
+                        globalSearchQuery={searchQuery}
+                        onGlobalSearchChange={setSearchQuery}
                       />
                     )}
                   </div>
@@ -1136,6 +1260,8 @@ const Index = () => {
                             composedObject={parsedData.rawData.composedObject ?? null}
                             selectedPath={selectedIFC5RawPath ?? selectedIFC5ComposedPath}
                             onNodeSelect={handleIFC5NodeSelect}
+                            globalSearchQuery={searchQuery}
+                            onGlobalSearchChange={setSearchQuery}
                           />
                         </Suspense>
                       </div>

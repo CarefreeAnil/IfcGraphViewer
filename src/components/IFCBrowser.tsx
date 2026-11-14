@@ -18,6 +18,8 @@ interface IFCBrowserProps {
   selectedNodeId: string | null;
   onNodeSelect: (node: GraphNode | null) => void;
   metadata?: ParsedIFCData['metadata'];
+  globalSearchQuery?: string;
+  onGlobalSearchChange?: (query: string) => void;
 }
 
 // Color classes for syntax highlighting
@@ -557,8 +559,9 @@ function buildReferenceIndexWithContext(nodes: GraphNode[]): Map<string, Map<num
   return referenceIndex;
 }
 
-export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadata }: IFCBrowserProps) => {
-  const [searchQuery, setSearchQuery] = useState('');
+export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadata, globalSearchQuery, onGlobalSearchChange }: IFCBrowserProps) => {
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const searchQuery = globalSearchQuery ?? localSearchQuery;
   const deferredQuery = useDeferredValue(searchQuery);
   const [goToId, setGoToId] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
@@ -880,7 +883,11 @@ export const IFCBrowser = ({ nodes, edges, selectedNodeId, onNodeSelect, metadat
             <Input
               placeholder="Search by type, name, or #ID/GUID..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const query = e.target.value;
+                if (onGlobalSearchChange) onGlobalSearchChange(query);
+                else setLocalSearchQuery(query);
+              }}
               className="h-8 text-sm pl-8 font-mono"
             />
           </div>

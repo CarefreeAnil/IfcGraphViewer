@@ -100,6 +100,8 @@ interface IFC5SourceViewerProps {
   composedObject: ComposedObject | null;
   selectedPath: string | null;
   onNodeSelect: (path: string, node: ComposedObject) => void;
+  globalSearchQuery?: string;
+  onGlobalSearchChange?: (query: string) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -109,8 +111,11 @@ export const IFC5SourceViewer: React.FC<IFC5SourceViewerProps> = ({
   composedObject,
   selectedPath,
   onNodeSelect,
+  globalSearchQuery,
+  onGlobalSearchChange,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [localSearchTerm, setLocalSearchTerm] = useState('');
+  const searchTerm = globalSearchQuery ?? localSearchTerm;
   const [matchIndex, setMatchIndex] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -215,7 +220,7 @@ export const IFC5SourceViewer: React.FC<IFC5SourceViewerProps> = ({
     return (
       <div className="flex flex-col h-full items-center justify-center text-muted-foreground bg-card">
         <FileCode2 className="w-10 h-10 mb-3 opacity-30" />
-        <p className="text-sm">No IFC5 source data</p>
+        <p className="text-sm">No IFCX source data</p>
         <p className="text-xs mt-1 opacity-60">Load an .ifcx file to view source</p>
       </div>
     );
@@ -228,7 +233,7 @@ export const IFC5SourceViewer: React.FC<IFC5SourceViewerProps> = ({
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/40 bg-card/80 shrink-0">
         <FileCode2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <span className="text-xs font-medium text-muted-foreground flex-1 truncate">
-          IFC5 Source
+          IFCX Source
           <span className="ml-1 opacity-50">· {nodes.length} nodes</span>
           <span className="ml-1 opacity-40 italic">· raw .ifcx (before composition)</span>
         </span>
@@ -263,7 +268,11 @@ export const IFC5SourceViewer: React.FC<IFC5SourceViewerProps> = ({
             type="text"
             placeholder="Find node… (path, attribute key/value, GUID)"
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => {
+              const term = e.target.value;
+              if (onGlobalSearchChange) onGlobalSearchChange(term);
+              else setLocalSearchTerm(term);
+            }}
             onKeyDown={e => {
               if (e.key === 'Enter') {
                 if (e.shiftKey) {
@@ -273,13 +282,19 @@ export const IFC5SourceViewer: React.FC<IFC5SourceViewerProps> = ({
                   setMatchIndex(i => i + 1);
                 }
               }
-              if (e.key === 'Escape') setSearchTerm('');
+              if (e.key === 'Escape') {
+                if (onGlobalSearchChange) onGlobalSearchChange('');
+                else setLocalSearchTerm('');
+              }
             }}
             className="h-6 text-[11px] pr-6 bg-background/50 border-border/40 font-mono"
           />
           {searchTerm && (
             <button
-              onClick={() => setSearchTerm('')}
+              onClick={() => {
+                if (onGlobalSearchChange) onGlobalSearchChange('');
+                else setLocalSearchTerm('');
+              }}
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <X className="w-3 h-3" />
