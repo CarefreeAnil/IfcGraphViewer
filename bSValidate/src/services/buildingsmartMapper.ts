@@ -55,7 +55,12 @@ function mapOutcomeState(bsSeverity?: any): NonNullable<ValidationError['buildin
 }
 
 function getOutcomeSeverity(result: any): unknown {
-  return result.severity_in_db ?? result.severity;
+  const severity = result.severity_in_db ?? result.severity;
+  if (typeof severity === 'string' && severity.trim() !== '') {
+    const numericSeverity = Number(severity);
+    if (Number.isInteger(numericSeverity)) return numericSeverity;
+  }
+  return severity;
 }
 
 function formatFieldValue(value: unknown): string {
@@ -436,16 +441,9 @@ function categorizeErrors(errors: ValidationError[]) {
 
     // Check if this is a buildingSMART schema entity_rule
     // These should go into schemaErrors tab
-    if (anyError.feature) {
-      try {
-        const parsed = JSON.parse(anyError.feature);
-        if (parsed.type === 'entity_rule') {
-          schemaErrors.push(error);
-          return; // Categorized, skip further checks
-        }
-      } catch {
-        // Not JSON, continue
-      }
+    if (isSchemaRule(error)) {
+      schemaErrors.push(error);
+      return;
     }
 
     // Check if this is a buildingSMART normative/industry rule
@@ -609,7 +607,7 @@ export function mapBuildingSmartToValidationResult(
     syntaxErrors,
     schemaErrors,
     headerErrors,
-    errors: [...errors, ...otherErrors.filter(e => e.severity === 'error')],
+    errors,
     warnings,
     info,
     stats: {

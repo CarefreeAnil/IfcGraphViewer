@@ -410,7 +410,7 @@ export async function parseIFCFile(
     fileText = new TextDecoder().decode(data);
   } catch (e) { console.warn('Text decode failed'); }
 
-  let isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
+  const isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
 
   // Extract IFC header metadata from raw file content
   let ifcHeader: any = {

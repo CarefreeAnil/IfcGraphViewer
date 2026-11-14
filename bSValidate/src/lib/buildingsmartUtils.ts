@@ -263,7 +263,7 @@ export function simplifyMessage(message: string): string {
   if (!message) return '';
 
   // Replace common technical terms
-  let simplified = message
+  const simplified = message
     // JSON-like structures
     .replace(/\{"type":\s*"entity_rule",\s*"attribute":\s*"([^"]+)"\}/g, 'Rule: $1')
     .replace(/\[notValidated by ir Fallardi\s+\d+/g, '[Not validated')
