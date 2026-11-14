@@ -1,4 +1,5 @@
-import { AlertCircle, CheckCircle, Info, AlertTriangle, FileText, Layout, Database, BookOpen, ExternalLink, Shield, HelpCircle, Briefcase } from 'lucide-react';
+import { useState } from 'react';
+import { AlertCircle, CheckCircle, Info, AlertTriangle, FileText, Layout, Database, BookOpen, ExternalLink, Shield, HelpCircle, Briefcase, Search, RotateCcw } from 'lucide-react';
 import { ValidationResult, ValidationError } from '@/lib/ifcValidatorEnhanced';
 import { GraphNode } from '@/types/graph';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,11 +12,19 @@ import { Button } from '@/components/ui/button';
 import { glossaryHighlight } from '@/features/educational/components/GlossaryTerm';
 import { BuildingSmartResults } from '../../bSValidate/src/components/BuildingSmartResults';
 import { SchemaResults } from '../../bSValidate/src/components/SchemaResults';
+import { isSchemaRule } from '../../bSValidate/src/lib/buildingsmartUtils';
 
 interface ValidationReportProps {
   result: ValidationResult;
   nodes?: GraphNode[];
   onEntityClick?: (entityId: string) => void;
+  context?: {
+    source?: string;
+    jobId?: string | null;
+    fileName?: string;
+    status?: string;
+    completedAt?: string | null;
+  };
 }
 
 const EDUCATIONAL_CONTEXT: Record<string, string> = {
@@ -38,7 +47,52 @@ const EDUCATIONAL_CONTEXT: Record<string, string> = {
   'SYN005': 'This entity failed to parse completely. This usually happens when you use text without quotes (like UK instead of \'UK\') or skip commas. The parser simply skipped this line.',
 };
 
-export function ValidationReport({ result, nodes, onEntityClick }: ValidationReportProps) {
+export function ValidationReport({ result, nodes, onEntityClick, context }: ValidationReportProps) {
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [outcomeFilter, setOutcomeFilter] = useState('all');
+  const [searchFilter, setSearchFilter] = useState('');
+
+  const getCategory = (error: ValidationError): string => {
+    const anyError = error as any;
+    if (anyError.taskType === 'INDUSTRY') return 'industry';
+    if (['NORMATIVE_IA', 'NORMATIVE_IP'].includes(anyError.taskType)) return 'normative';
+    if (isSchemaRule(error)) return 'schema';
+    if (error.type.toLowerCase().includes('header')) return 'header';
+    if (error.type.toLowerCase().includes('syntax')) return 'syntax';
+    return 'other';
+  };
+
+  const getOutcomeState = (error: ValidationError): string => {
+    const state = error.buildingSmart?.outcomeState;
+    if (state) return state;
+    return error.severity;
+  };
+
+  const matchesSearch = (error: ValidationError, query: string): boolean => {
+    if (!query.trim()) return true;
+    const anyError = error as any;
+    const haystack = [
+      error.code,
+      error.message,
+      error.entityId,
+      error.entityType,
+      anyError.instance_public_id,
+      anyError.feature,
+      anyError.outcomeCode,
+      error.buildingSmart?.outcomeCode,
+      error.buildingSmart?.feature,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(query.trim().toLowerCase());
+  };
+
+  const resetFilters = () => {
+    setSeverityFilter('all');
+    setCategoryFilter('all');
+    setOutcomeFilter('all');
+    setSearchFilter('');
+  };
+
   // DEBUG: Log result structure and task types
   console.log('\n=== VALIDATION REPORT DEBUG ===');
   console.log('Total errors:', result.errors.length);
@@ -46,6 +100,16 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
   console.log('Total info:', result.info.length);
 
   const allResults = [...result.errors, ...result.warnings, ...result.info];
+  const filteredResults = allResults.filter(error =>
+    (severityFilter === 'all' || error.severity === severityFilter) &&
+    (categoryFilter === 'all' || getCategory(error) === categoryFilter) &&
+    (outcomeFilter === 'all' || getOutcomeState(error) === outcomeFilter) &&
+    matchesSearch(error, searchFilter)
+  );
+  const filteredErrors = filteredResults.filter(error => error.severity === 'error');
+  const filteredWarnings = filteredResults.filter(error => error.severity === 'warning');
+  const filteredInfo = filteredResults.filter(error => error.severity === 'info');
+  const filterActive = severityFilter !== 'all' || categoryFilter !== 'all' || outcomeFilter !== 'all' || !!searchFilter.trim();
   const taskTypeCounts: Record<string, number> = {};
   allResults.forEach((e: any) => {
     const taskType = e.taskType || 'NONE';
@@ -127,28 +191,105 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
     }));
   };
 
-  const groupedSchemaErrors = groupErrors(result.schemaErrors);
+  // Calculate filtered category collections before grouping or rendering them.
+  const visibleSyntaxErrors = result.syntaxErrors.filter(error => filteredResults.includes(error));
+  const visibleSchemaErrors = result.schemaErrors.filter(error => filteredResults.includes(error));
+  const visibleHeaderErrors = result.headerErrors.filter(error => filteredResults.includes(error));
+  const groupedSchemaErrors = groupErrors(visibleSchemaErrors);
 
   // Calculate category statuses
   const categoryStatuses = {
-    syntax: result.syntaxErrors.length === 0,
-    schema: result.schemaErrors.length === 0,
-    normative: [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+    syntax: visibleSyntaxErrors.length === 0,
+    schema: visibleSchemaErrors.length === 0,
+    normative: filteredResults.filter((e: any) =>
       ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType) && e.severity === 'error'
     ).length === 0,
-    industry: [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+    industry: filteredResults.filter((e: any) =>
       e.taskType === 'INDUSTRY' && e.severity === 'error'
     ).length === 0,
   };
 
   // Check if entity context is available (only relevant for BuildingSmart results)
   const isBuildingSmartResult = result.schemaVersion === 'BuildingSMART API';
-  const allErrors = [...result.errors, ...result.warnings, ...result.info];
+  const allErrors = filteredResults;
   const errorsWithEntity = allErrors.filter(e => e.entityId || e.entityType).length;
   const hasLimitedEntityContext = isBuildingSmartResult && allErrors.length > 0 && errorsWithEntity < allErrors.length * 0.3;
 
   return (
     <div className="w-full space-y-6">
+      {isBuildingSmartResult && (
+        <Card>
+          <CardContent className="pt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">buildingSMART Validation Service</p>
+                <p className="text-xs text-muted-foreground">Request context and report filters</p>
+              </div>
+              <Badge variant="outline">{filterActive ? `${filteredResults.length} visible` : `${allResults.length} results`}</Badge>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="text-xs font-medium">
+                Severity
+                <select value={severityFilter} onChange={event => setSeverityFilter(event.target.value)} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm font-normal">
+                  <option value="all">All severities</option>
+                  <option value="error">Error</option>
+                  <option value="warning">Warning</option>
+                  <option value="info">Info / N/A</option>
+                </select>
+              </label>
+              <label className="text-xs font-medium">
+                Category
+                <select value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm font-normal">
+                  <option value="all">All categories</option>
+                  <option value="normative">Normative rules</option>
+                  <option value="industry">Industry practices</option>
+                  <option value="schema">Schema</option>
+                  <option value="header">Header</option>
+                  <option value="syntax">Syntax</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label className="text-xs font-medium">
+                Outcome
+                <select value={outcomeFilter} onChange={event => setOutcomeFilter(event.target.value)} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm font-normal">
+                  <option value="all">All outcomes</option>
+                  <option value="error">Error</option>
+                  <option value="warning">Warning</option>
+                  <option value="passed">Passed</option>
+                  <option value="executed">Applicable</option>
+                  <option value="not-applicable">N/A</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label className="text-xs font-medium">
+                Rule, feature, or entity
+                <div className="relative mt-1">
+                  <Search className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-muted-foreground" />
+                  <input value={searchFilter} onChange={event => setSearchFilter(event.target.value)} placeholder="GEM001, #123, IfcWall" className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm font-normal" />
+                </div>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{filteredErrors.length} errors, {filteredWarnings.length} warnings, {filteredInfo.length} info/N/A</span>
+              {filterActive && (
+                <Button variant="ghost" size="sm" onClick={resetFilters} className="h-7 gap-1 px-2">
+                  <RotateCcw className="h-3 w-3" /> Reset filters
+                </Button>
+              )}
+            </div>
+            {(context?.jobId || context?.fileName || context?.status || context?.completedAt) && (
+              <div className="flex flex-wrap gap-x-5 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+                {context.source && <span>Source: <strong className="text-foreground">{context.source}</strong></span>}
+                {context.fileName && <span>File: <strong className="text-foreground">{context.fileName}</strong></span>}
+                {context.jobId && <span>Request: <strong className="font-mono text-foreground">{context.jobId}</strong></span>}
+                {context.status && <span>Status: <strong className="text-foreground">{context.status}</strong></span>}
+                {context.completedAt && <span>Completed: <strong className="text-foreground">{new Date(context.completedAt).toLocaleString()}</strong></span>}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Result Classification Summary */}
       <Card>
         <CardContent className="pt-6">
@@ -279,13 +420,13 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
                 Normative IFC Rules
               </h3>
               <Badge variant={(() => {
-                const normativeErrors = [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+                const normativeErrors = filteredResults.filter((e: any) =>
                   ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType)
                 );
                 return normativeErrors.filter(e => e.severity === 'error').length === 0 ? "outline" : "destructive";
               })()}>
                 {(() => {
-                  const normativeErrors = [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+                  const normativeErrors = filteredResults.filter((e: any) =>
                     ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType) && e.severity === 'error'
                   );
                   return normativeErrors.length;
@@ -297,9 +438,9 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
             </p>
 
             <BuildingSmartResults
-              errors={result.errors.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
-              warnings={result.warnings.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
-              info={result.info.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
+              errors={filteredErrors.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
+              warnings={filteredWarnings.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
+              info={filteredInfo.filter((e: any) => ['NORMATIVE_IA', 'NORMATIVE_IP'].includes(e.taskType))}
               nodes={nodes}
               onEntityClick={onEntityClick}
             />
@@ -315,13 +456,13 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
                 Industry Practices
               </h3>
               <Badge variant={(() => {
-                const industryErrors = [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+                const industryErrors = filteredResults.filter((e: any) =>
                   e.taskType === 'INDUSTRY'
                 );
                 return industryErrors.filter(e => e.severity === 'error').length === 0 ? "outline" : "default";
               })()}>
                 {(() => {
-                  const industryErrors = [...result.errors, ...result.warnings, ...result.info].filter((e: any) =>
+                  const industryErrors = filteredResults.filter((e: any) =>
                     e.taskType === 'INDUSTRY' && e.severity === 'error'
                   );
                   return industryErrors.length;
@@ -333,9 +474,9 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
             </p>
 
             <BuildingSmartResults
-              errors={result.errors.filter((e: any) => e.taskType === 'INDUSTRY')}
-              warnings={result.warnings.filter((e: any) => e.taskType === 'INDUSTRY')}
-              info={result.info.filter((e: any) => e.taskType === 'INDUSTRY')}
+              errors={filteredErrors.filter((e: any) => e.taskType === 'INDUSTRY')}
+              warnings={filteredWarnings.filter((e: any) => e.taskType === 'INDUSTRY')}
+              info={filteredInfo.filter((e: any) => e.taskType === 'INDUSTRY')}
               nodes={nodes}
               onEntityClick={onEntityClick}
             />
@@ -349,8 +490,8 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
               <FileText className="w-5 h-5 text-blue-500" />
               File Header Policy
             </h3>
-            <Badge variant={result.headerErrors.length === 0 ? "outline" : "destructive"}>
-                {result.headerErrors.length} Issues
+            <Badge variant={visibleHeaderErrors.length === 0 ? "outline" : "destructive"}>
+              {visibleHeaderErrors.length} Issues
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -358,7 +499,7 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
             BuildingSMART has strict policies for this section to ensure traceability.
           </p>
           
-          {result.headerErrors.length === 0 ? (
+          {visibleHeaderErrors.length === 0 ? (
              <div className="p-8 border rounded-lg bg-green-50 flex flex-col items-center text-center">
                  <CheckCircle className="w-10 h-10 text-green-500 mb-2" />
                  <h4 className="font-medium text-green-800">Header Compliant</h4>
@@ -366,7 +507,7 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
              </div>
           ) : (
              <div className="space-y-3">
-               {result.headerErrors.map((err, i) => (
+               {visibleHeaderErrors.map((err, i) => (
                  <ValidationCard key={i} error={err} showContext={true} />
                ))}
              </div>
@@ -380,15 +521,15 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
               <Layout className="w-5 h-5 text-purple-500" />
               STEP File Syntax
             </h3>
-            <Badge variant={result.syntaxErrors.length === 0 ? "outline" : "destructive"}>
-                {result.syntaxErrors.length} Issues
+            <Badge variant={visibleSyntaxErrors.length === 0 ? "outline" : "destructive"}>
+              {visibleSyntaxErrors.length} Issues
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
              Checks if the file follows the ISO-10303-21 text structure (semicolons, DATA block, etc.).
           </p>
           
-          {result.syntaxErrors.length === 0 ? (
+          {visibleSyntaxErrors.length === 0 ? (
              <div className="p-8 border rounded-lg bg-green-50 flex flex-col items-center text-center">
                  <CheckCircle className="w-10 h-10 text-green-500 mb-2" />
                  <h4 className="font-medium text-green-800">Syntax Valid</h4>
@@ -396,7 +537,7 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
              </div>
           ) : (
              <div className="space-y-3">
-               {result.syntaxErrors.map((err, i) => (
+               {visibleSyntaxErrors.map((err, i) => (
                  <ValidationCard key={i} error={err} showContext={true} />
                ))}
              </div>
@@ -410,8 +551,8 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
               <Database className="w-5 h-5 text-orange-500" />
               IFC Schema Compliance
             </h3>
-            <Badge variant={result.schemaErrors.length === 0 ? "outline" : "destructive"}>
-                {result.schemaErrors.length} Issues
+            <Badge variant={visibleSchemaErrors.length === 0 ? "outline" : "destructive"}>
+              {visibleSchemaErrors.length} Results
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -419,11 +560,11 @@ export function ValidationReport({ result, nodes, onEntityClick }: ValidationRep
           </p>
 
           {/* Show BuildingSMART Schema Results if available */}
-          {isBuildingSmartResult && result.schemaErrors.length > 0 ? (
+          {isBuildingSmartResult && visibleSchemaErrors.length > 0 ? (
             <SchemaResults
-              errors={result.schemaErrors}
-              warnings={[]}
-              info={[]}
+              errors={visibleSchemaErrors.filter(error => error.severity === 'error')}
+              warnings={visibleSchemaErrors.filter(error => error.severity === 'warning')}
+              info={visibleSchemaErrors.filter(error => error.severity === 'info')}
               nodes={nodes}
               onEntityClick={onEntityClick}
             />

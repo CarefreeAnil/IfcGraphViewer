@@ -16,30 +16,52 @@ export interface RuleGroup {
   documentationLink?: string;
 }
 
+export function asFeatureString(feature?: unknown): string {
+  if (feature == null) return '';
+  if (typeof feature === 'string') return feature;
+  try {
+    return JSON.stringify(feature);
+  } catch {
+    return String(feature);
+  }
+}
+
+export function parseFeaturePayload(feature?: unknown): Record<string, any> | null {
+  if (feature && typeof feature === 'object' && !Array.isArray(feature)) {
+    return feature as Record<string, any>;
+  }
+  if (typeof feature === 'string') {
+    try {
+      const parsed = JSON.parse(feature);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /**
  * Extract rule code from feature name
  * Example: "BLT001 - Correct use of operation type attributes for doors" → "BLT001"
  * For JSON features like {"type": "entity_rule", "attribute": "IfcBuildingElement.MaxOneMaterialAssociation"}, extracts the attribute
  */
-export function extractRuleCode(feature?: string): string {
-  if (!feature) return '';
+export function extractRuleCode(feature?: unknown): string {
+  const featureText = asFeatureString(feature);
+  if (!featureText) return '';
 
   // Try to match standard rule code format (BLT001, GEM003, etc.)
-  const match = feature.match(/^([A-Z]{3}\d{3})/);
+  const match = featureText.match(/^([A-Z]{3}\d{3})/);
   if (match) return match[1];
 
-  // Handle JSON format like {"type": "entity_rule", "attribute": "IfcBuildingElement.MaxOneMaterialAssociation"}
-  try {
-    const parsed = JSON.parse(feature);
-    if (parsed.attribute) {
-      // Extract entity rule name
-      return parsed.attribute;
-    }
-    if (parsed.type === 'entity_rule') {
-      return 'ENTITY_RULE';
-    }
-  } catch {
-    // Not JSON, continue
+  const parsed = parseFeaturePayload(feature);
+  if (parsed?.attribute) {
+    return String(parsed.attribute);
+  }
+  if (parsed?.type === 'entity_rule') {
+    return 'ENTITY_RULE';
   }
 
   return '';
@@ -50,25 +72,19 @@ export function extractRuleCode(feature?: string): string {
  * Example: "BLT001 - Correct use of operation type attributes for doors" → "Correct use of operation type attributes for doors"
  * For JSON features, returns the attribute or feature itself
  */
-export function extractRuleName(feature?: string): string {
-  if (!feature) return '';
+export function extractRuleName(feature?: unknown): string {
+  const featureText = asFeatureString(feature);
+  if (!featureText) return '';
 
-  // Try standard format with dash
-  const match = feature.match(/^[A-Z]{3}\d{3}\s*-\s*(.+)$/);
+  const match = featureText.match(/^[A-Z]{3}\d{3}\s*-\s*(.+)$/);
   if (match) return match[1];
 
-  // Handle JSON format
-  try {
-    const parsed = JSON.parse(feature);
-    if (parsed.attribute) {
-      return parsed.attribute;
-    }
-    return feature;
-  } catch {
-    // Not JSON, return as-is
+  const parsed = parseFeaturePayload(feature);
+  if (parsed?.attribute) {
+    return String(parsed.attribute);
   }
 
-  return feature;
+  return featureText;
 }
 
 /**
@@ -197,24 +213,32 @@ export function getSeverityDisplay(severity: 'error' | 'warning' | 'info'): stri
   return map[severity] || severity;
 }
 
+export function getOutcomeStateDisplay(error: ValidationError): string {
+  const state = error.buildingSmart?.outcomeState;
+  if (state === 'not-applicable') return 'N/A';
+  if (state === 'executed') return 'Applicable';
+  if (state === 'passed') return 'Passed';
+  if (state === 'warning') return 'Warning';
+  if (state === 'error') return 'Error';
+  return getSeverityDisplay(error.severity);
+}
+
 /**
  * Check if error is a schema/entity rule (vs normative Gherkin rule)
  * Schema rules have JSON features with "entity_rule" type
  */
 export function isSchemaRule(error: ValidationError): boolean {
   const anyError = error as any;
-  if (!anyError.feature) return false;
-
-  // Try to parse as JSON
-  try {
-    const parsed = JSON.parse(anyError.feature);
-    return parsed.type === 'entity_rule';
-  } catch {
-    // Not JSON
+  if (anyError.taskType === 'SCHEMA' || error.buildingSmart?.taskType === 'SCHEMA') {
+    return true;
   }
+  if (!anyError.feature && !error.buildingSmart?.feature) return false;
 
-  // Also check for "Entity Rule" in feature name
-  return anyError.feature.includes('Entity Rule');
+  const feature = anyError.feature ?? error.buildingSmart?.feature;
+  const parsed = parseFeaturePayload(feature);
+  if (parsed?.type === 'entity_rule') return true;
+
+  return asFeatureString(feature).includes('Entity Rule');
 }
 
 /**
@@ -239,7 +263,7 @@ export function simplifyMessage(message: string): string {
   if (!message) return '';
 
   // Replace common technical terms
-  let simplified = message
+  const simplified = message
     // JSON-like structures
     .replace(/\{"type":\s*"entity_rule",\s*"attribute":\s*"([^"]+)"\}/g, 'Rule: $1')
     .replace(/\[notValidated by ir Fallardi\s+\d+/g, '[Not validated')

@@ -30,6 +30,7 @@ const Validation = () => {
   const [validationComplete, setValidationComplete] = useState(false);
   const [bsValidationStatus, setBsValidationStatus] = useState<string>('');
   const [bsJobId, setBsJobId] = useState<string | null>(null);
+  const [bsCompletedAt, setBsCompletedAt] = useState<string | null>(null);
 
   // Get parsed data from location state (passed from Index page)
   const parsedData = (location.state?.parsedData as ParsedIFCData) || null;
@@ -181,6 +182,7 @@ const Validation = () => {
     setValidationComplete(false);
     setBsValidationStatus('Submitting file...');
     setBsJobId(null);
+    setBsCompletedAt(null);
 
     try {
       // Step 1: Submit the file
@@ -252,6 +254,7 @@ const Validation = () => {
       console.log('====================================\n');
       setValidationResults(mappedResults);
       setValidationComplete(true);
+      setBsCompletedAt(new Date().toISOString());
       setBsValidationStatus('');
       
       // Update parsedData with validation results for persistence
@@ -635,6 +638,13 @@ const Validation = () => {
                   result={validationResults}
                   nodes={parsedData?.allEntities || parsedData?.graphData?.nodes}
                   onEntityClick={handleEntityClick}
+                  context={{
+                    source: 'buildingSMART Validation Service',
+                    jobId: bsJobId || validationResults?.buildingSmart?.jobId,
+                    fileName: ifcFileNameRef.current,
+                    status: 'completed',
+                    completedAt: bsCompletedAt,
+                  }}
                 />
               </div>
             )}

@@ -17,6 +17,7 @@ import {
   formatStepId,
   formatValue,
   getSeverityDisplay,
+  getOutcomeStateDisplay,
   isBuildingSmartError,
   isSchemaRule,
 } from '../lib/buildingsmartUtils';
@@ -215,6 +216,8 @@ export function BuildingSmartResults({
 
                           const expected = formatValue(anyError.expectedValue);
                           const observed = formatValue(anyError.observedValue);
+                          const outcomeCode = error.buildingSmart?.outcomeCode || anyError.outcomeCode;
+                          const featureVersion = error.buildingSmart?.featureVersion || anyError.featureVersion;
 
                           return (
                             <tr
@@ -231,8 +234,14 @@ export function BuildingSmartResults({
                                       : 'bg-blue-100 text-blue-800'
                                   }`}
                                 >
-                                  {getSeverityDisplay(error.severity)}
+                                  {getOutcomeStateDisplay(error)}
                                 </span>
+                                {(outcomeCode || featureVersion !== undefined) && (
+                                  <div className="mt-1 text-[10px] text-muted-foreground">
+                                    {outcomeCode && <span>{outcomeCode}</span>}
+                                    {featureVersion !== undefined && <span>{outcomeCode ? ' · ' : ''}v{featureVersion}</span>}
+                                  </div>
+                                )}
                               </td>
                               <td className="p-2 font-mono text-xs">
                                 {primaryStepId || '-'}

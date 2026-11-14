@@ -393,7 +393,7 @@ export async function parseIFCFile(
   // Set the WASM path to the root where static files are copied
   await ifcApi.Init((path: string) => {
     // In development/production, WASM files are copied to root
-    return `/${path}`;
+    return `/ifc-wasm/${path}`;
   });
 
   const loadTime = performance.now();
@@ -410,7 +410,7 @@ export async function parseIFCFile(
     fileText = new TextDecoder().decode(data);
   } catch (e) { console.warn('Text decode failed'); }
 
-  let isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
+  const isIfcxFile = file.name.toLowerCase().endsWith('.ifcx');
 
   // Extract IFC header metadata from raw file content
   let ifcHeader: any = {

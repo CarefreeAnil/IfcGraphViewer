@@ -192,6 +192,20 @@ export interface ValidationError {
   suggestion?: string;
   functionalPart?: string; // buildingSMART functional part TAG (e.g., 'PJS', 'PSE', 'GEM')
   functionalPartName?: string; // Human-readable name (e.g., 'Project definition')
+  buildingSmart?: {
+    outcomeId?: string;
+    outcomeCode?: string;
+    outcomeSeverity?: number | string;
+    outcomeState?: 'not-applicable' | 'executed' | 'passed' | 'warning' | 'error' | 'unknown';
+    taskType?: string;
+    feature?: string;
+    featureVersion?: number | string;
+    featureUrl?: string;
+    expected?: unknown;
+    observed?: unknown;
+    instancePublicId?: string;
+    rawMessage?: string;
+  };
 }
 
 export interface ValidationResult {
@@ -208,6 +222,7 @@ export interface ValidationResult {
     totalErrors: number;
     totalWarnings: number;
     totalInfo: number;
+    totalChecks?: number;
     checkedEntities: number;
     checkedRelationships: number;
     checkedProperties: number;
