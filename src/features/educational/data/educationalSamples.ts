@@ -55,14 +55,14 @@ export const EDUCATIONAL_SAMPLES: EducationalSample[] = [
   // Beginner Level: IFC5 Introduction
   {
     id: 'hello-wall-ifc5',
-    name: 'Hello Wall (IFC5)',
-    description: 'Modern IFC5 JSON format example showing a wall with windows and spaces. Demonstrates the new composition model and how IFC5 differs from STEP-based IFC4.',
+    name: 'Hello Wall (IFCX)',
+    description: 'Modern IFCX JSON format example showing a wall with windows and spaces. Demonstrates the new composition model and how IFCX differs from STEP-based IFC4.',
     path: '/testFiles/hello-wall.ifcx',
     fileSize: 42931,
     entityCount: 30,
     learningObjectives: [
-      'Understand IFC5 JSON format vs. traditional STEP format',
-      'Explore the IFC5 composition model with path-based references',
+      'Understand IFCX JSON format vs. traditional STEP format',
+      'Explore the IFCX composition model with path-based references',
       'Identify UUID identifiers and child-parent inheritance patterns',
       'Analyze space boundaries and spatial relationships',
       'Compare property organization between IFC versions',

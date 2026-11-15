@@ -37,13 +37,21 @@ import {
   ChevronUp,
   LocateFixed,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
 interface IFC5GraphVisualizationProps {
   composedObject: ComposedObject;
   ifc5File?: IFC5File;
   onNodeSelect?: (path: string, node: ComposedObject) => void;
   selectedNodePath?: string | null;
+  searchQuery?: string;
+  searchMatchCount?: number;
+  activeSearchMatch?: number;
+  onSearchChange?: (query: string) => void;
+  onSearchNavigate?: (direction: 1 | -1) => void;
 }
 
 export function IFC5GraphVisualization({
@@ -51,6 +59,11 @@ export function IFC5GraphVisualization({
   ifc5File,
   onNodeSelect,
   selectedNodePath,
+  searchQuery = '',
+  searchMatchCount = 0,
+  activeSearchMatch = -1,
+  onSearchChange,
+  onSearchNavigate,
 }: IFC5GraphVisualizationProps) {
     const { theme } = useUIState();
   const graphRef = useRef<ForceGraphMethods>();
@@ -464,7 +477,7 @@ export function IFC5GraphVisualization({
         <div className="p-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Network className="w-4 h-4 text-primary" />
-            <h3 className="font-semibold text-sm">IFC5 Graph</h3>
+            <h3 className="font-semibold text-sm">IFCX Graph</h3>
             <Badge variant="secondary" className="text-xs">
               {displayGraphData.nodes.length}
             </Badge>
@@ -500,6 +513,51 @@ export function IFC5GraphVisualization({
               </Button>
             ) : null}
           </div>
+        </div>
+
+        <div className="px-2 pb-2 flex items-center gap-1.5">
+          <div className="relative flex-1">
+            <Input
+              value={searchQuery}
+              onChange={(event) => onSearchChange?.(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && onSearchNavigate) {
+                  event.preventDefault();
+                  onSearchNavigate(event.shiftKey ? -1 : 1);
+                }
+              }}
+              placeholder="Search IFCX nodes..."
+              className="h-7 pr-2 text-xs"
+              aria-label="Search IFCX nodes"
+            />
+          </div>
+          {searchQuery.trim() && onSearchNavigate && (
+            <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-card px-1">
+              <span className="px-1 text-[10px] tabular-nums text-muted-foreground" aria-live="polite">
+                {searchMatchCount > 0 ? `${activeSearchMatch + 1}/${searchMatchCount}` : '0/0'}
+              </span>
+              <button
+                type="button"
+                onClick={() => onSearchNavigate(-1)}
+                disabled={searchMatchCount === 0}
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                title="Previous search match"
+                aria-label="Previous search match"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSearchNavigate(1)}
+                disabled={searchMatchCount === 0}
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                title="Next search match"
+                aria-label="Next search match"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Collapsible Filters */}

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Search, Filter, Box, Layers, Building, Hash, Link2, ChevronDown, Download, Gauge, X } from 'lucide-react';
+import { Search, Filter, Box, Layers, Building, Hash, Link2, ChevronDown, ChevronLeft, ChevronRight, Download, Gauge, X } from 'lucide-react';
 import { NodeType, GraphNode } from '@/types/graph';
 import { useEffect, useState } from 'react';
 import {
@@ -17,6 +17,9 @@ import { getLoDDescription } from '@/lib/lodDescriptions';
 interface GraphControlsProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  searchMatchCount?: number;
+  activeSearchMatch?: number;
+  onSearchNavigate?: (direction: 1 | -1) => void;
   highlightedTypes: NodeType[];
   onTypeToggle: (type: NodeType) => void;
   selectedNode?: GraphNode | null;
@@ -63,6 +66,9 @@ const REL_FILTER_META: { key: RelFilterKey; label: string; color: string; descri
 export function GraphControls({
   searchQuery,
   onSearchChange,
+  searchMatchCount = 0,
+  activeSearchMatch = -1,
+  onSearchNavigate,
   highlightedTypes,
   onTypeToggle,
   selectedNode,
@@ -107,6 +113,41 @@ export function GraphControls({
   const activeRelFilters = Object.values(relationshipFilters).filter(Boolean).length;
   const activeFilterCount = highlightedTypes.length + activeRelFilters;
 
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && onSearchNavigate) {
+      event.preventDefault();
+      onSearchNavigate(event.shiftKey ? -1 : 1);
+    }
+  };
+
+  const searchNavigation = onSearchNavigate && searchQuery.trim() ? (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border bg-card/95 px-1">
+      <span className="px-1 text-[10px] tabular-nums text-muted-foreground" aria-live="polite">
+        {searchMatchCount > 0 ? `${activeSearchMatch + 1}/${searchMatchCount}` : '0/0'}
+      </span>
+      <button
+        type="button"
+        onClick={() => onSearchNavigate(-1)}
+        disabled={searchMatchCount === 0}
+        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        title="Previous search match"
+        aria-label="Previous search match"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onSearchNavigate(1)}
+        disabled={searchMatchCount === 0}
+        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        title="Next search match"
+        aria-label="Next search match"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  ) : null;
+
   const getLoDLabel = (lod: 1 | 2 | 3 | 4 | 5): string => {
     const labels = {
       1: 'LoD1: Utility',
@@ -141,16 +182,20 @@ export function GraphControls({
       <div className="pointer-events-auto w-full pb-1">
         <div className="hidden flex-wrap items-center gap-2 [&>*]:shrink-0 sm:flex sm:min-w-max sm:flex-nowrap">
         {/* Search */}
-        <div className="relative shrink-0">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search nodes... (Ctrl+F)"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full rounded-md border border-border bg-card/95 py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-56"
-          />
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search nodes... (Ctrl+F)"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              className="w-full rounded-md border border-border bg-card/95 py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-56"
+            />
+          </div>
+          {searchNavigation}
         </div>
 
         {/* LoD Control */}
@@ -204,6 +249,7 @@ export function GraphControls({
                               placeholder="Search nodes..."
                               value={searchQuery}
                               onChange={(e) => onSearchChange(e.target.value)}
+                              onKeyDown={handleSearchKeyDown}
                               className="w-full rounded-md border border-border bg-card/95 py-2.5 pl-10 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                             />
                           </div>

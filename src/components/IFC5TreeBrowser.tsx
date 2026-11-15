@@ -20,6 +20,8 @@ interface IFC5TreeBrowserProps {
   composedObject: ComposedObject;
   onNodeSelect?: (path: string, node: ComposedObject) => void;
   selectedPath?: string | null;
+  globalSearchQuery?: string;
+  onGlobalSearchChange?: (query: string) => void;
 }
 
 /** Highlight the first occurrence of `term` within `text` */
@@ -275,8 +277,11 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
   composedObject,
   onNodeSelect,
   selectedPath,
+  globalSearchQuery,
+  onGlobalSearchChange,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [localSearchTerm, setLocalSearchTerm] = useState('');
+  const searchTerm = globalSearchQuery ?? localSearchTerm;
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -289,7 +294,7 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
   if (!composedObject) {
     return (
       <div className="h-full w-full flex items-center justify-center text-muted-foreground">
-        <p className="text-sm">IFC5 data not loaded. Please reload the file.</p>
+        <p className="text-sm">IFCX data not loaded. Please reload the file.</p>
       </div>
     );
   }
@@ -509,9 +514,9 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
       <div className="p-4 border-b space-y-3 bg-card">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">IFC5 Model Tree</h2>
+            <h2 className="text-lg font-semibold text-foreground">IFCX Model Tree</h2>
             <p className="text-xs text-muted-foreground mt-1">
-              Navigate the IFC5 (.ifcx) structure
+              Navigate the IFCX (.ifcx) structure
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -551,7 +556,11 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
             type="text"
             placeholder="Search nodes, GUID, path, attribute…"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              const term = e.target.value;
+              if (onGlobalSearchChange) onGlobalSearchChange(term);
+              else setLocalSearchTerm(term);
+            }}
             className="h-8 text-sm pr-16"
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
@@ -565,7 +574,10 @@ export const IFC5TreeBrowser: React.FC<IFC5TreeBrowserProps> = ({
             )}
             {searchTerm && (
               <button
-                onClick={() => setSearchTerm('')}
+                onClick={() => {
+                  if (onGlobalSearchChange) onGlobalSearchChange('');
+                  else setLocalSearchTerm('');
+                }}
                 className="text-muted-foreground hover:text-foreground"
                 title="Clear search"
               >

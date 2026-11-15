@@ -1,10 +1,12 @@
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import ForceGraph2D, { ForceGraphMethods, NodeObject } from 'react-force-graph-2d';
 import { toast } from 'sonner';
-import { ZoomIn, ZoomOut, Maximize2, Minimize2, Crosshair } from 'lucide-react';
-import { GraphData, GraphNode, NodeType } from '@/types/graph';
+import { ZoomIn, ZoomOut, Maximize2, Minimize2, Crosshair, X } from 'lucide-react';
+import { GraphData, GraphEdge, GraphNode, NodeType } from '@/types/graph';
 import { getEntityColor, getEntityDisplayName } from '@/lib/ifcSchema';
 import { applyLoD, LoDLevel, GraphLoD, getLoDConfig, isAuxiliaryType } from '@/lib/graphLoD';
+import { nodeMatchesSearch } from '@/lib/graphSearch';
+import { getEdgeRelationshipType, getRelationshipExplanation } from '@/lib/graphEdge';
 import { useUIState } from '@/contexts/UIStateContext';
 
 // Track selection changes for animation
@@ -20,6 +22,10 @@ interface GraphVisualizationProps {
   selectedNodeId: string | null;
   highlightedTypes: NodeType[];
   searchQuery: string;
+  searchMatchIndex?: number;
+  searchMatchIds?: string[];
+  onSearchMatchesChange?: (matches: GraphNode[]) => void;
+  resetToken?: number;
   graphLoD?: LoDLevel;
   includeAuxiliaryLayer?: boolean; // Optional: show auxiliary/metadata layer
   relationshipFilters?: {
@@ -78,46 +84,60 @@ function isMaterialIfcType(ifcType?: string): boolean {
   return (ifcType || '').toUpperCase().startsWith('IFCMATERIAL');
 }
 
-// Relationship explanations for hover tooltips
-function getRelationshipExplanation(relType: string): string {
-  if (!relType) return 'Relationship between IFC entities';
-  const type = relType.toUpperCase();
-  
-  if (type.includes('AGGREGATES')) {
-    return 'Whole-part decomposition (e.g., Building contains Storeys)';
+function getEdgeEndpointId(value: unknown): string {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && 'id' in value) {
+    return String((value as { id: string }).id);
   }
-  if (type.includes('NESTS')) {
-    return 'Nesting relationship between a host object and its nested components';
+  return String(value);
+}
+
+function distanceToSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
+}
+
+function distanceToEdge(point: { x: number; y: number }, edge: GraphEdge, nodes: GraphNode[]): number {
+  const source = nodes.find((node) => node.id === getEdgeEndpointId(edge.source));
+  const target = nodes.find((node) => node.id === getEdgeEndpointId(edge.target));
+  if (!source || !target || source.x === undefined || source.y === undefined || target.x === undefined || target.y === undefined) {
+    return Infinity;
   }
-  if (type.includes('CONTAINEDINSPATIALSTRUCTURE')) {
-    return 'Spatial containment (e.g., Storey contains Walls)';
+
+  const inverse = edge.id.endsWith('__inv');
+  if (!inverse) {
+    return distanceToSegment(point, { x: source.x, y: source.y }, { x: target.x, y: target.y });
   }
-  if (type.includes('DEFINESBYPROPERTIES') || type.includes('PROPERTYSET')) {
-    return 'Defines properties and attributes for an element';
+
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const normal = { x: -dy / length, y: dx / length };
+  const control = {
+    x: (source.x + target.x) / 2 + normal.x * 8,
+    y: (source.y + target.y) / 2 + normal.y * 8,
+  };
+  let minimum = Infinity;
+  let previous = { x: source.x, y: source.y };
+  for (let index = 1; index <= 12; index += 1) {
+    const t = index / 12;
+    const next = {
+      x: (1 - t) ** 2 * source.x + 2 * (1 - t) * t * control.x + t ** 2 * target.x,
+      y: (1 - t) ** 2 * source.y + 2 * (1 - t) * t * control.y + t ** 2 * target.y,
+    };
+    minimum = Math.min(minimum, distanceToSegment(point, previous, next));
+    previous = next;
   }
-  if (type.includes('VOIDSELEMENT')) {
-    return 'Creates an opening or void (e.g., Opening in Wall)';
-  }
-  if (type.includes('FILLSELEMENT')) {
-    return 'Fills a void (e.g., Door fills Opening)';
-  }
-  if (type.includes('MATERIAL')) {
-    return 'Associates material definition';
-  }
-  if (type.includes('CLASSIFICATION')) {
-    return 'Associates classification reference (e.g., Uniclass)';
-  }
-  if (type.includes('CONNECTEDTO') || type.includes('CONNECTS')) {
-    return 'Physical or logical connection between elements';
-  }
-  if (type.includes('BOUNDARY')) {
-    return 'Space boundary relationship';
-  }
-  if (type.includes('GEOMETRY') || type.includes('REPRESENTATION')) {
-    return 'Geometric representation data';
-  }
-  
-  return 'Relationship between IFC entities';
+  return minimum;
 }
 
 // Clustering helper: Find nearby nodes to detect dense regions
@@ -138,6 +158,10 @@ export function GraphVisualization({
   selectedNodeId,
   highlightedTypes,
   searchQuery,
+  searchMatchIndex = -1,
+  searchMatchIds,
+  onSearchMatchesChange,
+  resetToken = 0,
   graphLoD = 4,
   includeAuxiliaryLayer = false,
   relationshipFilters = {
@@ -174,6 +198,8 @@ export function GraphVisualization({
 
   // Hover tooltip
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<GraphEdge | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
   const [tooltipClientPos, setTooltipClientPos] = useState({ x: 0, y: 0 });
   const hoveredNodeIdRef = useRef<string | null>(null);
   const isDraggingRef = useRef(false);
@@ -195,6 +221,20 @@ export function GraphVisualization({
     source: 'graph'
   });
   const prevSelectedNodeIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setFocusedNodeId(null);
+    setConnectedNodeIds(new Set());
+    setShowPathToRoot(false);
+    setPathToRootIds(new Set());
+    setIsolationMode(false);
+    setSelectedEdge(null);
+    setHoveredNode(null);
+    setHoveredEdge(null);
+    if (graphRef.current) {
+      graphRef.current.zoomToFit(400, 40);
+    }
+  }, [resetToken]);
 
   const filteredData = useMemo(() => {
     const lodResult = applyLoD(data.nodes, data.edges, graphLoD as GraphLoD, { includeAuxiliary: includeAuxiliaryLayer });
@@ -755,14 +795,31 @@ export function GraphVisualization({
   const isNodeVisible = useCallback(
     (node: GraphNode) => {
       const typeMatch = highlightedTypes.length === 0 || highlightedTypes.includes(node.type as NodeType);
-      const searchMatch =
-        searchQuery === '' ||
-        node.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (node.ifcType && node.ifcType.toLowerCase().includes(searchQuery.toLowerCase()));
+      const searchMatch = nodeMatchesSearch(node, searchQuery);
       return typeMatch && searchMatch;
     },
     [highlightedTypes, searchQuery]
   );
+
+  const searchMatches = useMemo(
+    () => searchQuery.trim()
+      ? displayData.nodes.filter((node) => isNodeVisible(node as GraphNode)) as GraphNode[]
+      : [],
+    [displayData.nodes, isNodeVisible, searchQuery]
+  );
+
+  useEffect(() => {
+    onSearchMatchesChange?.(searchMatches);
+  }, [onSearchMatchesChange, searchMatches]);
+
+  useEffect(() => {
+    const activeMatch = searchMatchIds?.[searchMatchIndex]
+      ? displayData.nodes.find((node) => node.id === searchMatchIds[searchMatchIndex])
+      : searchMatches[searchMatchIndex];
+    if (!activeMatch || activeMatch.x === undefined || activeMatch.y === undefined || !graphRef.current) return;
+    graphRef.current.centerAt(activeMatch.x, activeMatch.y, 300);
+    graphRef.current.zoom(2, 300);
+  }, [displayData.nodes, searchMatchIds, searchMatchIndex, searchMatches]);
 
   // Memoize property extraction for better performance
   const nodePropertyCache = useMemo(() => {
@@ -805,6 +862,8 @@ export function GraphVisualization({
       const graphNode = node as GraphNode;
       const isVisible = isNodeVisible(graphNode);
       const isSelected = node.id === selectedNodeId;
+      const activeSearchId = searchMatchIds?.[searchMatchIndex] ?? searchMatches[searchMatchIndex]?.id;
+      const isActiveSearchMatch = activeSearchId === graphNode.id;
       const isMetadataNode = graphNode.isMetadata || false;
       const isAuxiliary = isAuxiliaryType(graphNode.ifcType);
       const isMaterialNode = isMaterialIfcType(graphNode.ifcType);
@@ -911,6 +970,16 @@ export function GraphVisualization({
         ctx.stroke();
       }
 
+      if (isActiveSearchMatch) {
+        ctx.beginPath();
+        ctx.arc(x, y, size + 7, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = Math.max(1.5 / globalScale, 1);
+        ctx.setLineDash([3 / globalScale, 2 / globalScale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       // Draw enhanced glow for selected node
       if (isSelected) {
         // Bright glow for external selections
@@ -993,8 +1062,7 @@ export function GraphVisualization({
         }
       }
     },
-    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode]
-    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode, theme]
+    [isNodeVisible, selectedNodeId, nodePropertyCache, focusedNodeId, connectedNodeIds, selectionState, pathToRootIds, showPathToRoot, isolationMode, theme, searchMatches, searchMatchIndex, searchMatchIds]
   );
 
   const linkCanvasObject = useCallback(
@@ -1309,6 +1377,7 @@ export function GraphVisualization({
 
       // CRITICAL: Select the node that was actually clicked
       // Do NOT auto-select related nodes - that causes selection mismatch
+      setSelectedEdge(null);
       onNodeClick(node as GraphNode);
       
       // Clear path-to-root mode when clicking a different node
@@ -1366,6 +1435,7 @@ export function GraphVisualization({
       return; // Ignore background click immediately after node click
     }
     onNodeClick(null);
+    setSelectedEdge(null);
     setFocusedNodeId(null);
     setConnectedNodeIds(new Set());
     setShowPathToRoot(false);
@@ -1396,12 +1466,30 @@ export function GraphVisualization({
       hoveredNodeIdRef.current = foundId;
       setHoveredNode(found);
     }
-    if (found) setTooltipClientPos({ x: e.clientX, y: e.clientY });
-  }, [displayData.nodes]);
+    if (found) {
+      setHoveredEdge(null);
+      setTooltipClientPos({ x: e.clientX, y: e.clientY });
+      return;
+    }
+
+    let closestEdge: GraphEdge | null = null;
+    let closestEdgeDistance = Infinity;
+    for (const edge of displayData.edges as GraphEdge[]) {
+      const distance = distanceToEdge(coords, edge, displayData.nodes as GraphNode[]);
+      if (distance < closestEdgeDistance) {
+        closestEdgeDistance = distance;
+        closestEdge = edge;
+      }
+    }
+    const edgeHit = closestEdgeDistance <= 12 / (currentZoomRef.current || 1) ? closestEdge : null;
+    setHoveredEdge(edgeHit);
+    if (edgeHit) setTooltipClientPos({ x: e.clientX, y: e.clientY });
+  }, [displayData.nodes, displayData.edges]);
 
   const handleMouseLeave = useCallback(() => {
     hoveredNodeIdRef.current = null;
     setHoveredNode(null);
+    setHoveredEdge(null);
   }, []);
 
   // Right-click context menu
@@ -1546,6 +1634,24 @@ export function GraphVisualization({
       if (closestNode && closestDist > 20) {
         console.log('[CanvasPointerDown] Caught missed click on:', closestNode.id, closestNode.ifcType, 'dist:', closestDist.toFixed(1));
         handleNodeClick(closestNode);
+        return;
+      }
+
+      if (!closestNode || closestDist > 20) {
+        let closestEdge: GraphEdge | null = null;
+        let closestEdgeDistance = Infinity;
+        for (const edge of displayData.edges as GraphEdge[]) {
+          const distance = distanceToEdge(coords, edge, displayData.nodes as GraphNode[]);
+          if (distance < closestEdgeDistance) {
+            closestEdgeDistance = distance;
+            closestEdge = edge;
+          }
+        }
+        if (closestEdge && closestEdgeDistance <= 12 / (currentZoomRef.current || 1)) {
+          setSelectedEdge(closestEdge);
+          setHoveredEdge(null);
+          event.stopPropagation();
+        }
       }
     };
 
@@ -1556,7 +1662,7 @@ export function GraphVisualization({
       canvas.addEventListener('pointerdown', handleCanvasPointerDown, true);
       return () => canvas.removeEventListener('pointerdown', handleCanvasPointerDown, true);
     }
-  }, [displayData.nodes, handleNodeClick, isFullscreen]);
+  }, [displayData.nodes, displayData.edges, handleNodeClick, isFullscreen]);
 
   // Hover disabled to prevent animation instability
 
@@ -1635,6 +1741,13 @@ export function GraphVisualization({
   }, [closeContextMenu]);
 
   // Graph rendering without artificial size limitations
+  const inspectedEdge = selectedEdge || hoveredEdge;
+  const inspectedSource = inspectedEdge
+    ? displayData.nodes.find((node) => node.id === getEdgeEndpointId(inspectedEdge.source)) as GraphNode | undefined
+    : undefined;
+  const inspectedTarget = inspectedEdge
+    ? displayData.nodes.find((node) => node.id === getEdgeEndpointId(inspectedEdge.target)) as GraphNode | undefined
+    : undefined;
 
 
   return (
@@ -1814,6 +1927,10 @@ export function GraphVisualization({
             handleNodeClick(node);
           }
         }}
+        onLinkClick={(link) => {
+          setSelectedEdge(link as GraphEdge);
+          setHoveredEdge(null);
+        }}
         onBackgroundClick={(event) => {
           // Manual node detection for background clicks
           const canvas = graphCanvasElementRef.current;
@@ -1849,6 +1966,7 @@ export function GraphVisualization({
           
           // No node found, clear selection
           onNodeClick(null);
+          setSelectedEdge(null);
           setFocusedNodeId(null);
           setConnectedNodeIds(new Set());
           setShowPathToRoot(false);
@@ -1900,6 +2018,71 @@ export function GraphVisualization({
       />
 
       {/* Hover tooltip — fixed position, pointer-events-none */}
+      {hoveredEdge && !selectedEdge && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: tooltipClientPos.x + 14, top: tooltipClientPos.y - 70 }}
+        >
+          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl text-xs max-w-[280px]">
+            <div className="font-semibold text-foreground">
+              {getEdgeRelationshipType(hoveredEdge)}
+            </div>
+            <div className="text-muted-foreground mt-1">
+              {getRelationshipExplanation(getEdgeRelationshipType(hoveredEdge))}
+            </div>
+            {inspectedSource && inspectedTarget && (
+              <div className="mt-1 font-mono text-[10px] text-muted-foreground truncate">
+                {inspectedSource.label} → {inspectedTarget.label}
+              </div>
+            )}
+            <div className="mt-1 text-[10px] text-muted-foreground">Click to inspect</div>
+          </div>
+        </div>
+      )}
+
+      {selectedEdge && inspectedSource && inspectedTarget && (
+        <div className="absolute bottom-4 left-1/2 z-30 w-[min(360px,calc(100%_-_2rem))] -translate-x-1/2 rounded-lg border border-primary/30 bg-card/95 p-3 shadow-xl backdrop-blur-md">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-foreground">Relationship</div>
+              <div className="mt-1 font-mono text-xs text-primary truncate">
+                {getEdgeRelationshipType(selectedEdge)}
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {getRelationshipExplanation(getEdgeRelationshipType(selectedEdge))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedEdge(null)}
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Close relationship details"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {[inspectedSource, inspectedTarget].map((node, index) => (
+              <button
+                type="button"
+                key={`${node.id}-${index}`}
+                onClick={() => {
+                  setSelectedEdge(null);
+                  handleNodeClick(node);
+                }}
+                className="min-w-0 rounded border border-border bg-muted/40 px-2 py-1.5 text-left hover:bg-muted"
+              >
+                <span className="block text-[9px] uppercase tracking-wider text-muted-foreground">
+                  {index === 0 ? 'Source' : 'Target'}
+                </span>
+                <span className="block truncate text-[11px] font-medium text-foreground">{node.label}</span>
+                <span className="block truncate font-mono text-[9px] text-muted-foreground">{node.ifcType}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {hoveredNode && hoveredNode.id !== selectedNodeId && (
         <div
           className="fixed z-50 pointer-events-none"
