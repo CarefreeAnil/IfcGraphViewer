@@ -728,7 +728,7 @@ export function IFC5GraphVisualization({
         {legendCollapsed ? (
           <button
             onClick={(e) => { e.stopPropagation(); setLegendCollapsed(false); }}
-            className="absolute bottom-4 left-4 flex items-center gap-1.5 px-3 py-2 rounded-full bg-primary text-primary-foreground shadow-lg text-xs font-semibold hover:opacity-90 transition-opacity"
+            className="absolute bottom-4 left-4 flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90"
             style={{ zIndex: 10, pointerEvents: 'all' }}
             title="Expand legend"
           >
@@ -736,7 +736,7 @@ export function IFC5GraphVisualization({
           </button>
         ) : (
           <Card
-            className="absolute bottom-4 left-4 p-3 bg-card/95 backdrop-blur shadow-md border-border/50 min-w-[200px]"
+            className="absolute bottom-4 left-4 min-w-[200px] border border-border bg-card/95 p-3 shadow-sm"
             style={{ zIndex: 10, pointerEvents: 'all' }}
           >
             <div className="text-xs">

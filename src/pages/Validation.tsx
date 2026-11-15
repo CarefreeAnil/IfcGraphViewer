@@ -362,7 +362,7 @@ const Validation = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
+    <div className="min-h-screen bg-background">
       <Header 
         hasData={!!parsedData}
         onReset={() => navigate('/')}
@@ -385,8 +385,8 @@ const Validation = () => {
         {!validationComplete ? (
           <>
             {/* Page Header */}
-            <div className="mb-12">
-              <h1 className="text-4xl font-bold tracking-tight mb-2">IFC Validation</h1>
+            <div className="mb-10">
+              <h1 className="mb-2 text-3xl font-bold tracking-tight">IFC Validation</h1>
               <p className="text-lg text-muted-foreground">
                 Choose a validator to check your IFC file for errors and compliance
               </p>
@@ -403,7 +403,7 @@ const Validation = () => {
             {/* Validators Grid */}
             <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
               {/* Local Validator Card - DISABLED (WIP) */}
-              <Card className="hover:shadow-lg transition-shadow opacity-60 border-amber-500/50">
+              <Card className="border-amber-500/50 opacity-60 transition-shadow hover:shadow-sm">
                 <CardHeader>
                   <div className="flex items-start justify-between mb-2">
                     <CardTitle className="flex items-center gap-2">
@@ -450,7 +450,7 @@ const Validation = () => {
               </Card>
 
               {/* buildingSMART Validator Card */}
-              <Card className="hover:shadow-lg transition-shadow">
+              <Card className="transition-shadow hover:shadow-sm">
                 <CardHeader>
                   <div className="flex items-start justify-between mb-2">
                     <CardTitle className="flex items-center gap-2">
@@ -501,7 +501,7 @@ const Validation = () => {
 
                   {/* Show job ID and status below button when validating */}
                   {isValidating && selectedValidator === 'buildingsmart' && bsJobId && (
-                    <div className="mt-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="mt-3 rounded-md border border-primary/20 bg-primary/[0.04] p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 space-y-2">
                           <div className="flex items-center gap-2">
@@ -577,8 +577,8 @@ const Validation = () => {
         ) : (
           <>
             {/* Results Section */}
-            <div className="mb-12">
-              <h1 className="text-4xl font-bold tracking-tight mb-2">Validation Results</h1>
+            <div className="mb-10">
+              <h1 className="mb-2 text-3xl font-bold tracking-tight">Validation Results</h1>
               <p className="text-lg text-muted-foreground">
                 {selectedValidator === 'local'
                   ? 'Complete analysis of your IFC file structure, relationships, and data integrity'

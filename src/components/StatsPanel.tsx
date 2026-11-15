@@ -30,11 +30,11 @@ export function StatsPanel({ metadata }: StatsPanelProps) {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="absolute bottom-4 left-4 flex gap-4 p-4 rounded-lg bg-card/95 backdrop-blur-md border-glow"
+      className="absolute bottom-4 left-4 flex gap-4 rounded-md border border-border bg-card/95 p-3 shadow-sm"
     >
       {stats.map(({ icon, label, value }) => (
         <div key={label} className="flex items-center gap-2">
-          <div className="text-primary">{icon}</div>
+          <div className="text-primary/80">{icon}</div>
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
             <span className="text-sm font-mono text-foreground">{value}</span>

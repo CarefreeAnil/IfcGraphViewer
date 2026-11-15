@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { BookOpen, Clock, FileCode, Target, ChevronDown, GraduationCap } from 'lucide-react';
+import { Clock, FileCode, Target, ChevronDown, GraduationCap, ExternalLink } from 'lucide-react';
 import { EducationalSample } from '@/features/educational/data/educationalSamples';
 import { glossaryHighlight } from '@/features/educational/components/GlossaryTerm';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,6 @@ interface SampleCardProps {
 }
 
 export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCardProps) {
-  const [expandedObjectives, setExpandedObjectives] = useState(false);
   const [expandedConcepts, setExpandedConcepts] = useState(false);
   const [expandedDescription, setExpandedDescription] = useState(false);
 
@@ -34,7 +33,7 @@ export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCa
   return (
     <div className="group relative bg-card rounded-lg border border-border hover:border-primary/50 transition-all duration-300 overflow-hidden">
       {/* Thumbnail or Placeholder */}
-      <div className="h-48 bg-muted relative overflow-hidden">
+      <div className="h-36 bg-muted relative overflow-hidden">
         {sample.thumbnail ? (
           <img
             src={sample.thumbnail}
@@ -42,7 +41,7 @@ export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCa
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/5 to-primary/20">
+          <div className="flex h-full w-full items-center justify-center bg-primary/[0.06]">
             <FileCode className="w-16 h-16 text-primary/40" />
           </div>
         )}
@@ -62,8 +61,15 @@ export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCa
       <div className="p-4 space-y-3">
         {/* Title and Description */}
         <div>
-          <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
-            {sample.name}
+          <h3 className="text-base font-semibold text-foreground group-hover:text-primary transition-colors">
+            {sample.sourceUrl ? (
+              <a href={sample.sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:underline">
+                {sample.name}
+                <ExternalLink className="h-3.5 w-3.5" aria-label="Open Solibri website" />
+              </a>
+            ) : (
+              sample.name
+            )}
           </h3>
           <div className="space-y-1.5 mt-1">
             <p className={`text-sm text-muted-foreground ${expandedDescription ? '' : 'line-clamp-2'}`}>
@@ -97,46 +103,11 @@ export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCa
           </div>
         </div>
 
-        {/* Learning Objectives */}
-        {sample.learningObjectives.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Learning Objectives</span>
-            </div>
-            <ul className="text-xs text-muted-foreground space-y-0.5">
-              {sample.learningObjectives.slice(0, 2).map((objective, index) => (
-                <li key={index} className="line-clamp-1">• {glossaryHighlight(objective)}</li>
-              ))}
-              {sample.learningObjectives.length > 2 && !expandedObjectives && (
-                <li 
-                  onClick={() => setExpandedObjectives(true)}
-                  className="text-xs text-primary font-medium cursor-pointer hover:text-primary/80 transition-colors flex items-center gap-1"
-                >
-                  <ChevronDown className="w-3 h-3" />
-                  + {sample.learningObjectives.length - 2} more
-                </li>
-              )}
-              {expandedObjectives && sample.learningObjectives.slice(2).map((objective, index) => (
-                <li key={index + 2} className="line-clamp-2">• {glossaryHighlight(objective)}</li>
-              ))}
-              {expandedObjectives && sample.learningObjectives.length > 2 && (
-                <li 
-                  onClick={() => setExpandedObjectives(false)}
-                  className="text-xs text-primary font-medium cursor-pointer hover:text-primary/80 transition-colors"
-                >
-                  Show less ↑
-                </li>
-              )}
-            </ul>
-          </div>
-        )}
-
         {/* Concepts */}
         {sample.concepts.length > 0 && (
           <div className="space-y-1.5">
             <div className="flex flex-wrap gap-1.5">
-              {sample.concepts.slice(0, 3).map((concept) => (
+              {sample.concepts.slice(0, 2).map((concept) => (
                 <span
                   key={concept}
                   className="px-2 py-0.5 bg-primary/5 text-primary text-xs rounded border border-primary/10"
@@ -144,18 +115,18 @@ export function SampleCard({ sample, onLoadSample, isLoading = false }: SampleCa
                   {concept}
                 </span>
               ))}
-              {sample.concepts.length > 3 && !expandedConcepts && (
+              {sample.concepts.length > 2 && !expandedConcepts && (
                 <button
                   onClick={() => setExpandedConcepts(true)}
                   className="px-2 py-0.5 bg-muted text-primary text-xs rounded border border-muted-foreground/20 hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer font-medium"
                 >
-                  +{sample.concepts.length - 3}
+                  +{sample.concepts.length - 2}
                 </button>
               )}
             </div>
-            {expandedConcepts && sample.concepts.length > 3 && (
+            {expandedConcepts && sample.concepts.length > 2 && (
               <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border">
-                {sample.concepts.slice(3).map((concept) => (
+                {sample.concepts.slice(2).map((concept) => (
                   <span
                     key={concept}
                     className="px-2 py-0.5 bg-primary/5 text-primary text-xs rounded border border-primary/10"

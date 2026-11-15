@@ -119,7 +119,7 @@ export function PropertyViewer({ nodes, onNodeSelect, selectedNodeId }: Property
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full bg-card/95 backdrop-blur-md">
+      <div className="flex h-full flex-col border-l border-border bg-card">
         {/* Search Header */}
         <div className="p-4 border-b border-border">
           <div className="relative">

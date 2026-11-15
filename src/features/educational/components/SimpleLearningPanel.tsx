@@ -87,7 +87,7 @@ export function SimpleLearningPanel({ nodes, onClose }: SimpleLearningPanelProps
       <div className="fixed bottom-4 left-4 z-40">
         <Button
           onClick={() => setIsCollapsed(false)}
-          className="shadow-2xl gap-2"
+          className="gap-2 shadow-sm"
         >
           <BookOpen className="w-4 h-4" />
           Learning Path
@@ -97,7 +97,7 @@ export function SimpleLearningPanel({ nodes, onClose }: SimpleLearningPanelProps
   }
 
   return (
-    <Card className="fixed bottom-4 left-4 z-40 w-80 shadow-2xl">
+    <Card className="fixed bottom-4 left-4 z-40 w-80 shadow-sm">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
