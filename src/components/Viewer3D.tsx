@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AlertCircle, RotateCcw } from 'lucide-react';
+import { useUIState } from '@/contexts/UIStateContext';
 
 // Local mirror of the worker's MeshPayload shape — kept here (not imported from the
 // worker file) to prevent the bundler from pulling web-ifc WASM into the main bundle.
@@ -33,6 +34,7 @@ interface Viewer3DProps {
 }
 
 export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, isContextOnly = true }: Viewer3DProps) {
+  const { theme } = useUIState();
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -227,7 +229,7 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
       try {
         // Scene setup
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x3a3a4a);  // Lighter blue-gray background
+        scene.background = new THREE.Color(theme === 'dark' ? 0x101318 : 0xf8fafc);
         sceneRef.current = scene;
 
         // Camera setup
@@ -476,6 +478,14 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ifcFileBuffer]);
+
+  useEffect(() => {
+    if (sceneRef.current && cameraRef.current) {
+      sceneRef.current.background = new THREE.Color(theme === 'dark' ? 0x101318 : 0xf8fafc);
+      framesRemainingRef.current = Math.max(framesRemainingRef.current, 2);
+      rendererRef.current?.render(sceneRef.current, cameraRef.current);
+    }
+  }, [theme]);
 
   interface TriangleRange {
     expressId: number;
@@ -861,8 +871,8 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
 
   if (error) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-slate-900 p-4">
-        <div className="flex items-center gap-3 text-red-400">
+      <div className="flex h-full w-full items-center justify-center bg-background p-4">
+        <div className="flex items-center gap-3 text-destructive">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <div>
             <p className="font-semibold">3D Viewer Error</p>
@@ -874,10 +884,10 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
   }
 
   return (
-    <div className="w-full h-full flex flex-col">
-      <div className="px-4 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+    <div className="flex h-full w-full flex-col bg-background">
+      <div className="flex items-center justify-between border-b border-border bg-card px-4 py-2">
         <div className="flex items-center gap-3">
-          <div className="text-sm text-slate-400">
+          <div className="text-sm text-muted-foreground">
             {geometryCount > 0 ? `${geometryCount} objects loaded` : 'Initializing...'}
           </div>
         </div>
@@ -887,13 +897,13 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
               containerRef.current.requestFullscreen().catch(() => {});
             }
           }}
-          className="text-sm px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded"
+          className="rounded-md border border-border bg-secondary px-3 py-1 text-sm text-secondary-foreground transition-colors hover:bg-muted"
         >
           Fullscreen
         </button>
       </div>
 
-      <div ref={containerRef} className="relative flex-1 bg-slate-900">
+      <div ref={containerRef} className="graph-surface relative flex-1">
         <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
           <button
             type="button"
@@ -908,11 +918,11 @@ export default function Viewer3D({ selectedNodeId, onSelectNode, ifcFileBuffer, 
               controls.update();
               framesRemainingRef.current = Math.max(framesRemainingRef.current, 30);
             }}
-            className="pointer-events-auto flex min-h-11 min-w-11 items-center justify-center rounded-full border border-slate-600 bg-slate-800/90 text-slate-100 shadow-lg backdrop-blur-md transition-colors hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-primary"
+            className="pointer-events-auto flex min-h-11 min-w-11 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary"
           >
             <RotateCcw className="h-4 w-4" />
           </button>
-          <div className="rounded-md bg-slate-800/80 px-2 py-1 text-[10px] text-slate-300 backdrop-blur-md sm:hidden">
+          <div className="rounded-md border border-border bg-card/80 px-2 py-1 text-[10px] text-muted-foreground backdrop-blur-md sm:hidden">
             Drag to rotate · pinch to zoom
           </div>
         </div>

@@ -45,7 +45,7 @@ export function LearningPanel() {
     <div className="absolute bottom-4 left-4 z-50">
       <Card
         className={cn(
-          'w-72 shadow-xl transition-all duration-200',
+          'w-72 shadow-sm transition-all duration-200',
           !isExpanded && 'w-auto'
         )}
       >

@@ -310,10 +310,10 @@ export function GuidedExploration({
       initial={{ opacity: 0, x: 20, y: 20 }}
       animate={{ opacity: 1, x: 0, y: 0 }}
       exit={{ opacity: 0, x: 20, y: 20 }}
-      className="fixed bottom-4 right-4 z-40 w-80 bg-card border border-border rounded-xl shadow-2xl overflow-hidden"
+      className="fixed bottom-4 right-4 z-40 w-80 overflow-hidden rounded-md border border-border bg-card shadow-sm"
     >
       {/* Header */}
-      <div className="bg-gradient-to-r from-primary/10 to-primary/5 border-b border-border p-3 flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2 border-b border-border bg-primary/[0.04] p-3">
         <div className="flex items-start gap-2 flex-1">
           <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/20 flex-shrink-0 mt-0.5">
             <Lightbulb className="w-4 h-4 text-primary" />

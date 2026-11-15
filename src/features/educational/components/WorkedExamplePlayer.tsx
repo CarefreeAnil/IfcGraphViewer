@@ -37,7 +37,7 @@ export function WorkedExamplePlayer() {
       exit={{ opacity: 0, y: 20 }}
       className="w-96"
     >
-      <Card className="shadow-2xl border-2" style={{ borderColor: layerDef.color + '40' }}>
+      <Card className="border-2 shadow-sm" style={{ borderColor: layerDef.color + '40' }}>
         <CardHeader className="pb-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

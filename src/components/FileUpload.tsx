@@ -4,12 +4,13 @@ import { Upload, FileCode, Loader2 } from 'lucide-react';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
+  onInvalidFile?: (fileName: string) => void;
   isLoading: boolean;
   progress?: number;
   progressMessage?: string;
 }
 
-export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMessage = '' }: FileUploadProps) {
+export function FileUpload({ onFileSelect, onInvalidFile, isLoading, progress = 0, progressMessage = '' }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -30,6 +31,8 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
       const file = e.dataTransfer.files[0];
       if (file && (file.name.toLowerCase().endsWith('.ifc') || file.name.toLowerCase().endsWith('.ifcx'))) {
         onFileSelect(file);
+      } else if (file) {
+        onInvalidFile?.(file.name);
       }
     },
     [onFileSelect]
@@ -39,7 +42,11 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
-        onFileSelect(file);
+        if (file.name.toLowerCase().endsWith('.ifc') || file.name.toLowerCase().endsWith('.ifcx')) {
+          onFileSelect(file);
+        } else {
+          onInvalidFile?.(file.name);
+        }
       }
     },
     [onFileSelect]
@@ -51,10 +58,10 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
       className={`
-        relative w-full max-w-xl p-8 rounded-xl border-2 border-dashed transition-all duration-300
+        relative w-full rounded-md border border-dashed p-8 transition-colors duration-200 sm:p-10
         ${isDragging 
-          ? 'border-primary bg-primary/10 glow-primary' 
-          : 'border-border hover:border-primary/50 bg-card/50'
+          ? 'border-primary bg-primary/10' 
+          : 'border-border bg-card hover:border-primary/60'
         }
       `}
       onDragOver={handleDragOver}
@@ -69,7 +76,7 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
         disabled={isLoading}
       />
 
-      <div className="flex flex-col items-center gap-4 text-center">
+      <div className="flex flex-col items-center gap-5 text-center">
         <AnimatePresence mode="wait">
           {isLoading ? (
             <motion.div
@@ -87,21 +94,21 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className={`p-4 rounded-full transition-colors ${
+              className={`rounded-md border border-border p-3 transition-colors ${
                 isDragging ? 'bg-primary/20' : 'bg-muted'
               }`}
             >
               {isDragging ? (
-                <FileCode className="w-12 h-12 text-primary" />
+                <FileCode className="h-10 w-10 text-primary" />
               ) : (
-                <Upload className="w-12 h-12 text-muted-foreground" />
+                <Upload className="h-10 w-10 text-muted-foreground" />
               )}
             </motion.div>
           )}
         </AnimatePresence>
 
         <div>
-          <h3 className="text-lg font-semibold text-foreground">
+          <h3 className="text-base font-semibold text-foreground">
             {isLoading ? 'Parsing IFC file...' : 'Upload IFC File'}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -128,7 +135,7 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
           </div>
         )}
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs font-mono text-muted-foreground">
+        <div className="flex items-center gap-2 border border-border bg-muted px-3 py-1.5 text-xs font-mono text-muted-foreground">
           <FileCode className="w-3.5 h-3.5" />
           <span>.ifc/.ifcx files supported</span>
         </div>
@@ -138,7 +145,7 @@ export function FileUpload({ onFileSelect, isLoading, progress = 0, progressMess
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="absolute inset-0 rounded-xl bg-primary/5 pointer-events-none"
+          className="pointer-events-none absolute inset-0 rounded-lg bg-primary/5"
         />
       )}
     </motion.div>

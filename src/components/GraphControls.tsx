@@ -149,7 +149,7 @@ export function GraphControls({
             placeholder="Search nodes... (Ctrl+F)"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-card/95 backdrop-blur-md border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all sm:w-56"
+            className="w-full rounded-md border border-border bg-card/95 py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-56"
           />
         </div>
 
@@ -158,7 +158,7 @@ export function GraphControls({
           <TooltipProvider>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2 bg-card/95 backdrop-blur-md text-xs">
+                <Button variant="outline" size="sm" className="gap-2 bg-card/95 text-xs">
                   <Gauge className="w-3.5 h-3.5" />
                   {getLoDLabel(graphLoD)}
                 </Button>
@@ -204,14 +204,14 @@ export function GraphControls({
                               placeholder="Search nodes..."
                               value={searchQuery}
                               onChange={(e) => onSearchChange(e.target.value)}
-                              className="w-full rounded-lg border border-border bg-card/95 py-2.5 pl-10 pr-3 text-sm text-foreground placeholder:text-muted-foreground backdrop-blur-md focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                              className="w-full rounded-md border border-border bg-card/95 py-2.5 pl-10 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                             />
                           </div>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setShowFilterDrawer(!showFilterDrawer)}
-                            className="relative shrink-0 gap-2 bg-card/95 px-3 text-xs backdrop-blur-md"
+                            className="relative shrink-0 gap-2 bg-card/95 px-3 text-xs"
                           >
                             <Filter className="h-3.5 w-3.5" />
                             Options
@@ -339,7 +339,7 @@ export function GraphControls({
                 setShowLoDMenu(v => !v);
                 setShowExportMenu(false);
               }}
-              className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+              className="gap-2 bg-card/95 text-xs"
             >
               <Gauge className="w-3.5 h-3.5" />
               {getLoDLabel(graphLoD)}
@@ -369,7 +369,7 @@ export function GraphControls({
         {onExport && !isFullscreen && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2 bg-card/95 backdrop-blur-md text-xs">
+              <Button variant="outline" size="sm" className="gap-2 bg-card/95 text-xs">
                 <Download className="w-3.5 h-3.5" />
                 Export
               </Button>
@@ -394,7 +394,7 @@ export function GraphControls({
                 setShowExportMenu(v => !v);
                 setShowLoDMenu(false);
               }}
-              className="gap-2 bg-card/95 backdrop-blur-md text-xs"
+              className="gap-2 bg-card/95 text-xs"
             >
               <Download className="w-3.5 h-3.5" />
               Export
@@ -420,7 +420,7 @@ export function GraphControls({
                 variant="outline"
                 size="sm"
                 onClick={() => setShowFilterDrawer(!showFilterDrawer)}
-                className="relative gap-2 bg-card/95 backdrop-blur-md text-xs"
+                className="relative gap-2 bg-card/95 text-xs"
               >
                 <Filter className="w-3.5 h-3.5" />
                 Filters
@@ -445,7 +445,7 @@ export function GraphControls({
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className="pointer-events-auto absolute left-0 top-full z-50 mt-3 w-[min(340px,calc(100%_-_2rem))] max-w-full rounded-lg border border-border bg-card shadow-xl max-sm:fixed max-sm:inset-x-2 max-sm:bottom-20 max-sm:top-auto max-sm:mt-0 max-sm:w-auto max-sm:max-h-[70vh] max-sm:overflow-y-auto"
+          className="pointer-events-auto absolute left-0 top-full z-50 mt-3 w-[min(340px,calc(100%_-_2rem))] max-w-full rounded-md border border-border bg-card shadow-sm max-sm:fixed max-sm:inset-x-2 max-sm:bottom-20 max-sm:top-auto max-sm:mt-0 max-sm:w-auto max-sm:max-h-[70vh] max-sm:overflow-y-auto"
         >
           {/* Panel Header */}
           <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">

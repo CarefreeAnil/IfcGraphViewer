@@ -30,11 +30,11 @@ export function Legend() {
     <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="absolute bottom-4 right-4 rounded-lg bg-card/90 backdrop-blur-md border border-border shadow-md min-w-[196px]"
+      className="absolute bottom-4 right-4 min-w-[196px] rounded-md border border-border bg-card/95 shadow-sm"
     >
       <button
         onClick={() => setMinimized((m) => !m)}
-        className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         title={minimized ? 'Expand legend' : 'Collapse legend'}
       >
         <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">

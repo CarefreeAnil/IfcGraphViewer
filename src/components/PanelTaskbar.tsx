@@ -44,7 +44,7 @@ export function PanelTaskbar({ panelVisibility, onTogglePanel, isIFC5 }: PanelTa
   return (
     <TooltipProvider delayDuration={400}>
       <div
-        className="w-11 flex-shrink-0 h-full flex flex-col items-center pt-3 pb-4 gap-1 bg-card/80 backdrop-blur-sm border-r border-border z-10"
+        className="z-10 flex h-full w-11 flex-shrink-0 flex-col items-center gap-1 border-r border-border bg-card/95 pb-4 pt-3"
         aria-label="Panel controls"
       >
         {/* Section label */}
@@ -62,9 +62,9 @@ export function PanelTaskbar({ panelVisibility, onTogglePanel, isIFC5 }: PanelTa
                   onClick={() => onTogglePanel(id)}
                   aria-label={`${isVisible ? 'Hide' : 'Show'} ${label}`}
                   className={cn(
-                    'relative w-9 h-9 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all duration-150',
+                    'relative flex h-9 w-9 flex-col items-center justify-center gap-0.5 rounded-md transition-colors duration-150',
                     isVisible
-                      ? 'bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25 shadow-sm'
+                      ? 'border border-primary/25 bg-primary/15 text-primary hover:bg-primary/25'
                       : 'text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted border border-transparent'
                   )}
                 >

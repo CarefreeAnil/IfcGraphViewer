@@ -1662,7 +1662,7 @@ export function GraphVisualization({
           ref={canvasRef}
           width={200}
           height={130}
-          className="rounded-md cursor-crosshair shadow-lg border border-border/30 block"
+          className="block cursor-crosshair rounded-md border border-border/30 shadow-sm"
           style={{ display: minimapVisible ? 'block' : 'none' }}
           onClick={handleMinimapClick}
           title="Click to navigate to this area of the graph"
@@ -1675,7 +1675,7 @@ export function GraphVisualization({
           {/* Reset Graph — always visible */}
           <button
             onClick={handleResetGraph}
-            className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+            className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground shadow-sm transition-colors hover:bg-secondary/90"
             title="Reset graph view and clear selections"
           >
             Reset Graph
@@ -1683,7 +1683,7 @@ export function GraphVisualization({
 
           <button
             onClick={toggleFullscreen}
-            className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+            className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground shadow-sm transition-colors hover:bg-secondary/90"
             title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
           >
             <span className="inline-flex items-center gap-1.5">
@@ -1695,7 +1695,7 @@ export function GraphVisualization({
           {/* Isolation controls */}
           {isolationMode && (
             <>
-              <div className="flex rounded-lg overflow-hidden border border-border text-xs font-medium shadow-lg">
+              <div className="flex overflow-hidden rounded-md border border-border text-xs font-medium shadow-sm">
                 <button
                   onClick={() => setIsolationHops(1)}
                   className={isolationHops === 1
@@ -1711,7 +1711,7 @@ export function GraphVisualization({
               </div>
               <button
                 onClick={() => setIsolationMode(false)}
-                className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors shadow-lg"
+                className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground shadow-sm transition-colors hover:bg-secondary/90"
               >
                 Exit Isolation
               </button>
@@ -1724,7 +1724,7 @@ export function GraphVisualization({
               <button
                 onClick={handleIsolate}
                 disabled={!canIsolate}
-                className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors shadow-lg ${
+                className={`rounded-md px-3 py-2 text-xs font-medium shadow-sm transition-colors ${
                   canIsolate
                     ? 'bg-violet-600 text-white hover:bg-violet-700'
                     : 'bg-violet-600/40 text-white/50 cursor-not-allowed'
@@ -1737,7 +1737,7 @@ export function GraphVisualization({
               </button>
               <button
                 onClick={handleShowPathToRoot}
-                className="px-3 py-2 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-lg"
+                className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
               >
                 Show Path to Project
               </button>
@@ -1748,7 +1748,7 @@ export function GraphVisualization({
           {!isolationMode && showPathToRoot && (
             <button
               onClick={handleClearPathToRoot}
-              className="px-3 py-2 text-xs font-medium rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shadow-lg"
+              className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground shadow-sm transition-colors hover:bg-secondary/80"
             >
               Clear Path to Project
             </button>
@@ -1766,21 +1766,21 @@ export function GraphVisualization({
       <div className="absolute bottom-20 left-4 z-20 flex flex-col gap-1">
         <button
           onClick={() => graphRef.current?.zoom(currentZoomRef.current * 1.4, 200)}
-          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
           title="Zoom in"
         >
           <ZoomIn className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={() => graphRef.current?.zoom(Math.max(0.1, currentZoomRef.current * 0.7), 200)}
-          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
           title="Zoom out"
         >
           <ZoomOut className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={() => graphRef.current?.zoomToFit(400, 40)}
-          className="w-8 h-8 flex items-center justify-center rounded-lg bg-card/95 backdrop-blur-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shadow-sm"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
           title="Fit all nodes in view"
         >
           <Maximize2 className="w-3.5 h-3.5" />
@@ -1905,7 +1905,7 @@ export function GraphVisualization({
           className="fixed z-50 pointer-events-none"
           style={{ left: tooltipClientPos.x + 14, top: tooltipClientPos.y - 70 }}
         >
-          <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl text-xs max-w-[240px]">
+          <div className="max-w-[240px] rounded-md border border-border bg-popover/95 px-3 py-2 text-xs shadow-sm">
             <div className="font-semibold text-foreground truncate leading-snug">
               {nodePropertyCache.get(hoveredNode.id)?.label ?? hoveredNode.label}
             </div>
@@ -1928,7 +1928,7 @@ export function GraphVisualization({
           <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
           {/* Menu panel */}
           <div
-            className="fixed z-50 bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[190px] text-xs"
+            className="fixed z-50 min-w-[190px] rounded-md border border-border bg-popover py-1 text-xs shadow-sm"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             {/* Header */}

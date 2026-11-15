@@ -350,7 +350,7 @@ export function ConsolidatedLearningPanel({ nodes, selectedNode, onNodeSelect, o
         exit={{ opacity: 0, y: 20 }}
         className="fixed bottom-4 left-4 z-40"
       >
-        <Card className="w-96 shadow-2xl">
+        <Card className="w-96 shadow-sm">
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
@@ -571,7 +571,7 @@ export function ConsolidatedLearningPanel({ nodes, selectedNode, onNodeSelect, o
         exit={{ opacity: 0, y: 20 }}
         className="fixed bottom-4 left-4 z-40"
       >
-        <Card className="w-96 shadow-2xl">
+        <Card className="w-96 shadow-sm">
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
@@ -723,7 +723,7 @@ export function ConsolidatedLearningPanel({ nodes, selectedNode, onNodeSelect, o
       <div className="fixed bottom-4 left-4 z-40">
         <Button
           onClick={() => setIsCollapsed(false)}
-          className="shadow-xl gap-2"
+          className="gap-2 shadow-sm"
         >
           <BookOpen className="w-4 h-4" />
           Learning
@@ -740,7 +740,7 @@ export function ConsolidatedLearningPanel({ nodes, selectedNode, onNodeSelect, o
       exit={{ opacity: 0, y: 20 }}
       className="fixed bottom-4 left-4 z-40"
     >
-      <Card className="w-80 shadow-xl">
+      <Card className="w-80 shadow-sm">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">

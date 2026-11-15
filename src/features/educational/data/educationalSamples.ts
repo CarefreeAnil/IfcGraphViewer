@@ -16,6 +16,7 @@ export interface EducationalSample {
   concepts: string[]; // IFC concepts demonstrated (e.g., 'IfcWall', 'IfcSpace', 'Relationships')
   estimatedLoadTime: number; // in milliseconds
   thumbnail?: string; // Optional thumbnail image path
+  sourceUrl?: string;
   hasGuidedLearning?: boolean; // Indicates if dynamic guided learning is available
 }
 
@@ -116,6 +117,8 @@ export const EDUCATIONAL_SAMPLES: EducationalSample[] = [
       'IfcElementQuantity',
     ],
     estimatedLoadTime: 75,
+    thumbnail: '/testFiles/thumbnails/solibri-structural.png',
+    sourceUrl: 'https://www.solibri.com/',
   },
 
   // Intermediate Level: Complex Relationships and Properties (templates below)
@@ -172,6 +175,7 @@ export const EDUCATIONAL_SAMPLES: EducationalSample[] = [
       'Large-scale Performance',
     ],
     estimatedLoadTime: 297,
+    thumbnail: '/testFiles/thumbnails/fzk-haus.png',
   },
 
   {
@@ -198,6 +202,7 @@ export const EDUCATIONAL_SAMPLES: EducationalSample[] = [
       'IfcSlab',
     ],
     estimatedLoadTime: 89,
+    thumbnail: '/testFiles/thumbnails/infra-bridge.png',
   },
 
   // Advanced Level: Full Building Models (templates below)

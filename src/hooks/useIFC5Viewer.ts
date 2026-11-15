@@ -20,12 +20,16 @@ import {
   extractMaterial,
   extractTransform,
 } from '../lib/ifc5ToGraph';
+import { useUIState } from '@/contexts/UIStateContext';
 
 export function useIFC5Viewer(
   containerRef: React.RefObject<HTMLDivElement>,
   active: boolean,
   onObjectClick?: (path: string) => void
 ) {
+  const { theme } = useUIState();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -77,7 +81,7 @@ export function useIFC5Viewer(
 
       // Scene
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf0f0f0);
+      scene.background = new THREE.Color(themeRef.current === 'dark' ? 0x101318 : 0xf8fafc);
       sceneRef.current = scene;
 
       // Camera
@@ -275,6 +279,12 @@ export function useIFC5Viewer(
       // Cleanup is handled by the cleanup effect, not here
     };
   }, [active, containerRef]);
+
+  useEffect(() => {
+    if (!sceneRef.current) return;
+
+    sceneRef.current.background = new THREE.Color(theme === 'dark' ? 0x101318 : 0xf8fafc);
+  }, [theme]);
 
   useEffect(() => {
     onObjectClickRef.current = onObjectClick;

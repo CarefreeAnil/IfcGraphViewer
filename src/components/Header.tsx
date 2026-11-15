@@ -58,16 +58,16 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
     <motion.header
       initial={{ opacity: 0, y: -20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="fixed top-0 left-0 right-0 z-50 overflow-hidden bg-background/80 px-2 py-1 backdrop-blur-md border-b border-border lg:px-6 lg:py-4"
+      className="fixed top-0 left-0 right-0 z-50 overflow-hidden border-b border-border bg-background/95 px-2 py-1 backdrop-blur-md lg:px-6 lg:py-3"
     >
       <div className="mx-auto flex min-w-0 max-w-screen-2xl items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 lg:gap-6">
           <div className="flex min-w-0 items-center gap-2 lg:gap-3">
-            <div className="rounded-lg bg-primary/20 p-1 glow-primary lg:p-2">
+            <div className="rounded-md border border-primary/30 bg-primary/10 p-1 lg:p-2">
               <Network className="h-4 w-4 text-primary lg:h-6 lg:w-6" />
             </div>
             <div className="min-w-0">
-              <h1 className="max-w-[150px] truncate text-sm font-bold text-gradient lg:max-w-none lg:text-xl">IFC Graph Visualizer</h1>
+              <h1 className="max-w-[150px] truncate text-sm font-bold text-foreground lg:max-w-none lg:text-xl">IFC Graph Visualizer</h1>
               <p className="hidden text-xs text-muted-foreground lg:block">Parse • Transform • Explore</p>
             </div>
           </div>
@@ -107,7 +107,7 @@ export function Header({ hasData, onReset, validation, hasErrors, onValidate, is
           <button
             type="button"
             onClick={toggleTheme}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card/70 text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-card/70 px-2 text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             aria-pressed={theme === 'light'}

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, lazy, Suspense, useEffect, useMemo, startTransition } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Info, GraduationCap, Shield, Lock, Code2, Github, SlidersHorizontal, Network, Layers, Box } from 'lucide-react';
+import { Info, GraduationCap, Shield, Lock, Code2, SlidersHorizontal, Network, Layers, Box } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { Header } from '@/components/Header';
@@ -243,7 +243,6 @@ const Index = () => {
       setSelectedIFC5Node(null);
       setSelectedIFC5ComposedPath(null);
       setSelectedIFC5RawPath(null);
-      setSelectedIFC5AttributeKey(null);
       selectObjectRef.current?.(null);
       return;
     }
@@ -435,6 +434,13 @@ const Index = () => {
       toast.error('Failed to parse IFC file. Please try a valid IFC file.');
     }
   }, [parseFile]);
+
+  const handleInvalidFile = useCallback((fileName: string) => {
+    toast.error('Unsupported file format', {
+      description: `${fileName} is not an IFC file. Choose a .ifc or .ifcx model.`,
+      duration: 6000,
+    });
+  }, []);
 
   useEffect(() => {
     if (sampleLoadedRef.current) return;
@@ -660,7 +666,6 @@ const Index = () => {
         setSelectedIFC5Node(null);
         setSelectedIFC5ComposedPath(null);
         setSelectedIFC5RawPath(null);
-        setSelectedIFC5AttributeKey(null);
         selectObjectRef.current?.(null);
         setSearchQuery('');
       },
@@ -795,54 +800,85 @@ const Index = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center h-full gap-8 px-4"
+              className="relative flex h-full flex-col items-center justify-center overflow-hidden px-4 py-10"
             >
-              <div className="text-center space-y-4">
-                <h2 className="text-3xl font-bold text-foreground">
-                  Transform IFC to <span className="text-gradient">Graph</span>
+              <div className="pointer-events-none absolute inset-0 grid-pattern opacity-30" aria-hidden="true" />
+              <div className="relative z-10 w-full max-w-2xl text-center">
+                <h2 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
+                  Transform building data into a <span className="text-primary">living graph.</span>
                 </h2>
-                <p className="text-muted-foreground max-w-md mx-auto">
-                  Upload an IFC file to parse its structure into a graph
-                  and visualize relationships between building elements.
+                <p className="mx-auto mt-5 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
+                  Upload an IFC model to inspect its structure, relationships, and properties
+                  in one focused workspace.
                 </p>
               </div>
 
-              <FileUpload
-                onFileSelect={handleFileSelect}
-                isLoading={isLoading}
-                progress={progress.percentage}
-                progressMessage={progress.message}
-              />
+              <div className="relative z-10 mt-10 w-full max-w-2xl">
+                <FileUpload
+                  onFileSelect={handleFileSelect}
+                  onInvalidFile={handleInvalidFile}
+                  isLoading={isLoading}
+                  progress={progress.percentage}
+                  progressMessage={progress.message}
+                />
+              </div>
 
               {/* Hint: sample models in Learn page */}
-              <p className="text-sm text-muted-foreground text-center">
-                <GraduationCap className="inline w-4 h-4 mr-1 mb-0.5 text-primary/70" />
-                Don't have a file? Sample IFC models are available on the{' '}
-                <Link to="/learn" className="text-primary hover:underline font-medium">
-                  Learn page
+              <div className="relative z-10 mt-6 flex flex-col items-center gap-3 text-center">
+                <Link
+                  to="/learn"
+                  className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+                >
+                  <GraduationCap className="h-4 w-4" />
+                  Try a sample model
                 </Link>
-                .
-              </p>
+                <p className="text-xs text-muted-foreground">
+                  No IFC file yet? Start with a guided sample in Learn.
+                </p>
+              </div>
 
               {/* About button */}
               <button
                 onClick={() => setShowAbout(true)}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mt-2"
+                className="relative z-10 mt-5 flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <Info className="w-3.5 h-3.5" />
                 About this application
               </button>
 
-              <a
-                href="https://github.com/CarefreeAnil/IfcGraphViewer"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card/40 text-xs text-foreground/80 hover:text-foreground hover:bg-card/70 transition-colors"
-                aria-label="Open-source project on GitHub"
-              >
-                <Github className="w-4 h-4" />
-                View source code on GitHub
-              </a>
+              <div className="relative z-10 mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 border-t border-border/70 pt-4">
+                <a
+                  href="https://www.theseus.fi/items/8e50e9a3-9cd0-4dab-8f6a-9ae48a10ba00"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex items-center gap-2 text-left transition-colors hover:text-foreground"
+                >
+                  <img
+                    src="/branding/metropolia-logo.png"
+                    alt="Metropolia University of Applied Sciences"
+                    className="h-8 w-8 rounded object-cover"
+                  />
+                  <span className="text-xs font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+                    Master&apos;s Thesis
+                  </span>
+                </a>
+                <a
+                  href="https://www.buildingsmart.org/buildingsmart-international-announces-finalists-for-the-2026-openbim-awards/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex items-center gap-2 text-left transition-colors hover:text-foreground"
+                >
+                  <img
+                    src="/branding/buildingsmart-logo.png"
+                    alt="buildingSMART International"
+                    className="h-8 w-8 rounded object-cover"
+                  />
+                  <span className="text-xs font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+                    Finalists of 2026 openBIM awards
+                  </span>
+                </a>
+              </div>
+
             </motion.div>
           ) : (
             <motion.div
@@ -1017,7 +1053,7 @@ const Index = () => {
                       />
 
                       {/* Compact entity/relations counter */}
-                      <div className="absolute bottom-4 left-4 flex gap-4 p-2 rounded-lg bg-card/90 backdrop-blur-md border border-border">
+                      <div className="absolute bottom-4 left-4 flex gap-4 rounded-md border border-border bg-card/95 p-2 shadow-sm">
                         <div className="flex flex-col">
                           <span className="text-[7px] uppercase tracking-wider text-muted-foreground">Entities/Nodes</span>
                           <span className="text-[10px] font-mono text-foreground">{graphStats.filteredNodes.toLocaleString()}</span>
@@ -1090,7 +1126,7 @@ const Index = () => {
                   ) : (
                     <div className="h-full w-full bg-background border-l border-border overflow-hidden relative">
                       {isIFC5 ? (
-                        <div ref={ifc5ViewerContainerRef} className="h-full w-full" />
+                        <div ref={ifc5ViewerContainerRef} className="graph-surface h-full w-full" />
                       ) : (
                         <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading 3D viewer...</div>}>
                           <Viewer3D
@@ -1145,7 +1181,7 @@ const Index = () => {
               </div>
 
               <nav
-                className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
+                className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t border-border bg-card px-1 pb-[env(safe-area-inset-bottom)] lg:hidden"
                 aria-label="Mobile panel navigation"
               >
                 {([
@@ -1161,8 +1197,8 @@ const Index = () => {
                       key={id}
                       type="button"
                       onClick={() => selectMobilePanel(id)}
-                      className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[10px] font-medium transition-colors ${
-                        isActive ? 'text-primary' : 'text-muted-foreground'
+                      className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-md px-1 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                        isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60'
                       }`}
                       aria-current={isActive ? 'page' : undefined}
                     >

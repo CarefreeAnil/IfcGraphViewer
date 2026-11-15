@@ -179,7 +179,7 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
             {/* Education Toggle Button */}
             <button
               onClick={() => setShowEducation(!showEducation)}
-              className="w-full px-3 py-2 bg-gradient-to-r from-blue-500/10 to-blue-600/10 hover:from-blue-500/20 hover:to-blue-600/20 border border-blue-500/30 text-blue-600 dark:text-blue-400 rounded-md transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
             >
               <BookOpen className="w-4 h-4" />
               {showEducation ? 'Hide' : 'Learn About'} This Entity
@@ -255,7 +255,7 @@ export function NodeDetailsPanel({ node, onClose, inline = false }: NodeDetailsP
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 20 }}
           transition={{ duration: 0.2 }}
-          className="absolute top-4 right-4 w-80 bg-card/95 backdrop-blur-md rounded-xl border-glow overflow-hidden max-h-[90vh] flex flex-col"
+          className="absolute right-4 top-4 flex max-h-[90vh] w-80 flex-col overflow-hidden rounded-md border border-border bg-card/95 shadow-sm"
         >
           {content}
         </motion.div>
